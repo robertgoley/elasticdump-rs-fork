@@ -312,7 +312,11 @@ pub async fn run(args: Vec<String>) -> Output {
 pub async fn run_env(args: Vec<String>, envs: Vec<(String, String)>) -> Output {
     tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new(bin());
-        cmd.args(&args).arg("--quiet");
+        cmd.args(&args);
+        // IT_VERBOSE=1 keeps the tool's warnings (retries etc.) in failure output
+        if std::env::var("IT_VERBOSE").is_err() {
+            cmd.arg("--quiet");
+        }
         for (k, v) in envs {
             cmd.env(k, v);
         }

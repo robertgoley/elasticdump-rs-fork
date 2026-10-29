@@ -207,10 +207,13 @@ async fn restore_through_fault_injection_20_of_20() {
             "100",
             "--concurrency",
             "4",
+            // Every proxied connection is cut sooner or later, so roughly half
+            // of all attempts fail; on TLS with ES 7 (larger bulk responses,
+            // `_type` per item) 9 attempts lost one bulk in ~1 of 3 runs.
             "--retryAttempts",
-            "8",
+            "25",
             "--retryDelay",
-            "50",
+            "20",
             "--maxSockets",
             "2",
         ]));

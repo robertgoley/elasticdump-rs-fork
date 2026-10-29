@@ -138,7 +138,7 @@ About the dhi.io bases:
 - All 157 grype matches are Debian `wont-fix` or `not-fixed`, so none can be fixed by upgrading packages.
 - The HIGH/CRITICAL findings are listed below (15 distinct CVEs, grouped by CVE).
 - They come from the base OS (util-linux, glibc, gcc runtime libs, ncurses, perl-base, zlib, acl, systemd libs). They do not come from elasticdump-rs.
-- The binary links only libc and libgcc_s. Even so, glibc CVE-2026-19499 and CVE-2026-5435 cannot be ruled out for a dynamically linked program, which is why this base is not recommended.
+- The binary links only glibc (libc, libm) and libgcc_s. Even so, glibc CVE-2026-19499 and CVE-2026-5435 cannot be ruled out for a dynamically linked program, which is why this base is not recommended.
 - Status: **open on this base**, and resolved by choosing another base: the Alpine/musl build or the dhi.io base.
 
 | ID | Packages | Severity | Status | Resolution |
