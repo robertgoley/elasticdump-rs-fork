@@ -100,6 +100,11 @@ pub struct FileOptions {
     /// Compression for file outputs; stdout is never compressed (Node parity).
     pub codec: Option<Codec>,
     pub split: Option<SplitBy>,
+    /// `--throttleInterval`: pause after each batch.
+    pub throttle: Option<std::time::Duration>,
+    /// `--format human`: pretty-printed JSON documents (Node uses
+    /// `util.inspect`; pretty JSON stays restorable).
+    pub human: bool,
 }
 
 /// Parse a size the way the `bytes` npm module does: a number with an
@@ -170,6 +175,22 @@ fn existing_parts(root: &Path) -> Vec<PathBuf> {
         .collect();
     v.sort();
     v
+}
+
+/// Pretty-print each line; numbers keep their exact text.
+fn humanize(buf: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(buf.len() * 2);
+    for line in buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        match serde_json::from_slice::<serde_json::Value>(line) {
+            Ok(v) => {
+                let s = serde_json::to_string_pretty(&v).expect("serialize");
+                out.extend_from_slice(s.as_bytes());
+            }
+            Err(_) => out.extend_from_slice(line),
+        }
+        out.push(b'\n');
+    }
+    out
 }
 
 struct Part {
@@ -274,6 +295,20 @@ impl FileSink {
                 log::info!("Created {}", sealed.final_path().display());
                 self.sealed.push(sealed);
             }
+        }
+        Ok(())
+    }
+
+    /// Write one batch of complete NDJSON lines, then honour `--throttleInterval`.
+    pub async fn write_batch(&mut self, buf: &[u8]) -> Result<()> {
+        if self.opts.human {
+            let pretty = humanize(buf);
+            self.write_lines(&pretty).await?;
+        } else {
+            self.write_lines(buf).await?;
+        }
+        if let Some(d) = self.opts.throttle {
+            tokio::time::sleep(d).await;
         }
         Ok(())
     }

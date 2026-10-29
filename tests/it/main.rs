@@ -3,6 +3,7 @@
 
 mod harness;
 
+mod concurrency;
 mod data;
 mod files;
 mod meta;

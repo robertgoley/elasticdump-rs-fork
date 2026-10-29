@@ -44,11 +44,11 @@ impl Sink {
                 if f.source_only() {
                     let mut scratch = std::mem::take(&mut f.scratch);
                     source_only_lines(buf, &mut scratch);
-                    let r = f.write_lines(&scratch).await;
+                    let r = f.write_batch(&scratch).await;
                     f.scratch = scratch;
                     r?;
                 } else {
-                    f.write_lines(buf).await?;
+                    f.write_batch(buf).await?;
                 }
                 f.written += docs;
                 Ok(())
@@ -82,18 +82,26 @@ impl Sink {
     }
 
     pub async fn finalize(self) -> Result<WriteReport> {
-        let report = self.report();
         match self {
-            Sink::File(f) => f.finalize().await?,
-            Sink::Bulk(_) => {}
+            Sink::File(f) => {
+                let report = WriteReport {
+                    written: f.written,
+                    failed: 0,
+                };
+                f.finalize().await?;
+                Ok(report)
+            }
+            Sink::Bulk(mut b) => {
+                b.drain().await?;
+                Ok(b.report)
+            }
         }
-        Ok(report)
     }
 
     pub async fn abort(self) {
         match self {
             Sink::File(f) => f.abort().await,
-            Sink::Bulk(_) => {}
+            Sink::Bulk(mut b) => b.abort(),
         }
     }
 }

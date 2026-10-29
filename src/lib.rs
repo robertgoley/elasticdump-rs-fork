@@ -10,7 +10,7 @@ pub mod retrieval;
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use sonic_rs::json;
 
@@ -85,10 +85,6 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
     Ok(())
 }
 
-fn not_yet(feature: &str) -> anyhow::Error {
-    usage(format!("{feature} is not implemented yet in this build"))
-}
-
 fn file_path(ep: &Endpoint) -> Option<PathBuf> {
     match ep {
         Endpoint::File(p) => Some(p.clone()),
@@ -97,6 +93,19 @@ fn file_path(ep: &Endpoint) -> Option<PathBuf> {
 }
 
 const DEFAULT_MAX_BULK_BYTES: u64 = 100 * 1024 * 1024;
+
+/// `--throttleInterval`: only when given explicitly. Node's 1 ms default
+/// would add ~10 s per million documents at --limit 100 for no benefit.
+fn throttle(cli: &Cli) -> Option<std::time::Duration> {
+    cli.throttle_interval
+        .filter(|ms| *ms > 0)
+        .map(std::time::Duration::from_millis)
+}
+
+fn split_requested(cli: &Cli) -> bool {
+    cli.file_size.as_deref().is_some_and(|s| s.trim() != "-1")
+        || cli.max_rows.is_some_and(|n| n > 0)
+}
 
 /// File/stdout output options: gzip and splitting.
 fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::FileOptions> {
@@ -131,6 +140,20 @@ fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::Fil
             )));
         }
     };
+    let human = match cli.format.as_deref().map(str::trim) {
+        None | Some("") | Some("json") => false,
+        Some("human") if split_requested(cli) => {
+            return Err(usage(
+                "--format human cannot be combined with --fileSize/--maxRows",
+            ));
+        }
+        Some("human") => true,
+        Some(other) => {
+            return Err(usage(format!(
+                "--format must be '' or 'human', got '{other}'"
+            )));
+        }
+    };
     let path = file_path(output);
     if codec.is_some() && path.is_none() {
         log::info!("compression does not apply to stdout output (elasticdump behaviour)");
@@ -148,6 +171,8 @@ fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::Fil
         source_only: cli.source_only(),
         codec,
         split,
+        throttle: throttle(cli),
+        human,
     })
 }
 
@@ -201,14 +226,63 @@ async fn build_sink(
                 max_bulk_bytes: max_bulk_bytes.max(1) as usize,
                 retry,
             };
-            Ok(Sink::Bulk(Box::new(pipeline::BulkSink::new(
-                client,
-                opts,
-                tokio_util::sync::CancellationToken::new(),
-            ))))
+            Ok(Sink::Bulk(Box::new(
+                pipeline::BulkSink::new(client, opts, tokio_util::sync::CancellationToken::new())
+                    .with_concurrency(cli.concurrency, throttle(cli)),
+            )))
         }
-        out => Ok(Sink::File(FileSink::create(file_options(cli, out)?).await?)),
+        out => {
+            if cli.concurrency > 1 {
+                log::info!(
+                    "--concurrency applies to Elasticsearch outputs; file output stays sequential to keep order"
+                );
+            }
+            Ok(Sink::File(FileSink::create(file_options(cli, out)?).await?))
+        }
     }
+}
+
+/// `--searchWithTemplate`: render `--searchBody` (`{"id"|"source", "params"}`)
+/// with `POST /_render/template` and search with the rendered body.
+async fn render_search_template(
+    client: &crate::http::EsClient,
+    retry: crate::http::RetryPolicy,
+    template: &sonic_rs::Value,
+) -> Result<sonic_rs::Value> {
+    use sonic_rs::JsonValueTrait;
+    if template.get("id").is_none() && template.get("source").is_none() {
+        return Err(usage(
+            "--searchWithTemplate needs a --searchBody with \"id\" (stored template) or \"source\", plus \"params\"",
+        ));
+    }
+    let body: serde_json::Value = serde_json::from_str(&sonic_rs::to_string(template)?)?;
+    let body = crate::http::Body::json(&body);
+    let body = &body;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let resp = crate::http::send_with_retry(
+        retry,
+        &cancel,
+        crate::http::RetryMode::Idempotent,
+        "render search template",
+        move || {
+            client.send(
+                reqwest::Method::POST,
+                &["_render", "template"],
+                &[],
+                true,
+                body.clone(),
+            )
+        },
+    )
+    .await
+    .context("--searchWithTemplate: rendering the search template failed")?;
+    let v: sonic_rs::Value = sonic_rs::from_slice(&resp)?;
+    let out = v
+        .get("template_output")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("_render/template returned no template_output"))?;
+    log::debug!("Rendered search template: {}", sonic_rs::to_string(&out)?);
+    Ok(out)
 }
 
 async fn es_source_options(
@@ -223,9 +297,6 @@ async fn es_source_options(
         EffectiveSearch::Pit => SearchType::PointInTime,
         EffectiveSearch::SearchAfter => SearchType::SearchAfter,
     };
-    if cli.search_with_template() {
-        return Err(not_yet("--searchWithTemplate"));
-    }
     // Cluster detection (`GET /`) is only needed for PIT; scroll dumps work
     // the same on every flavor and version.
     let (pit_api, pit_sort) = if search_type == SearchType::PointInTime {
@@ -253,9 +324,14 @@ async fn es_source_options(
         (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
     };
     let size = (cli.size >= 0).then_some(cli.size as u64 + cli.offset);
-    let search_body =
+    let search_body = if cli.search_with_template() {
+        let template = retrieval::search_body::load_search_body(cli.search_body.as_deref()).await?;
+        let rendered = render_search_template(&client, retry, &template).await?;
+        retrieval::search_body::finalize_search_body(rendered, cli.limit, size)
+    } else {
         retrieval::search_body::prepare_search_body(cli.search_body.as_deref(), cli.limit, size)
-            .await?;
+            .await?
+    };
     if search_type == SearchType::SearchAfter {
         use sonic_rs::{JsonContainerTrait, JsonValueTrait};
         let has_sort = search_body

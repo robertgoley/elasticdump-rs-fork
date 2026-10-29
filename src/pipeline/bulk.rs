@@ -2,12 +2,15 @@
 //! `_bulk` requests.
 
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use reqwest::Method;
 use sonic_rs::{JsonValueTrait, LazyValue};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use crate::http::{Body, ClusterInfo, EsClient, RetryMode, RetryPolicy, send_with_retry};
@@ -66,12 +69,27 @@ pub struct WriteReport {
     pub failed: u64,
 }
 
+impl WriteReport {
+    fn add(&mut self, other: WriteReport) {
+        self.written += other.written;
+        self.failed += other.failed;
+    }
+}
+
+/// `_bulk` writer. With `--concurrency N > 1` each batch is written by a
+/// worker task (a clone sharing client, options and the refresh lock); at most
+/// N batches are in flight and [`BulkSink::drain`] collects their reports.
 pub struct BulkSink {
     client: EsClient,
-    opts: BulkOptions,
+    opts: Arc<BulkOptions>,
     cancel: CancellationToken,
     pub report: WriteReport,
-    warned_ttl: bool,
+    warned_ttl: Arc<AtomicBool>,
+    concurrency: usize,
+    throttle: Option<Duration>,
+    inflight: JoinSet<Result<WriteReport>>,
+    /// At most one `_refresh` in flight (others are skipped).
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -106,11 +124,98 @@ impl BulkSink {
     pub fn new(client: EsClient, opts: BulkOptions, cancel: CancellationToken) -> Self {
         Self {
             client,
-            opts,
+            opts: Arc::new(opts),
             cancel,
             report: WriteReport::default(),
-            warned_ttl: false,
+            warned_ttl: Arc::new(AtomicBool::new(false)),
+            concurrency: 1,
+            throttle: None,
+            inflight: JoinSet::new(),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// `--concurrency` (max in-flight write batches) and `--throttleInterval`
+    /// (pause after each batch is handed off).
+    pub fn with_concurrency(mut self, concurrency: usize, throttle: Option<Duration>) -> Self {
+        self.concurrency = concurrency.max(1);
+        self.throttle = throttle.filter(|d| !d.is_zero());
+        self
+    }
+
+    fn worker(&self) -> BulkSink {
+        BulkSink {
+            client: self.client.clone(),
+            opts: Arc::clone(&self.opts),
+            cancel: self.cancel.clone(),
+            report: WriteReport::default(),
+            warned_ttl: Arc::clone(&self.warned_ttl),
+            concurrency: 1,
+            throttle: None,
+            inflight: JoinSet::new(),
+            refresh_lock: Arc::clone(&self.refresh_lock),
+        }
+    }
+
+    fn merge(
+        &mut self,
+        joined: std::result::Result<Result<WriteReport>, tokio::task::JoinError>,
+    ) -> Result<()> {
+        match joined {
+            Ok(Ok(r)) => {
+                self.report.add(r);
+                Ok(())
+            }
+            Ok(Err(e)) => Err(e),
+            Err(e) if e.is_cancelled() => Ok(()),
+            Err(e) => Err(anyhow!("bulk worker panicked: {e}")),
+        }
+    }
+
+    /// Hand one batch to the writer. Sequential with `--concurrency 1`.
+    pub async fn write_batch(&mut self, buf: &[u8]) -> Result<()> {
+        if self.concurrency <= 1 {
+            self.process_batch(buf).await?;
+        } else {
+            while self.inflight.len() >= self.concurrency {
+                let joined = self.inflight.join_next().await.expect("non-empty");
+                if let Err(e) = self.merge(joined) {
+                    self.inflight.abort_all();
+                    return Err(e);
+                }
+            }
+            let mut worker = self.worker();
+            let data = Bytes::copy_from_slice(buf);
+            self.inflight.spawn(async move {
+                worker.process_batch(&data).await?;
+                Ok(worker.report)
+            });
+        }
+        if let Some(d) = self.throttle {
+            tokio::time::sleep(d).await;
+        }
+        Ok(())
+    }
+
+    /// Wait for every in-flight batch; the first error wins.
+    pub async fn drain(&mut self) -> Result<()> {
+        let concurrent = self.concurrency > 1;
+        while let Some(joined) = self.inflight.join_next().await {
+            if let Err(e) = self.merge(joined) {
+                self.inflight.abort_all();
+                return Err(e);
+            }
+        }
+        if concurrent && self.opts.refresh {
+            // A per-batch refresh may have been skipped while another ran.
+            let _g = self.refresh_lock.lock().await;
+            self.refresh().await;
+        }
+        Ok(())
+    }
+
+    pub fn abort(&mut self) {
+        self.inflight.abort_all();
     }
 
     fn index_for(&self, line: &[u8]) -> Result<String> {
@@ -156,9 +261,9 @@ impl BulkSink {
                 if matches!(name.as_str(), "timestamp" | "ttl")
                     && !self.opts.info.supports_ttl_meta()
                 {
-                    if meta(line, &name).is_some() && !self.warned_ttl {
+                    if meta(line, &name).is_some() && !self.warned_ttl.swap(true, Ordering::Relaxed)
+                    {
                         log::warn!("Dropping _{name}: not supported by the target cluster");
-                        self.warned_ttl = true;
                     }
                     continue;
                 }
@@ -238,7 +343,7 @@ impl BulkSink {
 
     /// Write one batch of document lines; returns once every item was
     /// written, retried or reported.
-    pub async fn write_batch(&mut self, buf: &[u8]) -> Result<()> {
+    async fn process_batch(&mut self, buf: &[u8]) -> Result<()> {
         let lines: Vec<&[u8]> = buf
             .split(|b| *b == b'\n')
             .filter(|l| !l.is_empty())
@@ -275,7 +380,11 @@ impl BulkSink {
             start = end;
         }
         if self.opts.refresh {
-            self.refresh().await;
+            // Skip when another worker's refresh is already running.
+            let lock = Arc::clone(&self.refresh_lock);
+            if let Ok(_g) = lock.try_lock() {
+                self.refresh().await;
+            }
         }
         Ok(())
     }
