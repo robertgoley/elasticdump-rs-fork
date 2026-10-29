@@ -20,8 +20,9 @@ Plus: basic auth (URL, `--httpAuthFile`, `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,P
 client certificates (encrypted PKCS#8 keys via `--pass`) and insecure mode per direction; gzip **and zstd**
 files; file splitting; write concurrency, throttling and rate limiting; Node-style retries plus 429.
 
-Tested against **OpenSearch 2.19.7 and 3.9.0** (podman, with and without the security plugin) and against Node
-elasticdump 6.125.1 for file-format interop.
+Tested against **OpenSearch 2.19.7 and 3.9.0** and **Elasticsearch 9.1.2 and 8.6.1** (`bitnamilegacy/elasticsearch`),
+each plain and secured (basic auth + TLS), across engines (ES ↔ OpenSearch, files and cluster to cluster), and
+against Node elasticdump 6.125.1 for file-format interop.
 
 ## Install
 
@@ -98,7 +99,8 @@ types, CSV, S3/MinIO, AWS signing, transforms, `multielasticdump`, `--delete`, `
   Existing `*.split-*` files need `--overwrite`.
 * **Certificate flags always apply**; Node ignores `--ca/--cert/--key` unless `--tlsAuth` is set.
 * **Retries also cover HTTP 429**, and bulk items rejected with 429/503 are retried individually.
-* **OpenSearch PIT** uses `_doc` + `_id` as the sort (a `_doc`-only sort was verified to lose documents).
+* **PIT is engine-aware**: Elasticsearch 7.10+ uses `POST /{index}/_pit` and the `_shard_doc` tiebreaker;
+  OpenSearch uses `/_search/point_in_time` and `_doc` + `_id` (a `_doc`-only sort was verified to lose documents).
 * **Scroll + `--offset`** skips client-side; Node sends `from=`, which ES 7+/OpenSearch reject.
 * **`--throttleInterval`** only applies when given (Node's 1 ms default would add ~10 s per million docs).
 * **`--intervalCap`/`--concurrencyInterval`/`--carryoverConcurrencyCount`** work (p-queue semantics) when set;
@@ -109,8 +111,11 @@ types, CSV, S3/MinIO, AWS signing, transforms, `multielasticdump`, `--delete`, `
 * **Big integers and unicode** are preserved byte-for-byte in both directions (no `--support-big-int` needed).
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
 * **`--username`/`--password` apply to the input only.**
-* **Cluster→cluster settings** drop engine-specific keys (e.g. ES `index.lifecycle` going to OpenSearch) with a
-  warning; file restores do not (use `--excludeSettings`).
+* **Cluster→cluster settings** drop engine-specific keys (ES `index.lifecycle` and
+  `index.routing.allocation.include._tier_preference` going to OpenSearch; OpenSearch `index.replication.type`,
+  `plugins.*`, `opendistro.*` going to ES) with a warning. File restores keep them (a file does not say which
+  engine wrote it) but warn with the exact `--excludeSettings=` to use; Elasticsearch rejects OpenSearch keys
+  outright (the error carries the same hint), while OpenSearch would otherwise store ES keys silently.
 
 ## Reliability
 
@@ -211,12 +216,39 @@ Absolute numbers depend heavily on your Elasticsearch cluster, network, disk, an
 ```bash
 cargo test --lib                       # unit tests
 cargo test --test cli_contract         # CLI contract tests against an in-process mock server
-scripts/it/run.sh all                  # podman: builds first, then OpenSearch plain + secure suites
-OS_TAG=3 scripts/it/run.sh all         # same against OpenSearch 3.x
+scripts/it/run.sh all                  # podman: builds first, then every profile below
+scripts/it/run.sh opensearch-plain     # one profile: opensearch-{plain,secure}, elasticsearch-{plain,secure}
+OS_TAG=3 scripts/it/run.sh opensearch  # both OpenSearch variants against 3.x (default OS_TAG=2)
+scripts/it/run.sh elasticsearch8       # both ES variants against the pinned 8.6.1 regression tag
+scripts/it/run.sh cross                # ES <-> OpenSearch cluster-to-cluster (two nodes at once)
 ```
 
+One engine-aware suite runs against every profile; expectations that differ per engine (PIT request shape and
+tiebreaker, default settings keys, typeless APIs) are asserted per engine rather than duplicated.
+
+| Profile | Image | Notes |
+|---|---|---|
+| `opensearch-plain` / `-secure` | `opensearchproject/opensearch:$OS_TAG` | secure = security plugin, basic auth, TLS, client-cert (PKI) auth |
+| `elasticsearch8-plain` / `-secure` | `bitnamilegacy/elasticsearch:8.6.1-debian-11-r0` (`ES8_TAG`) | same setup as below; regression target for ES 8 |
+| `elasticsearch-plain` / `-secure` | `bitnamilegacy/elasticsearch:9.1.2-debian-12-r0` (`ES_TAG`, latest tag) | bitnami env (`ELASTICSEARCH_HEAP_SIZE`, `ELASTICSEARCH_ENABLE_SECURITY`, `ELASTICSEARCH_ENABLE_REST_TLS`, PEM certs from a generated CA), data dir owned by the image's non-root UID 1001 |
+| `cross` | one plain node of each | needs `CROSS_MIN_MB` (default 2200) MB free, otherwise SKIP |
+
+The secured Elasticsearch profile uses basic auth over HTTPS and verifies client certificates
+(`client_authentication: optional`; a rogue certificate is rejected), but cannot authenticate *by* certificate:
+the PKI realm is a paid X-Pack feature with no bitnami switch, so the client-certificate tests send basic auth plus
+the certificate there. Certificate-only auth is covered by the OpenSearch secure profile.
+
+Cross-engine file dump/restore runs one container at a time: each plain profile exports a zstd dump plus the
+expected result (one directory per engine major, e.g. `elasticsearch-8`), and the other engine restores every
+such export later in the same `all` run. Cluster-to-cluster needs both nodes at
+once (256m heaps, lean JVM flags, ~1.3 GB RSS together plus headroom); on hosts without that much free memory it
+is skipped with a message instead of risking the OOM killer.
+
+Heaps default to 512m (`OS_HEAP`; `ES_HEAP` defaults to the same). Elasticsearch 9 at 512m is ~950 MB RSS; on
+hosts with ~1.5 GB free use `ES_HEAP=320m IT_LEAN_JVM=1` (smaller code cache, direct memory and thread stacks).
+
 `scripts/it/run.sh` compiles everything before starting a container (an optimised build next to a running
-OpenSearch node can exhaust memory on small hosts) and always removes its containers. The Node interop tests
+node can exhaust memory on small hosts) and always removes its containers and data directories. The Node interop tests
 run when `/tmp/ed/node_modules/.bin/elasticdump` exists.
 
 ## License

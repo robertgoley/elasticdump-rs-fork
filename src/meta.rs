@@ -124,6 +124,11 @@ pub fn strip_settings(def: &mut Value, extra: &[&str]) {
     }
 }
 
+/// Keys in `def` that belong to the other engine, without changing `def`.
+fn foreign_settings(def: &Value, target: &ClusterInfo) -> Vec<String> {
+    strip_for_flavor(&mut def.clone(), target)
+}
+
 fn strip_for_flavor(def: &mut Value, target: &ClusterInfo) -> Vec<String> {
     let list = if target.is_opensearch() {
         ELASTIC_ONLY
@@ -402,6 +407,24 @@ async fn apply_settings(
                 );
             }
         }
+    } else {
+        // File input: the source engine is unknown, so keep the settings as
+        // written but flag keys that only the other engine understands. OpenSearch
+        // silently stores Elasticsearch-only keys such as `_tier_preference`.
+        let foreign = foreign_settings(def, info);
+        if !foreign.is_empty() {
+            let other = if info.is_opensearch() {
+                "Elasticsearch"
+            } else {
+                "OpenSearch"
+            };
+            log::warn!(
+                "Settings for {target} contain {other}-only keys that {} does not use: {}; drop them with --excludeSettings={}",
+                info.flavor_name(),
+                foreign.join(","),
+                foreign.join(",")
+            );
+        }
     }
     let body = serde_json::json!({ "settings": def["settings"].clone() });
     match send_json(client, opts.retry, Method::PUT, &[target], &body, "create index").await {
@@ -511,6 +534,12 @@ mod tests {
             }}})
         );
         let os = ClusterInfo::new(crate::http::Flavor::OpenSearch, "2.19.0");
+        let before = def.clone();
+        assert_eq!(
+            foreign_settings(&def, &os),
+            vec!["index.routing.allocation.include._tier_preference"]
+        );
+        assert_eq!(def, before);
         assert_eq!(
             strip_for_flavor(&mut def, &os),
             vec!["index.routing.allocation.include._tier_preference"]

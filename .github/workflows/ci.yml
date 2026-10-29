@@ -23,10 +23,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os_tag: ["2", "3"]
-        profile: [opensearch-plain, opensearch-secure]
+        include:
+          - { profile: opensearch-plain, os_tag: "2" }
+          - { profile: opensearch-secure, os_tag: "2" }
+          - { profile: opensearch-plain, os_tag: "3" }
+          - { profile: opensearch-secure, os_tag: "3" }
+          - { profile: elasticsearch-plain }     # latest bitnamilegacy (9.1.2)
+          - { profile: elasticsearch-secure }
+          - { profile: elasticsearch8-plain }    # pinned regression tag 8.6.1
+          - { profile: elasticsearch8-secure }
     env:
-      OS_TAG: ${{ matrix.os_tag }}
+      OS_TAG: ${{ matrix.os_tag || '2' }}
       IT_DIR: /tmp/edrs-it
     steps:
       - uses: actions/checkout@v4
@@ -34,5 +41,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: podman --version
       - run: scripts/it/run.sh ${{ matrix.profile }}
+      - if: failure()
+        run: podman ps -a; for c in $(podman ps -aq); do podman logs --tail 200 $c; done
+
+  # ES <-> OpenSearch: sequential file legs, then cluster to cluster with both
+  # nodes up (runners have ~16 GB, so the two-node leg must not skip here).
+  cross:
+    runs-on: ubuntu-24.04
+    env:
+      IT_DIR: /tmp/edrs-it
+      CROSS_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+      - uses: Swatinem/rust-cache@v2
+      - run: podman --version
+      - name: file dump/restore, both directions (one container at a time)
+        run: |
+          scripts/it/run.sh opensearch-plain cross::file
+          scripts/it/run.sh elasticsearch-plain cross::file
+          scripts/it/run.sh elasticsearch8-plain cross::file
+          IT_LEGACY=0 scripts/it/run.sh opensearch-plain cross::file_dump_from
+      - run: scripts/it/run.sh cross
       - if: failure()
         run: podman ps -a; for c in $(podman ps -aq); do podman logs --tail 200 $c; done

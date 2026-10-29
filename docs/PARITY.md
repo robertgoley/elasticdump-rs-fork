@@ -107,6 +107,17 @@ Legend:
 | `--retryDelay` | 5000 | ✅ | See §6.8 | M5 |
 | `--retryDelayBase`, `--customBackoff` | – | ➖ (S3 only) | Accepted and ignored | – |
 
+### 3.6a Engines and versions tested
+
+| Engine | Version (image) | Profiles | Engine-specific behaviour asserted |
+|---|---|---|---|
+| OpenSearch | 2.19.7 / 3.9.0 (`opensearchproject/opensearch:2`/`:3`) | plain, secure (basic, TLS, PKI) | PIT via `/_search/point_in_time`, `_id` tiebreaker; `index.replication.type` default setting |
+| Elasticsearch | 8.6.1 (`bitnamilegacy/elasticsearch:8.6.1-debian-11-r0`, pinned regression tag) and 9.1.2 (`bitnamilegacy/elasticsearch:9.1.2-debian-12-r0`, highest tag in the repo on 2026-10-28) | plain, secure (basic, TLS, client cert verified) | PIT via `POST /{index}/_pit`, `_shard_doc` tiebreaker; `_tier_preference` default setting; typeless mapping and bulk |
+| ES ↔ OpenSearch | both of the above | file dump/restore (sequential), cluster to cluster (`cross`, memory-gated) | cluster→cluster strips the source engine's keys with a warning; file restore warns (ES→OS) or fails with a hint (OS→ES) unless `--excludeSettings` names the key |
+
+Not covered: Elasticsearch < 8 in CI (the typed/ES 6 paths are unit- and mock-tested only), and Elasticsearch
+PKI-realm (certificate-only) auth, which needs a paid licence.
+
 ### 3.7 Explicitly out of scope
 
 The following are accepted with a warning, or rejected, according to the policy below:

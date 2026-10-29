@@ -28,8 +28,37 @@ pub fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
+/// Secured profile (TLS + basic auth) of either engine.
 pub fn is_secure() -> bool {
-    env("IT_PROFILE").as_deref() == Some("opensearch-secure")
+    env("IT_PROFILE").is_some_and(|p| p.ends_with("-secure"))
+}
+
+/// Whether a client certificate authenticates on its own (OpenSearch's demo
+/// admin cert). On Elasticsearch the PKI realm is not available, so a
+/// client certificate is only presented and verified alongside basic auth.
+pub fn cert_auth() -> bool {
+    env("IT_CERT_AUTH").as_deref() == Some("1")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    OpenSearch,
+    Elasticsearch,
+}
+
+impl Engine {
+    pub fn parse(s: &str) -> Engine {
+        if s.starts_with("elasticsearch") {
+            Engine::Elasticsearch
+        } else {
+            Engine::OpenSearch
+        }
+    }
+}
+
+/// Engine of the cluster under test (from `IT_ENGINE`, written by up.sh).
+pub fn engine() -> Engine {
+    Engine::parse(&env("IT_ENGINE").unwrap_or_else(|| "opensearch".into()))
 }
 
 /// Handle on the cluster under test.
@@ -39,11 +68,24 @@ pub struct Cluster {
     client: reqwest::Client,
     user: Option<String>,
     pass: Option<String>,
+    pub engine: Engine,
 }
 
 impl Cluster {
     pub fn from_env() -> Self {
         let url = env("IT_ES_URL").unwrap_or_else(|| "http://127.0.0.1:19200".into());
+        Self::new(&url, env("IT_ADMIN_USER"), env("IT_ADMIN_PW"), engine())
+    }
+
+    /// The second cluster of the cross-engine profile (`IT_PEER_URL`,
+    /// `IT_PEER_ENGINE`; security off), if any.
+    pub fn peer() -> Option<Self> {
+        let url = env("IT_PEER_URL")?;
+        let engine = Engine::parse(&env("IT_PEER_ENGINE")?);
+        Some(Self::new(&url, None, None, engine))
+    }
+
+    fn new(url: &str, user: Option<String>, pass: Option<String>, engine: Engine) -> Self {
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
             .build()
@@ -51,9 +93,28 @@ impl Cluster {
         Self {
             url: url.trim_end_matches('/').to_string(),
             client,
-            user: env("IT_ADMIN_USER"),
-            pass: env("IT_ADMIN_PW"),
+            user,
+            pass,
+            engine,
         }
+    }
+
+    /// `version.number` from `GET /`.
+    pub async fn version(&self) -> String {
+        self.ok("GET", "", None).await["version"]["number"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    pub async fn major(&self) -> u64 {
+        self.version()
+            .await
+            .split('.')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
     }
 
     /// URL with admin basic-auth credentials embedded (for the CLI under test).
@@ -75,7 +136,9 @@ impl Cluster {
     /// CLI flags needed to reach this cluster (CA bundle for the secure profile).
     pub fn tls_args(&self, direction: &str) -> Vec<String> {
         match env("IT_CA") {
-            Some(ca) if is_secure() => vec![format!("--{direction}-ca"), ca],
+            Some(ca) if is_secure() && self.url.starts_with("https") => {
+                vec![format!("--{direction}-ca"), ca]
+            }
             _ => vec![],
         }
     }
@@ -201,6 +264,18 @@ impl Cluster {
 
 pub fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_elasticdump-rs")
+}
+
+/// Run the CLI without `--quiet` (for `--debug` assertions).
+pub async fn run_loud(args: Vec<String>) -> Output {
+    tokio::task::spawn_blocking(move || {
+        Command::new(bin())
+            .args(&args)
+            .output()
+            .expect("spawn elasticdump-rs")
+    })
+    .await
+    .unwrap()
 }
 
 /// Run the CLI synchronously (on a blocking thread) and return its output.

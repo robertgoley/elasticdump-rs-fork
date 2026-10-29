@@ -4,7 +4,9 @@
 mod harness;
 
 mod concurrency;
+mod cross;
 mod data;
+mod engine;
 mod files;
 mod meta;
 mod smoke;

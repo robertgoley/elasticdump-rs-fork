@@ -1,5 +1,6 @@
-//! M1: TLS and authentication against the secure OpenSearch profile.
-//! Every test is a no-op on the plain profile.
+//! M1: TLS and authentication against the secured profiles (OpenSearch demo
+//! security, or bitnami Elasticsearch with basic auth + TLS). Every test is a
+//! no-op on the plain profiles.
 
 use crate::harness::*;
 
@@ -16,7 +17,7 @@ struct Secure {
 
 fn secure() -> Option<Secure> {
     if !is_secure() {
-        eprintln!("skipping: not the opensearch-secure profile");
+        eprintln!("skipping: not a secured profile");
         return None;
     }
     Some(Secure {
@@ -130,8 +131,51 @@ async fn verification_fails_without_ca_and_insecure_skips_it() {
 async fn client_certificate_plain_and_encrypted_key() {
     let Some(s) = secure() else { return };
     let index = seeded(&s, "tls_mtls").await;
-    // The admin (kirk) certificate authenticates on its own: no basic auth.
-    let url = s.c.index_url(&index);
+    // OpenSearch: the admin (kirk) certificate authenticates on its own.
+    // Elasticsearch: certificates are verified (client_authentication:
+    // optional) but authentication stays basic auth.
+    let url = if cert_auth() {
+        s.c.index_url(&index)
+    } else {
+        s.c.url_with_auth(&index)
+    };
+    if !cert_auth() {
+        // prove the client certificate is really presented: one from an
+        // unknown CA fails the handshake
+        let d = tmp_path("rogue", "d");
+        std::fs::create_dir_all(&d).unwrap();
+        let (k, c) = (d.join("k.pem"), d.join("c.pem"));
+        let st = std::process::Command::new("openssl")
+            .args([
+                "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+            ])
+            .args(["-subj", "/CN=rogue", "-keyout"])
+            .arg(&k)
+            .arg("-out")
+            .arg(&c)
+            .output()
+            .unwrap();
+        assert!(st.status.success());
+        let (o, _) = dump(
+            s_args(&[
+                "--input",
+                &url,
+                "--input-ca",
+                &s.ca,
+                "--input-cert",
+                c.to_str().unwrap(),
+                "--input-key",
+                k.to_str().unwrap(),
+                "--noImplicitRetry",
+            ]),
+            vec![],
+        )
+        .await;
+        assert!(
+            !o.status.success(),
+            "untrusted client cert must be rejected"
+        );
+    }
     expect_full_dump(
         &s,
         &index,
