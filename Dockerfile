@@ -12,7 +12,9 @@
 #   podman build --build-arg BUILDER_IMAGE=docker.io/library/rust --build-arg BUILDER_TAG=1.99-trixie \
 #                --build-arg BASE_IMAGE=docker.io/library/debian --build-arg BASE_TAG=trixie-slim .
 #
-# See `make help` and README "Container image".
+# A third option, `make image-alpine`, builds a musl binary on rust:*-alpine and
+# runs it on alpine (bash added with apk): libc matches (musl/musl) and it is the
+# lowest-CVE public base. See `make help` and README "Container image".
 ARG BUILDER_IMAGE=dhi.io/rust
 ARG BUILDER_TAG=1.99.1-debian13-dev
 ARG BASE_IMAGE=dhi.io/debian-base
@@ -26,6 +28,9 @@ ARG CARGO_BUILD_JOBS=2
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
     CARGO_TERM_COLOR=never
 WORKDIR /src
+# Alpine builders (musl fallback, see Makefile image-alpine) need libc headers
+# and a CA bundle; Debian/DHI builders already have both.
+RUN if command -v apk >/dev/null 2>&1; then apk add --no-cache musl-dev ca-certificates; fi
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # Cargo.toml declares the test targets; their sources must exist to load it.
@@ -59,7 +64,8 @@ COPY --from=builder /out/elasticdump-rs /usr/local/bin/elasticdump-rs
 # - CA bundle only when the base image has none
 # - /data: writable working directory for dumps (mount a volume here)
 RUN --mount=type=bind,from=builder,source=/out/ca-certificates.crt,target=/tmp/ca.crt \
-    ln -s elasticdump-rs /usr/local/bin/elasticdump \
+    if command -v apk >/dev/null 2>&1; then apk add --no-cache bash ca-certificates; fi \
+ && ln -s elasticdump-rs /usr/local/bin/elasticdump \
  && if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then \
       mkdir -p /etc/ssl/certs && cp /tmp/ca.crt /etc/ssl/certs/ca-certificates.crt; \
     fi \

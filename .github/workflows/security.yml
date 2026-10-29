@@ -1,0 +1,58 @@
+name: security
+# Dependency advisories, licence/source policy, image CVE scan and SBOMs.
+# Nothing is published: no registry login for pushing, no `push`, only
+# workflow artifacts (SBOMs and scan reports).
+on:
+  push:
+    branches: [main, rewrite]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Image bases: public (docker.io Debian 13) or dhi (needs DHI_USERNAME/DHI_TOKEN secrets)"
+        default: public
+  schedule:
+    - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-audit,cargo-deny,cargo-cyclonedx" }
+      # any vulnerability, or an unmaintained/unsound/yanked warning, fails the job
+      - run: cargo audit --deny warnings
+      - run: cargo deny check advisories bans licenses sources
+      - run: cargo cyclonedx --format json --override-filename sbom-cargo.cdx
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-cargo, path: "sbom-cargo.cdx.json" }
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install scanners
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      - name: Log in to dhi.io (pull only)
+        if: github.event.inputs.base == 'dhi'
+        run: echo "${{ secrets.DHI_TOKEN }}" | podman login dhi.io -u "${{ secrets.DHI_USERNAME }}" --password-stdin
+      - name: Build image (local only)
+        run: make ${{ github.event.inputs.base == 'dhi' && 'image' || 'image-public' }} CONTAINER=podman
+      - run: make test-image CONTAINER=podman
+      - run: make save CONTAINER=podman
+      - name: SBOM
+        run: syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
+      - name: grype (fail on HIGH/CRITICAL)
+        run: grype docker-archive:image.tar --fail-on high
+      - name: trivy (fail on HIGH/CRITICAL)
+        run: trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: sbom-image, path: "sbom-image.*.json" }

@@ -3,6 +3,7 @@
 #
 #   make image                 # dhi.io bases (needs `podman login dhi.io` / `docker login dhi.io`)
 #   make image-public          # public Debian 13 bases (no login)
+#   make image-alpine          # public Alpine/musl bases (no login, fewest CVEs)
 #   make test-image            # --version, --help, bash present, non-root
 #   make sbom scan             # syft SBOM + grype/trivy scan of the image
 REGISTRY   ?= localhost
@@ -21,6 +22,11 @@ PUBLIC_BUILDER_IMAGE ?= docker.io/library/rust
 PUBLIC_BUILDER_TAG   ?= 1.99-trixie
 PUBLIC_BASE_IMAGE    ?= docker.io/library/debian
 PUBLIC_BASE_TAG      ?= trixie-slim
+# Public musl fallback (Alpine builder + Alpine runtime with bash)
+ALPINE_BUILDER_IMAGE ?= docker.io/library/rust
+ALPINE_BUILDER_TAG   ?= 1.99.1-alpine3.24
+ALPINE_BASE_IMAGE    ?= docker.io/library/alpine
+ALPINE_BASE_TAG      ?= 3.24.3
 CARGO_BUILD_JOBS ?= 2
 
 VCS_REF    := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -29,9 +35,9 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_ARGS = --build-arg VERSION=$(IMAGE_TAG) --build-arg VCS_REF=$(VCS_REF) \
              --build-arg BUILD_DATE=$(BUILD_DATE) --build-arg CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS)
 
-.PHONY: help image image-public test-image sbom scan print
+.PHONY: help image image-public image-alpine test-image save sbom scan print
 help:
-	@sed -n '1,9p' Makefile
+	@sed -n '1,10p' Makefile
 
 print:
 	@echo "IMAGE=$(IMAGE) CONTAINER=$(CONTAINER)"
@@ -49,10 +55,19 @@ image-public:
 	  --build-arg BASE_IMAGE=$(PUBLIC_BASE_IMAGE) --build-arg BASE_TAG=$(PUBLIC_BASE_TAG) \
 	  -t $(IMAGE) .
 
+image-alpine:
+	$(CONTAINER) build $(BUILD_ARGS) \
+	  --build-arg BUILDER_IMAGE=$(ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(ALPINE_BUILDER_TAG) \
+	  --build-arg BASE_IMAGE=$(ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(ALPINE_BASE_TAG) \
+	  -t $(IMAGE) .
+
 test-image:
 	$(CONTAINER) run --rm $(IMAGE) --version
 	$(CONTAINER) run --rm $(IMAGE) --help >/dev/null
 	$(CONTAINER) run --rm --entrypoint /bin/bash $(IMAGE) -c 'echo "bash $$BASH_VERSION, uid $$(id -u)"; test "$$(id -u)" != 0; command -v elasticdump; test -s /etc/ssl/certs/ca-certificates.crt'
+
+save:
+	$(CONTAINER) save -o image.tar $(IMAGE)
 
 sbom:
 	syft $(IMAGE) -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json

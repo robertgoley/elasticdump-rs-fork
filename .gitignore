@@ -23,3 +23,5 @@ tmp/
 # Local agent workspaces
 /.worktrees/
 /.agent/
+image.tar
+sbom-*.json
