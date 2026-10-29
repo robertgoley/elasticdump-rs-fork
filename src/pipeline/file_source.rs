@@ -20,7 +20,7 @@ pub struct FileBatch {
 
 const READ_CHUNK: usize = 256 * 1024;
 
-fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
+pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
     let raw: Box<dyn Read + Send> = match path {
         Some(p) => Box::new(
             std::fs::File::open(p)

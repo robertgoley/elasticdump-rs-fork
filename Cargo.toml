@@ -47,7 +47,7 @@ pkcs8 = { version = "0.10", features = ["encryption", "pem", "std"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 sonic-rs = "0.5.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 anyhow = "1.0.102"
 thiserror = "2"
 log = "0.4"

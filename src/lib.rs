@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod endpoint;
 pub mod http;
+pub mod meta;
 pub mod output;
 pub mod pipeline;
 pub mod retrieval;
@@ -241,6 +242,83 @@ async fn es_source_options(
     })
 }
 
+async fn run_meta(
+    cli: &Cli,
+    input: &Endpoint,
+    output: &Endpoint,
+    retry: crate::http::RetryPolicy,
+    gate: crate::http::gate::RequestGate,
+) -> Result<pipeline::WriteReport> {
+    let kind = if cli.r#type == DumpType::Mapping {
+        meta::MetaKind::Mapping
+    } else {
+        meta::MetaKind::Settings
+    };
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let (src_client, src_index) = match input {
+        Endpoint::Es(ep) => (
+            Some(config::build_client(
+                cli,
+                ep,
+                Direction::Input,
+                gate.clone(),
+            )?),
+            ep.index.clone(),
+        ),
+        _ => (None, None),
+    };
+    let (dst_client, dst_info, dst_ep) = match output {
+        Endpoint::Es(ep) => {
+            let c = config::build_client(cli, ep, Direction::Output, gate)?;
+            let info = c.info(retry, &cancel).await?.clone();
+            (Some(c), Some(info), Some(ep))
+        }
+        _ => (None, None, None),
+    };
+    // Engine-specific settings are stripped automatically only for
+    // cluster→cluster copies, where both flavors are known.
+    let source_info = match (&src_client, &dst_client) {
+        (Some(s), Some(_)) if kind == meta::MetaKind::Settings => {
+            Some(s.info(retry, &cancel).await?.clone())
+        }
+        _ => None,
+    };
+    let opts = meta::MetaOptions {
+        kind,
+        retry,
+        skip_existing: cli.skip_existing(),
+        ignore_errors: cli.ignore_errors(),
+        exclude_settings: cli
+            .exclude_settings
+            .as_deref()
+            .map(|s| {
+                s.split(',')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        source_info,
+    };
+    let src = meta::MetaSource {
+        client: src_client,
+        index: src_index,
+        file: file_path(input),
+    };
+    let doc = meta::read(&src, &opts).await?;
+    let dst = meta::MetaTarget {
+        client: dst_client,
+        info: dst_info,
+        index: dst_ep.and_then(|e| e.index.clone()),
+        doc_type: dst_ep.and_then(|e| e.doc_type.clone()),
+        prefix: cli.prefix.clone(),
+        suffix: cli.suffix.clone(),
+        file: file_path(output),
+        overwrite: cli.overwrite(),
+    };
+    meta::write(doc, &dst, &opts).await
+}
+
 pub async fn run() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
@@ -302,7 +380,7 @@ pub async fn run() -> Result<()> {
             }
         }
         DumpType::Mapping | DumpType::Settings => {
-            return Err(not_yet("--type mapping/settings"));
+            run_meta(&cli, &input, &output, retry, gate.clone()).await?
         }
     };
 

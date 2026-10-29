@@ -4,5 +4,6 @@
 mod harness;
 
 mod data;
+mod meta;
 mod smoke;
 mod tls_auth;
