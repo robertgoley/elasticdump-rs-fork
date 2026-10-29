@@ -36,6 +36,11 @@ IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
 export IT_DIR
 IT_CROSS_DIR="${IT_CROSS_DIR:-$IT_DIR-cross}"
 export IT_CROSS_DIR
+# TST-INF-007 guards: one IT/load run at a time on the box; memory and disk
+# preflight per profile (SKIP + exit 0, or exit 1 with IT_REQUIRED=1).
+# shellcheck source=../res/guards.sh
+source scripts/res/guards.sh
+guard_lock
 ES8_TAG="${ES8_TAG:-8.6.1-debian-11-r0}"
 # Regression matrix (exact tags verified against the registries 2026-10-29;
 # see TESTING-MATRIX.md for sources and digests):
@@ -78,6 +83,14 @@ run_profile() {
     ( local up; up=$(matrix_env "$p"); matrix_env "$p" >/dev/null; run_profile "$up" "$@" )
     return
   fi
+  local heap need
+  heap=$(mb_of "${ES_HEAP:-${OS_HEAP:-512m}}")
+  need="${IT_MIN_MB:-$(( heap * 2 + 600 ))}"
+  if ! guard_mem "$need" "profile $p" || ! guard_disk "$IT_DIR" "${IT_MIN_DISK_MB:-1500}" "profile $p"; then
+    echo "IT-SUMMARY profile=$p SKIPPED (resource guard)"
+    skip_or_fail IT_REQUIRED
+    return
+  fi
   scripts/it/up.sh "$p"
   # shellcheck disable=SC1091
   source "$IT_DIR/env"
@@ -95,8 +108,6 @@ run_profile() {
   fi
   scripts/it/down.sh
 }
-
-mem_available_mb() { awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo; }
 
 run_cross() {
   local heap="${CROSS_HEAP:-256m}" need="${CROSS_MIN_MB:-2200}" have

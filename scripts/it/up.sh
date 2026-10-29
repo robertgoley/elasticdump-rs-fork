@@ -62,6 +62,13 @@ if [[ "${IT_LEAN_JVM:-0}" == 1 ]]; then
   LEAN_OPTS="-XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=128m -Xss512k -XX:CICompilerCount=2"
 fi
 mkdir -p "$IT_DIR" && chmod 700 "$IT_DIR"
+# TST-INF-007 (d): every container gets memory/CPU caps. Rootless podman with
+# the cgroupfs manager accepts but does not enforce --memory here (L-003);
+# they apply on hosts with cgroup v2 delegation (CI runners).
+# shellcheck source=../res/guards.sh
+source "$(dirname "$0")/../res/guards.sh"
+_heap_max=$(( $(mb_of "$ES_HEAP") > $(mb_of "$HEAP") ? $(mb_of "$ES_HEAP") : $(mb_of "$HEAP") ))
+CAPS=(--memory "${IT_CONTAINER_MEM:-$(( _heap_max * 2 + 512 ))m}" --cpus "${IT_CONTAINER_CPUS:-2}")
 # A pre-existing env file keeps its old mode on `>`; recreate it 0600.
 rm -f "$IT_DIR/env"
 
@@ -110,7 +117,7 @@ case "$PROFILE" in
   opensearch-plain)
     PORT="${PORT:-19200}"
     NAME="it-os-plain-${RUN_ID}"
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -e discovery.type=single-node \
       -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
@@ -124,7 +131,7 @@ case "$PROFILE" in
     NAME="it-os-sec-${RUN_ID}"
     ADMIN_PW="${IT_ADMIN_PW:-$(gen_secret)}"
     [[ $OS_LEGACY_ADMIN == 1 ]] && ADMIN_PW=admin
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -e discovery.type=single-node \
       -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${ADMIN_PW}" \
@@ -137,7 +144,7 @@ case "$PROFILE" in
     PORT="${PORT:-19202}"
     if [[ $ES_OFFICIAL == 1 ]]; then
       NAME="it-es-plain-${RUN_ID}"
-      engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+      engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
         -p "127.0.0.1:${PORT}:9200" \
         -e discovery.type=single-node \
         -e xpack.security.enabled=false \
@@ -155,7 +162,7 @@ case "$PROFILE" in
     # OSS image gets none: it has no X-Pack settings to turn off anyway)
     MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:Z")
     [[ "$ES_TAG" != 7.10* ]] && MOUNTS+=(-v "$IT_DIR/es-plain.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z")
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       "${MOUNTS[@]}" \
       -e "ELASTICSEARCH_HEAP_SIZE=${ES_HEAP}" \
@@ -174,7 +181,7 @@ case "$PROFILE" in
     if [[ $ES_OFFICIAL == 1 ]]; then
       CERTS=$(es_pki)
       C=/usr/share/elasticsearch/config/certs
-      engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+      engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
         -p "127.0.0.1:${PORT}:9200" \
         -v "$CERTS:$C:ro,Z" \
         -e discovery.type=single-node \
@@ -194,7 +201,7 @@ case "$PROFILE" in
     DATA=$(es_data_dir "$NAME")
     CERTS=$(es_pki)
     # ES 9 entitlements only let the SSL module read files under config/
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -v "$DATA:/bitnami/elasticsearch/data:Z" \
       -v "$CERTS:/opt/bitnami/elasticsearch/config/certs:ro,Z" \
