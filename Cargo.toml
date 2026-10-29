@@ -81,10 +81,23 @@ lipsum = "0.9"
 tempfile = "3"
 
 [features]
-large_scale_test = []
-manual_test = []
-# Podman-backed integration suite (tests/it); see scripts/it/run.sh.
+# Test tiers (TST-INF-001; .config/nextest.toml). None of these change the shipped binary.
+# Podman-backed integration suite (tests/it, tests/integration_test.rs); see scripts/it/run.sh.
 it = []
+# Long-running tests against a live cluster (load tier; scripts/load/run.sh is the main load harness).
+load = ["it"]
+# Fault-injection tests (chaos tier).
+chaos = []
+# cargo-fuzz targets (fuzz/).
+fuzz = []
+# Deprecated upstream aliases, kept so old command lines still work.
+large_scale_test = ["load"]
+manual_test = ["load"]
+
+[[test]]
+name = "integration_test"
+path = "tests/integration_test.rs"
+required-features = ["it"]
 
 [[test]]
 name = "it"

@@ -1,0 +1,49 @@
+# Test tiers (TST-INF-001). Every test belongs to exactly one tier:
+#   unit      T0  lib/bin unit tests (all workspace crates)          no network
+#   contract  T1  CLI contract, injection, secrets and tool tests    mock servers only
+#   it        T2  live single-engine suites (tests/it, integration_test)   needs scripts/it/up.sh
+#   load      T3  long live-cluster tests (feature `load`)           needs a cluster
+#   chaos     T5  fault-injection suites (feature `chaos`; none yet)
+# Run one tier with `cargo nextest run --profile <tier> [--features ...]`.
+# Each profile writes JUnit XML to target/nextest/<tier>/junit.xml.
+# `default` (no profile) = unit + contract. Correctness tests never auto-retry (INF-013).
+
+[profile.default]
+default-filter = "kind(lib) | kind(bin) | binary(cli_contract) | binary(injection) | binary(secrets) | (kind(test) & (package(edgen) | package(edverify)))"
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.unit]
+default-filter = "kind(lib) | kind(bin)"
+slow-timeout = { period = "30s", terminate-after = 1 }
+[profile.unit.junit]
+path = "junit.xml"
+
+[profile.contract]
+default-filter = "binary(cli_contract) | binary(injection) | binary(secrets) | (kind(test) & (package(edgen) | package(edverify)))"
+slow-timeout = { period = "60s", terminate-after = 3 }
+[profile.contract.junit]
+path = "junit.xml"
+
+[profile.it]
+default-filter = "(binary(it) | binary(integration_test)) & !test(/^test_large_scale_performance$|^test_create_data_for_manual_testing$/)"
+# one engine on the box; suites manage their own concurrency (IT_THREADS)
+test-threads = 4
+slow-timeout = { period = "60s", terminate-after = 5 }
+[profile.it.junit]
+path = "junit.xml"
+
+[profile.load]
+default-filter = "binary(integration_test) & test(/^test_large_scale_performance$|^test_create_data_for_manual_testing$/)"
+test-threads = 1
+slow-timeout = { period = "300s", terminate-after = 6 }
+[profile.load.junit]
+path = "junit.xml"
+
+[profile.chaos]
+default-filter = "none()"
+test-threads = 1
+slow-timeout = { period = "120s", terminate-after = 5 }
+[profile.chaos.junit]
+path = "junit.xml"

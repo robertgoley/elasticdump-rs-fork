@@ -918,7 +918,7 @@ async fn test_performance_benchmark() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "large_scale_test")]
+#[cfg(feature = "load")]
 #[tokio::test]
 async fn test_large_scale_performance() -> Result<()> {
     // Get a unique test index and output file
@@ -1656,7 +1656,7 @@ async fn test_sliced_pit_large_dataset() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "manual_test")]
+#[cfg(feature = "load")]
 #[tokio::test]
 async fn test_create_data_for_manual_testing() -> Result<()> {
     // Get a unique test index

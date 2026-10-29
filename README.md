@@ -374,9 +374,15 @@ Absolute numbers depend heavily on your Elasticsearch cluster, network, disk, an
 
 ## Testing
 
+Tests are split into tiers (`.config/nextest.toml`; each tier writes JUnit to `target/nextest/<tier>/junit.xml`):
+
 ```bash
-cargo test --lib                       # unit tests
-cargo test --test cli_contract         # CLI contract tests against an in-process mock server
+cargo nextest run --workspace --profile unit       # T0 unit tests (all crates)
+cargo nextest run --workspace --profile contract   # T1 CLI contract / injection / secrets / tool tests (mocks only)
+cargo nextest run --workspace --profile it --features elasticdump-rs/it      # T2, needs scripts/it/up.sh
+cargo nextest run --workspace --profile load --features elasticdump-rs/load  # T3 live long tests
+scripts/load/run.sh L0 dump-restore-logs           # load harness (scripts/load/README.md)
+cargo test --lib --bins --test cli_contract        # plain cargo test still works (T0 + part of T1)
 scripts/it/run.sh all                  # podman: builds first, then every profile below
 scripts/it/run.sh opensearch-plain     # one profile: opensearch-{plain,secure}, elasticsearch-{plain,secure}
 OS_TAG=3 scripts/it/run.sh opensearch  # both OpenSearch variants against 3.x (default OS_TAG=2)

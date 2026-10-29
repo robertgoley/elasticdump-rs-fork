@@ -18,10 +18,11 @@ jobs:
         with: { toolchain: 1.85.1, components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --lib --bins --tests --features elasticdump-rs/it -- -D warnings
-      - run: cargo test --lib --bins
-      - run: cargo test --test cli_contract
-      - run: cargo test --release -p edverify -p edgen
+      - run: cargo clippy --workspace --lib --bins --tests --features elasticdump-rs/load -- -D warnings
+      # L-301 / INF-001: tiers from .config/nextest.toml (T0 unit, T1 contract); JUnit in target/nextest/<tier>/
+      - run: cargo install --locked --version 0.9.150 cargo-nextest
+      - run: cargo nextest run --workspace --profile unit
+      - run: cargo nextest run --workspace --profile contract
 
   # SUP-* supply-chain gates (TEST-REQUIREMENTS §7.3, TASKS-LOCAL A2).
   supply-chain:
