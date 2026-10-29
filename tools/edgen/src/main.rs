@@ -98,6 +98,8 @@ enum Cmd {
     },
     /// List the edge-case catalogue with expected outcomes.
     Cases,
+    /// Decompress a .gz/.zst (or plain) file to stdout (helper for scripts).
+    Cat { path: PathBuf },
     /// Convert an external corpus to elasticdump format with deterministic ids.
     Convert {
         /// rally | clf | loghub
@@ -312,6 +314,24 @@ fn run() -> Result<()> {
         Cmd::Cases => {
             let v: Vec<_> = edgen::edge::CASES.iter().map(|c| serde_json::json!({"case": c.name, "expect": c.expect, "file_only": c.file_only, "index_case": c.index_case})).collect();
             println!("{}", serde_json::to_string_pretty(&v)?);
+        }
+        Cmd::Cat { path } => {
+            let f =
+                std::fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
+            let n = path.to_string_lossy();
+            let mut r: Box<dyn std::io::Read> = if n.ends_with(".gz") {
+                Box::new(flate2::read::MultiGzDecoder::new(f))
+            } else if n.ends_with(".zst") {
+                Box::new(zstd::stream::read::Decoder::new(f)?)
+            } else {
+                Box::new(f)
+            };
+            let mut out = std::io::stdout().lock();
+            match std::io::copy(&mut r, &mut out) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(e) => return Err(e.into()),
+            }
         }
         Cmd::Convert {
             kind,

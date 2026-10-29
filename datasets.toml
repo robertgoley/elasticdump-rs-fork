@@ -1,0 +1,240 @@
+# Dataset manifest (TST-DATA-004, TEST-REQUIREMENTS §5.1).
+# Fetch with scripts/data/fetch.sh, convert with scripts/data/convert.sh.
+#
+# sha256/size were measured on 2026-10-29 by streaming each file once.
+# Entries with sha256 = "" are NOT pinned yet: fetch.sh refuses them unless
+# --allow-unpinned is given, and then prints the hash to pin (trust on first
+# use; B pins them in B1).
+#
+# license_class:
+#   ok          licence allows use in CI artefacts;
+#   ask         usable locally, CI use needs the owner's OK (Q9);
+#   blocked     non-commercial / research-only / needs a login: never in CI.
+
+[policy]
+ci_license_classes = ["ok"]
+
+[datasets.http_logs_1k]
+url = "https://rally-tracks.elastic.co/http_logs/documents-181998-1k.json.bz2"
+size = 6925
+sha256 = "60f1e941a1a8b629c25b1f4dbe2cfc412f3096473d08289fcb893422b8c71eeb"
+license = "ITA WorldCup98: use and redistribute freely"
+license_class = "ok"
+tier = "L0"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 1000
+
+[datasets.http_logs_181998]
+url = "https://rally-tracks.elastic.co/http_logs/documents-181998.json.bz2"
+size = 13843641
+sha256 = "c791a8b86b4017fc3ca59ca0f4a858459e955795eb3973cb93725601a903535d"
+license = "ITA WorldCup98: use and redistribute freely"
+license_class = "ok"
+tier = "L0"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+
+[datasets.http_logs_191998]
+url = "https://rally-tracks.elastic.co/http_logs/documents-191998.json.bz2"
+size = 49546887
+sha256 = "e2d8fc363a507b3d4bf727e162508c27fb2357f450b0f2f1e6778bded84f5b6b"
+license = "ITA WorldCup98: use and redistribute freely"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+
+[datasets.http_logs_181998_osb_zst]
+url = "https://dbyiw3u3rf9yr.cloudfront.net/corpora/http_logs/documents-181998.json.zst"
+size = 16098947
+sha256 = ""
+license = "ITA WorldCup98: use and redistribute freely"
+license_class = "ok"
+tier = "L0"
+format = "ndjson-source"
+compression = "zst"
+converter = "rally"
+notes = "not pinned: the 2026-10-29 stream ended at 1,156,515 bytes although Content-Length is 16,098,947"
+
+[datasets.eventdata]
+url = "https://dbyiw3u3rf9yr.cloudfront.net/corpora/eventdata/eventdata.json.bz2"
+size = 792768300
+sha256 = ""
+license = "Apache-2.0 (OSB workload README)"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 20000000
+notes = "not pinned: TLS handshake failed during the 2026-10-29 hash run"
+
+[datasets.geonames]
+url = "https://rally-tracks.elastic.co/geonames/documents-2.json.bz2"
+size = 265208777
+sha256 = "1caff966a45b5e9b9ed8b6cfc3ab110b6ae93d3475a412c5e029935fbabcd214"
+license = "CC-BY-3.0"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 11396503
+
+[datasets.nested]
+url = "https://rally-tracks.elastic.co/nested/documents.json.bz2"
+size = 695550727
+sha256 = "a22ace7f4902b32bf94e7ba6e19df65d4c4230b6da44f490592034e428ccec4c"
+license = "CC-BY-SA-3.0"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 11203029
+
+[datasets.noaa]
+url = "https://rally-tracks.elastic.co/noaa/documents.json.bz2"
+size = 995480468
+sha256 = "814c5874db300f22cfaafd68ce85ca973dfde31cb55547a81f6e13f19aee53ac"
+license = "US Government Work"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 33659481
+
+[datasets.pmc]
+url = "https://rally-tracks.elastic.co/pmc/documents.json.bz2"
+size = 5931724449
+sha256 = ""
+license = "CC-BY-2.0"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 574199
+notes = "not pinned (5.9 GB): pin in B1"
+
+[datasets.nyc_taxis]
+url = "https://rally-tracks.elastic.co/nyc_taxis/documents.json.bz2"
+size = 4820107188
+sha256 = ""
+license = "Public domain (NYC Open Data Law)"
+license_class = "ok"
+tier = "L2"
+format = "ndjson-source"
+compression = "bz2"
+converter = "rally"
+docs = 165346692
+notes = "not pinned (4.8 GB): pin in B1"
+
+[datasets.big5_60]
+url = "https://dbyiw3u3rf9yr.cloudfront.net/corpora/big5/documents-60.json.zst"
+size = 4309639180
+sha256 = ""
+license = "Apache-2.0"
+license_class = "ok"
+tier = "L2"
+format = "ndjson-source"
+compression = "zst"
+converter = "rally"
+notes = "not pinned (4.3 GB): pin in B1"
+
+[datasets.nginx_access_0]
+url = "https://rally-tracks.elastic.co/observability/logging/nginx/demo.elastic.co/nginx.access/raw/document-0.json.zst"
+size = 10435118
+sha256 = "a0a40d7763e9039cc59e932c6462dffb02af08a46f903ad17912495442534b8c"
+license = "Apache-2.0 (Rally elastic/logs track)"
+license_class = "ok"
+tier = "L1"
+format = "ndjson-source"
+compression = "zst"
+converter = "rally"
+
+[datasets.nasa_jul95]
+url = "https://ita.ee.lbl.gov/traces/NASA_access_log_Jul95.gz"
+size = 20676672
+sha256 = "199109ed0f273e095da6ccd5fc9dc4cd8bb58daa06d62135e62090fea9d27488"
+license = "ITA: may be freely redistributed"
+license_class = "ok"
+tier = "L0"
+format = "clf"
+compression = "gz"
+converter = "clf"
+
+[datasets.nasa_aug95]
+url = "https://ita.ee.lbl.gov/traces/NASA_access_log_Aug95.gz"
+size = 16633316
+sha256 = "14995aed0ba4558ab832613ebea9a3ef2d87cb4297fc67f5694e0032bbb6b788"
+license = "ITA: may be freely redistributed"
+license_class = "ok"
+tier = "L0"
+format = "clf"
+compression = "gz"
+converter = "clf"
+
+[datasets.apache_logs_10k]
+url = "https://raw.githubusercontent.com/elastic/examples/master/Common%20Data%20Formats/apache_logs/apache_logs"
+size = 2370789
+sha256 = "f15c31e905f86c7b4b6ab44aee74d0a2086dce89f010187d983edea7ef0364ef"
+license = "Apache-2.0"
+license_class = "ok"
+tier = "L0"
+format = "clf"
+compression = "none"
+converter = "clf"
+docs = 10000
+
+[datasets.secrepo_2017_01_01]
+url = "https://www.secrepo.com/self.logs/access.log.2017-01-01.gz"
+size = 17272
+sha256 = "0f2d74c670eccda1d9bfef908df59796d4164171412044082819f953c716c58e"
+license = "CC-BY-4.0"
+license_class = "ok"
+tier = "L0"
+format = "clf"
+compression = "gz"
+converter = "clf"
+
+[datasets.loghub_bgl]
+url = "https://zenodo.org/records/8196385/files/BGL.zip?download=1"
+size = 0
+sha256 = ""
+license = "CC-BY-4.0 (Zenodo); repo README says research/academic use"
+license_class = "ask"
+tier = "L1"
+format = "loghub-raw"
+compression = "zip"
+converter = "loghub"
+notes = "Q9: confirm test use before CI; zip must be unpacked first"
+
+[datasets.kaggle_web_access]
+url = "https://www.kaggle.com/datasets/eliasdabbas/web-server-access-logs"
+size = 0
+sha256 = ""
+license = "CC0 (page metadata)"
+license_class = "blocked"
+tier = "L1"
+format = "clf"
+compression = "zip"
+converter = "clf"
+notes = "needs a Kaggle login/API token"
+
+[datasets.ait_log_v2]
+url = "https://zenodo.org/records/5789064"
+size = 0
+sha256 = ""
+license = "CC-BY-NC-SA-4.0"
+license_class = "blocked"
+tier = "L2"
+format = "mixed"
+compression = "zip"
+converter = "loghub"
+notes = "non-commercial licence: never in CI artefacts (Q9)"
