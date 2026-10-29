@@ -23,6 +23,9 @@ pub enum PitApi {
 pub struct ClusterInfo {
     pub flavor: Flavor,
     pub version: Version,
+    /// Elasticsearch OSS build (`version.build_flavor == "oss"`, 6.3-7.10):
+    /// no X-Pack, so no PIT, ILM or security.
+    pub oss: bool,
 }
 
 fn lenient_version(raw: &str) -> Option<Version> {
@@ -47,6 +50,7 @@ impl ClusterInfo {
         Self {
             flavor,
             version: lenient_version(version).unwrap_or(Version::new(5, 0, 0)),
+            oss: false,
         }
     }
 
@@ -63,7 +67,10 @@ impl ClusterInfo {
         } else {
             Flavor::Elastic
         };
-        Self::new(flavor, number)
+        let mut info = Self::new(flavor, number);
+        info.oss =
+            flavor == Flavor::Elastic && v["version"]["build_flavor"].as_str() == Some("oss");
+        info
     }
 
     pub fn flavor_name(&self) -> &'static str {
@@ -89,9 +96,20 @@ impl ClusterInfo {
 
     pub fn pit_api(&self) -> Option<PitApi> {
         match self.flavor {
-            Flavor::Elastic if self.version >= Version::new(7, 10, 0) => Some(PitApi::Elastic),
+            Flavor::Elastic if self.version >= Version::new(7, 10, 0) && !self.oss => {
+                Some(PitApi::Elastic)
+            }
             Flavor::OpenSearch if self.version >= Version::new(2, 4, 0) => Some(PitApi::OpenSearch),
             _ => None,
+        }
+    }
+
+    /// `slice` inside a PIT search: Elasticsearch >= 7.15 (older versions
+    /// answer "`slice` cannot be used outside of a scroll context").
+    pub fn supports_sliced_pit(&self) -> bool {
+        match self.flavor {
+            Flavor::Elastic => self.version >= Version::new(7, 15, 0),
+            Flavor::OpenSearch => true,
         }
     }
 
@@ -125,6 +143,14 @@ mod tests {
         let old = ClusterInfo::parse(br#"{"version":{"number":"6.8.23"}}"#);
         assert!(old.has_types());
         assert_eq!(old.pit_api(), None);
+        let oss = ClusterInfo::parse(br#"{"version":{"number":"7.10.2","build_flavor":"oss"}}"#);
+        assert!(oss.oss);
+        assert_eq!(oss.pit_api(), None);
+        let default =
+            ClusterInfo::parse(br#"{"version":{"number":"7.10.2","build_flavor":"default"}}"#);
+        assert_eq!(default.pit_api(), Some(PitApi::Elastic));
+        assert!(!default.supports_sliced_pit());
+        assert!(!default.supports_shard_doc_sort());
         let snap = ClusterInfo::parse(br#"{"version":{"number":"7.10.0-SNAPSHOT"}}"#);
         assert_eq!(snap.version.major, 7);
     }

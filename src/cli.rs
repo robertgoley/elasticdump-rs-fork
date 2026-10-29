@@ -37,23 +37,34 @@ pub enum CompressionType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DumpType {
     Data,
-    Mapping,
-    Settings,
+    Meta(crate::meta::MetaKind),
 }
+
+pub const TYPES: &str = "data, mapping, settings, index, analyzer, alias, template, component_template, index_template, policy, script";
 
 impl DumpType {
     pub fn parse(raw: &str) -> Result<Self, String> {
-        match raw {
-            "data" => Ok(Self::Data),
-            "mapping" => Ok(Self::Mapping),
-            "settings" => Ok(Self::Settings),
-            "analyzer" | "alias" | "template" | "component_template" | "index_template"
-            | "policy" | "script" | "index" => Err(format!(
-                "--type {raw} is not supported by elasticdump-rs (supported: data, mapping, settings)"
-            )),
-            other => Err(format!(
-                "unknown --type '{other}' (supported: data, mapping, settings)"
-            )),
+        use crate::meta::{MetaKind as K, TemplateKind as T};
+        Ok(match raw {
+            "data" => Self::Data,
+            "mapping" => Self::Meta(K::Mapping),
+            "settings" => Self::Meta(K::Settings),
+            "index" => Self::Meta(K::Index),
+            "analyzer" => Self::Meta(K::Analyzer),
+            "alias" => Self::Meta(K::Alias),
+            "template" => Self::Meta(K::Template(T::Legacy)),
+            "component_template" => Self::Meta(K::Template(T::Component)),
+            "index_template" => Self::Meta(K::Template(T::Composable)),
+            "policy" => Self::Meta(K::Policy),
+            "script" => Self::Meta(K::Script),
+            other => return Err(format!("unknown --type '{other}' (supported: {TYPES})")),
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DumpType::Data => "data",
+            DumpType::Meta(k) => k.type_name(),
         }
     }
 }
@@ -108,7 +119,8 @@ pub struct Cli {
     #[arg(long = "output-index")]
     pub output_index: Option<String>,
 
-    /// What to move: data, mapping or settings
+    /// What to move: data, mapping, settings, index, analyzer, alias, template,
+    /// component_template, index_template, policy or script
     #[arg(long = "type", default_value = "data", value_parser = parse_type)]
     pub r#type: DumpType,
 
@@ -245,6 +257,56 @@ pub struct Cli {
     /// Extension: comma-separated settings to drop when restoring settings
     #[arg(long = "excludeSettings")]
     pub exclude_settings: Option<String>,
+
+    // ------------------------------------------------------ metadata types
+    /// Skip templates whose name matches --templateRegex on dump (template types)
+    #[arg(long = "filterSystemTemplates", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub filter_system_templates: Option<bool>,
+
+    /// Regex of template names skipped by --filterSystemTemplates (unanchored match, like JavaScript's RegExp.test)
+    #[arg(long = "templateRegex", default_value = crate::meta::templates::DEFAULT_TEMPLATE_REGEX)]
+    pub template_regex: String,
+
+    /// Extension: skip Elasticsearch-managed templates and ILM policies (_meta.managed: true); default true
+    #[arg(long = "filterManaged", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub filter_managed: Option<bool>,
+
+    /// Extension: --type analyzer on an existing index closes it, updates the analysis and reopens it (takes it offline)
+    #[arg(long = "closeIndex", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub close_index: Option<bool>,
+
+    /// Extension: comma-separated dotted fields dropped from template bodies (e.g. template.lifecycle,allow_auto_create)
+    #[arg(long = "excludeTemplateFields")]
+    pub exclude_template_fields: Option<String>,
+
+    /// Extension: translate Elasticsearch ILM policies to OpenSearch ISM on restore/copy (off by default)
+    #[arg(long = "convertIlmToIsm", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub convert_ilm_to_ism: Option<bool>,
+
+    /// Extension: with --convertIlmToIsm, drop ILM parts without an ISM equivalent (warned) instead of failing
+    #[arg(long = "lenientPolicyConversion", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub lenient_policy_conversion: Option<bool>,
+
+    /// Extension: metadata file line format: string (elasticdump's JSON string literal, default) or object
+    #[arg(long = "metaFormat", default_value = "string", value_parser = ["string", "object"])]
+    pub meta_format: String,
+
+    // ------------------------------------------------------------ renaming
+    /// Extension: rename index name prefixes, OLD:NEW (repeatable; first matching rule wins)
+    #[arg(long = "renamePrefix", action = ArgAction::Append)]
+    pub rename_prefix: Vec<String>,
+
+    /// Extension: rename indices with REGEX:REPLACEMENT ($1 / ${name} captures; repeatable; tried after --renamePrefix)
+    #[arg(long = "renameIndex", action = ArgAction::Append)]
+    pub rename_index: Vec<String>,
+
+    /// Extension: apply the rename rules to alias names too
+    #[arg(long = "renameAliases", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub rename_aliases: Option<bool>,
+
+    /// Extension: apply the rename rules to template index_patterns and ISM ism_template patterns (affects future indices)
+    #[arg(long = "renamePatterns", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub rename_patterns: Option<bool>,
 
     // ------------------------------------------------- headers and params
     /// JSON object of headers for every request
@@ -470,6 +532,12 @@ impl Cli {
     pub fn no_implicit_retry(&self) -> bool {
         is(self.no_implicit_retry)
     }
+    pub fn filter_system_templates(&self) -> bool {
+        self.filter_system_templates.unwrap_or(true)
+    }
+    pub fn filter_managed(&self) -> bool {
+        self.filter_managed.unwrap_or(true)
+    }
     pub fn search_with_template(&self) -> bool {
         is(self.search_with_template)
     }
@@ -575,16 +643,6 @@ const OUT_OF_SCOPE: &[(&str, OosAction, &str)] = &[
     ),
     ("s3*", OosAction::Warn, "S3 is not supported"),
     ("csv*", OosAction::Warn, "CSV is not supported"),
-    (
-        "templateRegex",
-        OosAction::Warn,
-        "templates are not supported",
-    ),
-    (
-        "filterSystemTemplates",
-        OosAction::Warn,
-        "templates are not supported",
-    ),
     (
         "heapSnapshot",
         OosAction::Warn,
@@ -731,17 +789,24 @@ mod tests {
 
     #[test]
     fn type_validation() {
+        use crate::meta::{MetaKind, TemplateKind};
         assert_eq!(
             parse(&["--type", "mapping"]).unwrap().r#type,
-            DumpType::Mapping
+            DumpType::Meta(MetaKind::Mapping)
         );
         assert_eq!(
             parse(&["--type=settings"]).unwrap().r#type,
-            DumpType::Settings
+            DumpType::Meta(MetaKind::Settings)
         );
-        let err = parse(&["--type", "analyzer"]).unwrap_err().to_string();
-        assert!(err.contains("not supported"), "{err}");
-        assert!(parse(&["--type", "bogus"]).is_err());
+        for t in TYPES.split(", ") {
+            assert_eq!(parse(&["--type", t]).unwrap().r#type.name(), t);
+        }
+        assert_eq!(
+            parse(&["--type", "index_template"]).unwrap().r#type,
+            DumpType::Meta(MetaKind::Template(TemplateKind::Composable))
+        );
+        let err = parse(&["--type", "bogus"]).unwrap_err().to_string();
+        assert!(err.contains("script"), "{err}");
     }
 
     #[test]
@@ -778,7 +843,7 @@ mod tests {
             "--s3Region",
             "us-east-1",
             "--csvDelimiter=;",
-            "--templateRegex",
+            "--heapSnapshot",
             "--output",
             "b",
         ]))

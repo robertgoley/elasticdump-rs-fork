@@ -66,6 +66,7 @@ zstd = { version = "0.13", default-features = false }
 memchr = "2"
 rust-ini = "0.21"
 semver = "1"
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

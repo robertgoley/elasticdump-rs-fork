@@ -117,6 +117,32 @@ impl Cluster {
             .unwrap()
     }
 
+    /// `(major, minor)` of the cluster version.
+    pub async fn vnum(&self) -> (u64, u64) {
+        let v = self.version().await;
+        let mut it = v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0));
+        (it.next().unwrap(), it.next().unwrap_or(0))
+    }
+
+    /// Elasticsearch OSS build (no X-Pack: no PIT, ILM or security).
+    pub async fn is_oss(&self) -> bool {
+        self.ok("GET", "", None).await["version"]["build_flavor"] == "oss"
+    }
+
+    /// ILM (Elasticsearch with X-Pack) or ISM (OpenSearch) available.
+    pub async fn has_policies(&self) -> bool {
+        !self.is_oss().await
+    }
+
+    /// Point-in-time search: Elasticsearch >= 7.10 with X-Pack, OpenSearch >= 2.4.
+    pub async fn has_pit(&self) -> bool {
+        let v = self.vnum().await;
+        match self.engine {
+            Engine::Elasticsearch => v >= (7, 10) && !self.is_oss().await,
+            Engine::OpenSearch => v >= (2, 4),
+        }
+    }
+
     /// URL with admin basic-auth credentials embedded (for the CLI under test).
     pub fn url_with_auth(&self, path: &str) -> String {
         let mut u =

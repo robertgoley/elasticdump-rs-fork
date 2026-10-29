@@ -9,5 +9,6 @@ mod data;
 mod engine;
 mod files;
 mod meta;
+mod meta_types;
 mod smoke;
 mod tls_auth;

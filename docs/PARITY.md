@@ -16,7 +16,13 @@ Legend:
 | `--type data` | data | ✅ | keep | – |
 | `--type mapping` | – | ✅ | `MappingSource`/`MappingSink` (§6.4) | M3 |
 | `--type settings` | – | ✅ | `SettingsSource`/`SettingsSink` (§6.5) | M3 |
-| `--type index` | – | ➖ (out of scope per §11 defaults) | *Stretch*: `GET /{idx}` → `PUT /{idx}` (settings+mappings+aliases), reusing the settings code | M6 (opt) |
+| `--type index` | – | ✅ | `GET /{idx\|*}` → one `PUT /{idx}` (settings + typeless mappings + aliases), generated settings stripped, `--skip-existing` | M7 |
+| `--type analyzer` | – | ✅ | `{idx}/_settings`; new index → created with the analysis; existing → error / `--skip-existing` / `--closeIndex` (close, PUT, always reopen). No 30 s green wait | M8 |
+| `--type alias` | – | ✅ | `GET {idx\|*}/_alias/{alias\|*}`; one atomic `POST /_aliases`; targets follow output-index/prefix/suffix/rename; empty entries skipped; two-segment URL read as `index/alias` with a warning | M8 |
+| `--type template` / `component_template` / `index_template` | – | ✅ | `GET _{kind}/{name\|*}` filtered by `--templateRegex` (cluster) and `--filterManaged`; sequential PUTs; component pre-check for `composed_of`; generated dates stripped; cross-engine fields stripped (c2c) or warned (file); ES < 7.8 refused for component/index templates | M9 |
+| `--type policy` | – | ✅ | ES `_ilm/policy` / OS `_plugins/_ism/policies` (paged). ISM overwrite via `if_seq_no`/`if_primary_term`. ILM→ISM only with `--convertIlmToIsm` (`--lenientPolicyConversion` drops unsafe parts); ISM→ILM refused; ES OSS builds refused | M10–M12 |
+| `--type script` | – | ✅ | `GET _cluster/state/metadata?filter_path=**.stored_scripts` → `{stored_scripts:[…]}`; `POST _scripts/{id}` | M11 |
+| `--renamePrefix` / `--renameIndex` / `--renameAliases` / `--renamePatterns` (extension) | – | ✅ | Rename rules for every index-writing type; rename then prefix/suffix; usage error with an explicit output index or file output; names validated | M7–M13 |
 | `--overwrite` | false | ✅ | Keep the staged atomic writer. Also applies to split parts | – |
 | `--prefix` / `--suffix` | '' | ✅ | Applied to the output index name only | M2 |
 | `--help` / `--version` | – | ✅ | Also add elasticdump-style long help text | M1 |
@@ -109,34 +115,28 @@ Legend:
 
 ### 3.6a Engines and versions tested
 
-| Engine | Version (image) | Profiles | Engine-specific behaviour asserted |
-|---|---|---|---|
-| OpenSearch | 2.19.7 / 3.9.0 (`opensearchproject/opensearch:2`/`:3`) | plain, secure (basic, TLS, PKI) | PIT via `/_search/point_in_time`, `_id` tiebreaker; `index.replication.type` default setting |
-| Elasticsearch | 8.6.1 (`bitnamilegacy/elasticsearch:8.6.1-debian-11-r0`, pinned regression tag) and 9.1.2 (`bitnamilegacy/elasticsearch:9.1.2-debian-12-r0`, highest tag in the repo on 2026-10-28) | plain, secure (basic, TLS, client cert verified) | PIT via `POST /{index}/_pit`, `_shard_doc` tiebreaker; `_tier_preference` default setting; typeless mapping and bulk |
-| ES ↔ OpenSearch | both of the above | file dump/restore (sequential), cluster to cluster (`cross`, memory-gated) | cluster→cluster strips the source engine's keys with a warning; file restore warns (ES→OS) or fails with a hint (OS→ES) unless `--excludeSettings` names the key |
-
-Not covered: Elasticsearch < 8 in CI (the typed/ES 6 paths are unit- and mock-tested only), and Elasticsearch
-PKI-realm (certificate-only) auth, which needs a paid licence.
+See [TESTING-MATRIX.md](../TESTING-MATRIX.md) for the exact images, digests, counts and per-version gaps:
+OpenSearch 1.3.20 / 2.x / 3.x, Elasticsearch 7.10.2 (OSS and default builds), 7.17.29, 8.6.1, 8.19.23 and 9.1.2,
+each plain and secured, plus ES ↔ OpenSearch file and cluster-to-cluster legs. Minimum supported: ES 7.x,
+OpenSearch 1.x.
 
 ### 3.7 Explicitly out of scope
 
 The following are accepted with a warning, or rejected, according to the policy below:
 
-* the `analyzer`, `alias`, `template`, `component_template`, `index_template`, `policy` and `script` types;
 * CSV (`csv://`, `--csv*`);
 * S3/MinIO (`s3://`, `--s3*`);
 * AWS (`--aws*`, `--sessionToken`);
 * `--transform`, `--searchBodyTemplate`, `--inputTransport`/`--outputTransport`;
 * `multielasticdump`;
 * `--inputSocksProxy/Port` and `--outputSocksProxy/Port`;
-* `--filterSystemTemplates`, `--templateRegex`;
 * `--heapSnapshot`;
 * `--openSearchServerless` and `--force-os-version` (serverless offset/limit mode);
 * `--delete` and `--delete-with-routing` (deferred; see §9);
 * `--jsonLines` (dead in Node: it exists only in the defaults table).
 
 **Policy:**
-* A `--type` outside `data|mapping|settings[|index]` → **error** (exit 2) naming the unsupported type.
+* An unknown `--type` → **error** (exit 2) naming it (all 11 Node types are implemented).
 * A flag that only tunes an out-of-scope feature (e.g. `--s3Region`, `--csvDelimiter`, `--templateRegex`) → warning, then ignored, so existing wrapper scripts still run.
 * A flag that would change the data if silently ignored (`--transform`, `--searchBodyTemplate`, `--inputTransport`, `--outputTransport`, `--delete`, s3/csv URLs, AWS signing, socks proxy) → **error**.
 

@@ -148,15 +148,15 @@ async fn read_http_request(socket: &mut TcpStream) -> Option<String> {
     };
 
     let content_length = parse_content_length(&buffer[..header_end]).unwrap_or(0);
-    let mut body_read = buffer.len() - header_end;
-    while body_read < content_length {
+    while buffer.len() - header_end < content_length {
         let n = socket.read(&mut chunk).await.ok()?;
         if n == 0 {
             break;
         }
-        body_read += n;
+        buffer.extend_from_slice(&chunk[..n]);
     }
-    Some(String::from_utf8_lossy(&buffer[..header_end]).into_owned())
+    // request line + headers, then the body (if any)
+    Some(String::from_utf8_lossy(&buffer).into_owned())
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -195,6 +195,9 @@ async fn write_response(socket: &mut TcpStream, status: u16, body: &str) -> std:
 fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        409 => "Conflict",
         408 => "Request Timeout",
         429 => "Too Many Requests",
         500 => "Internal Server Error",

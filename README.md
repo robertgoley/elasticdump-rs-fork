@@ -68,7 +68,8 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 `elasticdump-rs --help` lists everything. Groups:
 
 * **Endpoints/types:** `--input`, `--output` (URL, file, or `$`), `--input-index`/`--output-index` (`index[/type]`),
-  `--type data|mapping|settings`, `--overwrite`, `--prefix`/`--suffix`, `--quiet`, `--debug`, `--format human`.
+  `--type data|mapping|settings|index|analyzer|alias|template|component_template|index_template|policy|script`,
+  `--overwrite`, `--prefix`/`--suffix`, `--quiet`, `--debug`, `--format human`.
 * **Retrieval:** `--limit` (default 100), `--offset`, `--size`, `--searchBody` (JSON or `@file`),
   `--searchWithTemplate`, `--scrollTime`, `--scrollId`, `--searchAfter`, `--pit`, `--pitKeepAlive`,
   `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`).
@@ -79,14 +80,25 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   `--carryoverConcurrencyCount`, `--maxSockets`, `--timeout`.
 * **Retries:** `--retryAttempts` (0 = Node's 4 implicit retries), `--retryDelay` (5000 ms).
 * **Auth/TLS:** `--httpAuthFile`, `--tlsAuth`, `--ca`/`--cert`/`--key`/`--pass` and their `--input-*`/`--output-*` forms.
+* **Metadata:** `--templateRegex`, `--filterSystemTemplates` (Node), and the extensions `--filterManaged`
+  (default true), `--closeIndex`, `--excludeTemplateFields`, `--convertIlmToIsm`, `--lenientPolicyConversion`,
+  `--metaFormat string|object`, `--renamePrefix`, `--renameIndex`, `--renameAliases`, `--renamePatterns`.
 
 Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices`, `--workers`, `--bufferSize`,
 `--searchType scroll|pit`, `--skip-existing`, `--excludeSettings`, `--maxBulkBytes`, `--retryOn`,
 `--retryBackoff`, `--noImplicitRetry`, `--insecure`/`--input-insecure`/`--output-insecure`, `--username`/`--password`
 (input), `--caFile`, `--requestTimeout`.
 
-Out of scope (rejected or ignored with a warning, see `docs/PARITY.md` §3.7): analyzer/alias/template/policy
-types, CSV, S3/MinIO, AWS signing, transforms, `multielasticdump`, `--delete`, `--type index`.
+Metadata types: `index`, `analyzer`, `alias`, `template`, `component_template`, `index_template`, `policy`
+and `script` (see [Types](#types)). Index renaming: `--renamePrefix`, `--renameIndex`, `--renameAliases`,
+`--renamePatterns` (see [Renaming indices](#renaming-indices)).
+
+Out of scope (rejected or ignored with a warning, see `docs/PARITY.md` §3.7): CSV, S3/MinIO, AWS signing,
+transforms, `multielasticdump`, `--delete`.
+
+Where this tool differs from Node because Node is incomplete or buggy, see [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md);
+for every place the tool changes what is loaded, and for the tested versions, see
+[TESTING-MATRIX.md](TESTING-MATRIX.md). Security scanning: [SECURITY-CVE.md](SECURITY-CVE.md).
 
 ## Intentional differences from Node elasticdump
 
@@ -111,11 +123,103 @@ types, CSV, S3/MinIO, AWS signing, transforms, `multielasticdump`, `--delete`, `
 * **Big integers and unicode** are preserved byte-for-byte in both directions (no `--support-big-int` needed).
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
 * **`--username`/`--password` apply to the input only.**
+* **Metadata types** fix several Node bugs (listed in [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md)); intentional
+  choices: `--filterManaged` (default on), `--output-index`/`--prefix`/`--suffix` apply to alias targets,
+  cluster-level types ignore the output index (warning), the source is read before the target is contacted,
+  `--closeIndex` is opt-in, analyzer restores do not wait for green.
+* **PIT falls back to scroll** on clusters without it (ES OSS builds, OpenSearch < 2.4) and sliced PIT falls back
+  to sliced scroll on ES < 7.15, with a warning; Node fails.
 * **Cluster→cluster settings** drop engine-specific keys (ES `index.lifecycle` and
   `index.routing.allocation.include._tier_preference` going to OpenSearch; OpenSearch `index.replication.type`,
   `plugins.*`, `opendistro.*` going to ES) with a warning. File restores keep them (a file does not say which
   engine wrote it) but warn with the exact `--excludeSettings=` to use; Elasticsearch rejects OpenSearch keys
   outright (the error carries the same hint), while OpenSearch would otherwise store ES keys silently.
+
+## Types
+
+| `--type` | Dump (cluster → file) | Restore (file/cluster → cluster) |
+|---|---|---|
+| `data`, `mapping`, `settings` | as before | as before |
+| `index` | `GET /{index}` (host-only: `GET /*`): settings + mappings + aliases, generated settings stripped | one `PUT /{index}` per index (`--skip-existing` skips existing ones); `data_stream` indices are skipped with a warning |
+| `analyzer` | `{index}/_settings` (the analysis block is what matters) | new index: created with the analysis; existing index: error, `--skip-existing`, or `--closeIndex` (close → update → always reopen; the index is **offline** meanwhile) |
+| `alias` | `GET {index\|*}/_alias/{alias\|*}` (`--input-index idx/alias*` filters) | one atomic `POST /_aliases`; targets follow `--output-index`/`--prefix`/`--suffix`/rename rules |
+| `template` | legacy `_template` | `PUT _template/{name}` (deprecated on ES ≥ 8, warned once) |
+| `component_template` | `_component_template` | `PUT _component_template/{name}` |
+| `index_template` | `_index_template` | `PUT _index_template/{name}`; missing `composed_of` components fail with "restore component templates first" |
+| `policy` | ES: `_ilm/policy`; OpenSearch: `_plugins/_ism/policies` (paged) | same engine only, unless `--convertIlmToIsm` (ES → OpenSearch); OpenSearch overwrites use `if_seq_no`/`if_primary_term` |
+| `script` | stored scripts from `_cluster/state/metadata` (needs the `monitor` cluster privilege) | `POST _scripts/{id}` |
+
+Files keep elasticdump's format (one JSON string literal per file, mappings as an object), so Node and this tool
+read each other's dumps. A file dumped with one `--type` and restored with another fails with
+"this input looks like a --type X dump".
+
+**Full backup and restore order** (each step its own command, all with the same index pattern):
+`component_template` → `index_template` → `template` → `policy` → `script` → `index` (or `settings` + `mapping`)
+→ `alias` → `data`. Templates and policies first so new indices pick them up; aliases after the indices exist.
+The `full_backup_and_restore_in_documented_order` integration test runs exactly this order on every profile.
+
+**Filters.** `--templateRegex` (default elasticdump's `^(metrics|logs|.+_audit_log|.+-index-template|\..+)$`,
+cluster dumps only, `--filterSystemTemplates=false` disables it) and `--filterManaged` (default on; drops
+templates and ILM policies with `_meta.managed: true`, for cluster and file input). Elasticsearch 8/9 ship dozens of
+managed built-ins (`*@template`, `*@mappings`, `*@settings`, `logs`, `metrics`, `synthetics`, APM/OTel templates,
+`7-days-default` … ILM policies) that the Node regex misses; ES 7.17 marks fewer of them (`ilm-history`,
+`synthetics`, the `logs-*`/`metrics-*` component templates and the default ILM policies).
+
+**Cross-engine templates.** Cluster → cluster strips the other engine's fields with a warning
+(ES: `allow_auto_create`, `ignore_missing_component_templates`, `deprecated`, `data_stream_options`,
+`template.lifecycle`, `data_stream.{hidden,allow_custom_routing,failure_store}`; OpenSearch:
+`data_stream.timestamp_field`, `context`) and the settings keys the target rejects. From a file they are only
+warned about, with the exact `--excludeTemplateFields=` to use.
+
+### ILM → ISM conversion (`--convertIlmToIsm`)
+
+Off by default: restoring or copying ILM policies into OpenSearch fails with an error naming the flag, and
+ISM → ILM is always refused. With the flag, each ILM policy becomes one ISM policy with one state per phase
+(`hot` → `warm` → `cold` → `delete`, in that order; a non-zero first `min_age` adds a `pending` state). Every
+dropped or approximated feature is logged as a warning. Unsafe features fail the policy unless
+`--lenientPolicyConversion` is given, which drops them with a `DROPPED …` warning.
+
+| ILM | ISM | Notes |
+|---|---|---|
+| phase `min_age` | transition `min_index_age` (after a rollover: `min_rollover_age`) | ILM counts from rollover, ISM from index creation unless `min_rollover_age` |
+| `set_priority` | `index_priority` | `priority: null` dropped |
+| `rollover` `max_age`/`max_docs`/`max_size`/`max_primary_shard_size` | `min_index_age`/`min_doc_count`/`min_size`/`min_primary_shard_size` | ISM needs `plugins.index_state_management.rollover_alias` on the index (warned) |
+| `allocate` | `replica_count` + `allocation` (`require`/`include`/`exclude`, `wait_for: false`) | |
+| `forcemerge` | `force_merge` | |
+| `shrink` | `shrink` (`num_new_shards` / `max_shard_size`) | |
+| `readonly` | `read_only` | |
+| `delete` | `delete` | `delete_searchable_snapshot` dropped (warned) |
+| `migrate`, implicit tier migration | — | dropped with a warning (OpenSearch has no data tiers) |
+| `_meta.description` | `description` | other `_meta` keys and `deprecated` dropped (warned) |
+| `frozen` phase, `searchable_snapshot`, `downsample`, `wait_for_snapshot`, `unfollow`, `freeze`, `total_shards_per_node`, `index_codec`, `allow_write_after_shrink: true`, `max_primary_shard_docs`, `min_*` rollover conditions, unknown actions | — | **refused** unless `--lenientPolicyConversion` |
+
+Converted policies are not attached to indices (ILM attaches through `index.lifecycle.name`, ISM through
+`ism_template` or `POST _plugins/_ism/add/<index>`); the tool says so after converting. Tested on OpenSearch 1.3,
+2.x and 3.x, from ES 7.17, 8.6, 8.19 and 9.1 exports and cluster to cluster.
+
+## Renaming indices
+
+`--renamePrefix old:new` (repeatable) and `--renameIndex '<regex>:<replacement>'` (repeatable, Rust `regex`
+syntax, `$1`/`${name}` captures; write `${1}abc` when letters follow) rename every index a run writes, for
+`data`, `mapping`, `settings`, `index`, `analyzer` and `alias` (the indices the aliases point at). The first
+matching rule wins (`--renamePrefix` rules are tried first); unmatched names stay as they are.
+
+* Order: rename first, then `--prefix`/`--suffix`.
+* With an explicit single `--output-index` (or an index in the output URL) rename rules are a usage error, as is a
+  file output.
+* `--renameAliases` also renames alias names (alias, index and template types) with the same rules.
+* `--renamePatterns` also renames template `index_patterns` (and legacy `template`) and ISM `ism_template`
+  patterns; without it they are left alone.
+* Each rename is logged once (`Renaming index 'a' -> 'b' (rule)`); invalid results (uppercase, illegal
+  characters, leading `-_+`, `.`/`..`, > 255 bytes) fail before anything is written.
+
+```bash
+# dump every logstash-* index, restore it as logstash-srctag-*
+elasticdump-rs --input http://es:9200/logstash-* --output idx.json --type index
+elasticdump-rs --input http://es:9200/logstash-* --output data.json
+elasticdump-rs --input idx.json  --output http://os:9200 --type index --renamePrefix logstash-:logstash-srctag- --renameAliases
+elasticdump-rs --input data.json --output http://os:9200 --renamePrefix logstash-:logstash-srctag-
+```
 
 ## Reliability
 
@@ -231,7 +335,17 @@ tiebreaker, default settings keys, typeless APIs) are asserted per engine rather
 | `opensearch-plain` / `-secure` | `opensearchproject/opensearch:$OS_TAG` | secure = security plugin, basic auth, TLS, client-cert (PKI) auth |
 | `elasticsearch8-plain` / `-secure` | `bitnamilegacy/elasticsearch:8.6.1-debian-11-r0` (`ES8_TAG`) | same setup as below; regression target for ES 8 |
 | `elasticsearch-plain` / `-secure` | `bitnamilegacy/elasticsearch:9.1.2-debian-12-r0` (`ES_TAG`, latest tag) | bitnami env (`ELASTICSEARCH_HEAP_SIZE`, `ELASTICSEARCH_ENABLE_SECURITY`, `ELASTICSEARCH_ENABLE_REST_TLS`, PEM certs from a generated CA), data dir owned by the image's non-root UID 1001 |
+| `es717-plain` / `-secure` | `docker.elastic.co/elasticsearch/elasticsearch:7.17.29` (official) | latest 7.17 patch; bitnamilegacy stops at 7.17.26 |
+| `es710-plain` | `bitnamilegacy/elasticsearch:7.10.2` | the OSS build (no X-Pack: no PIT, ILM, security) |
+| `es710-secure` | `docker.elastic.co/elasticsearch/elasticsearch:7.10.2` (official) | default distribution: security, PIT, ILM |
+| `es819-plain` / `-secure` | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` (official) | bitnamilegacy stops at 8.18.0 |
+| `os13-plain` / `-secure` | `opensearchproject/opensearch:1.3.20` | demo security config (`admin`/`admin`) |
 | `cross` | one plain node of each | needs `CROSS_MIN_MB` (default 2200) MB free, otherwise SKIP |
+
+`scripts/it/run.sh matrix` runs the four older/extra versions (plain and secure, one container at a time);
+`run.sh es717` etc. run one version. Exact images, digests and the latest counts are in
+[TESTING-MATRIX.md](TESTING-MATRIX.md). Minimum supported: Elasticsearch 7.x, OpenSearch 1.x (ES 6.8 is out of
+scope; its typed paths remain unit- and mock-tested only).
 
 The secured Elasticsearch profile uses basic auth over HTTPS and verifies client certificates
 (`client_authentication: optional`; a rogue certificate is rejected), but cannot authenticate *by* certificate:
@@ -239,7 +353,7 @@ the PKI realm is a paid X-Pack feature with no bitnami switch, so the client-cer
 the certificate there. Certificate-only auth is covered by the OpenSearch secure profile.
 
 Cross-engine file dump/restore runs one container at a time: each plain profile exports a zstd dump plus the
-expected result (one directory per engine major, e.g. `elasticsearch-8`), and the other engine restores every
+expected result (one directory per engine version, e.g. `elasticsearch-8.19.23`), and the other engine restores every
 such export later in the same `all` run. Cluster-to-cluster needs both nodes at
 once (256m heaps, lean JVM flags, ~1.3 GB RSS together plus headroom); on hosts without that much free memory it
 is skipped with a message instead of risking the OOM killer.

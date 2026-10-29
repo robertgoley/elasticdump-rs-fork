@@ -51,6 +51,9 @@ pub struct BulkOptions {
     pub doc_type: Option<String>,
     pub prefix: String,
     pub suffix: String,
+    /// `--renamePrefix`/`--renameIndex` (includes prefix/suffix); used when
+    /// documents keep their own `_index`.
+    pub rename: Option<std::sync::Arc<crate::rename::IndexRenamer>>,
     pub action: BulkAction,
     pub handle_version: bool,
     pub version_type: Option<String>,
@@ -251,6 +254,11 @@ impl BulkSink {
                 anyhow!("document has no _index and no output index was given (--output-index)")
             })?,
         };
+        if self.opts.index.is_none() {
+            if let Some(r) = &self.opts.rename {
+                return r.index(&base);
+            }
+        }
         Ok(format!("{}{}{}", self.opts.prefix, base, self.opts.suffix))
     }
 
@@ -557,6 +565,7 @@ mod tests {
             doc_type: None,
             prefix: String::new(),
             suffix: String::new(),
+            rename: None,
             action: BulkAction::Index,
             handle_version: false,
             version_type: None,

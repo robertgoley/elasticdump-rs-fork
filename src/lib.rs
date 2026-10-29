@@ -5,12 +5,13 @@ pub mod http;
 pub mod meta;
 pub mod output;
 pub mod pipeline;
+pub mod rename;
 pub mod retrieval;
 
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use sonic_rs::json;
 
@@ -64,12 +65,31 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
         return Err(usage("--fileSize/--maxRows require a file --output"));
     }
     if !input.is_es() && !output.is_es() && cli.r#type != DumpType::Data {
+        return Err(usage(format!(
+            "--type {} needs Elasticsearch/OpenSearch on at least one side",
+            cli.r#type.name()
+        )));
+    }
+    let renaming = !cli.rename_prefix.is_empty() || !cli.rename_index.is_empty();
+    if renaming {
+        match output {
+            Endpoint::Es(ep) if ep.index.is_some() => {
+                return Err(usage(format!(
+                    "--renamePrefix/--renameIndex rename source index names and cannot be combined with an explicit output index ('{}'); use a host-only --output",
+                    ep.index.as_deref().unwrap_or_default()
+                )));
+            }
+            Endpoint::Es(_) => {}
+            _ => {
+                return Err(usage(
+                    "--renamePrefix/--renameIndex apply when restoring or copying to a cluster, not to file output",
+                ));
+            }
+        }
+        renamer(cli)?;
+    } else if cli.rename_aliases.unwrap_or(false) || cli.rename_patterns.unwrap_or(false) {
         return Err(usage(
-            format!(
-                "--type {:?} needs Elasticsearch/OpenSearch on at least one side",
-                cli.r#type
-            )
-            .to_lowercase(),
+            "--renameAliases/--renamePatterns need --renamePrefix or --renameIndex rules",
         ));
     }
     if cli.scroll_id.is_some()
@@ -80,7 +100,10 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
         ));
     }
     if cli.r#type != DumpType::Data && (cli.offset > 0 || cli.size >= 0) {
-        log::warn!("--offset/--size are ignored for --type {:?}", cli.r#type);
+        log::warn!(
+            "--offset/--size are ignored for --type {}",
+            cli.r#type.name()
+        );
     }
     Ok(())
 }
@@ -225,6 +248,7 @@ async fn build_sink(
                 ignore_errors: cli.ignore_errors(),
                 max_bulk_bytes: max_bulk_bytes.max(1) as usize,
                 retry,
+                rename: renamer(cli)?.map(std::sync::Arc::new),
             };
             Ok(Sink::Bulk(Box::new(
                 pipeline::BulkSink::new(client, opts, tokio_util::sync::CancellationToken::new())
@@ -292,7 +316,7 @@ async fn es_source_options(
     gate: crate::http::gate::RequestGate,
 ) -> Result<retrieval::EsSourceOptions> {
     let client = config::build_client(cli, ep, Direction::Input, gate)?;
-    let search_type = match cli.effective_search() {
+    let mut search_type = match cli.effective_search() {
         EffectiveSearch::Scroll => SearchType::Scroll,
         EffectiveSearch::Pit => SearchType::PointInTime,
         EffectiveSearch::SearchAfter => SearchType::SearchAfter,
@@ -304,22 +328,40 @@ async fn es_source_options(
             .info(retry, &tokio_util::sync::CancellationToken::new())
             .await?
             .clone();
-        let Some(api) = info.pit_api() else {
-            bail!(
-                "{} {} does not support point-in-time search",
-                info.flavor_name(),
-                info.version
-            );
-        };
-        let sort = if info.supports_shard_doc_sort() {
-            json!(["_shard_doc"])
-        } else {
-            // `_doc` alone loses documents across PIT pages on OpenSearch;
-            // `_id` is the tiebreaker. `unmapped_type` keeps indices without
-            // any mapping searchable.
-            json!([{"_doc": "asc"}, {"_id": {"order": "asc", "unmapped_type": "keyword"}}])
-        };
-        (api, sort)
+        match info.pit_api() {
+            Some(_) if cli.slices > 1 && !info.supports_sliced_pit() => {
+                log::warn!(
+                    "{} {} cannot slice a point-in-time search (needs Elasticsearch >= 7.15); using sliced scroll instead",
+                    info.flavor_name(),
+                    info.version
+                );
+                search_type = SearchType::Scroll;
+                (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
+            }
+            Some(api) => {
+                let sort = if info.supports_shard_doc_sort() {
+                    json!(["_shard_doc"])
+                } else {
+                    // `_doc` alone loses documents across PIT pages on
+                    // OpenSearch; `_id` is the tiebreaker. `unmapped_type`
+                    // keeps indices without any mapping searchable.
+                    json!([{"_doc": "asc"}, {"_id": {"order": "asc", "unmapped_type": "keyword"}}])
+                };
+                (api, sort)
+            }
+            None => {
+                // ES < 7.10 and OpenSearch < 2.4 have no PIT: scroll gives the
+                // same snapshot-consistent result.
+                log::warn!(
+                    "{} {}{} does not support point-in-time search (needs Elasticsearch >= 7.10 with X-Pack, or OpenSearch >= 2.4); using scroll instead",
+                    info.flavor_name(),
+                    info.version,
+                    if info.oss { " (OSS build)" } else { "" }
+                );
+                search_type = SearchType::Scroll;
+                (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
+            }
+        }
     } else {
         (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
     };
@@ -369,31 +411,90 @@ async fn es_source_options(
     })
 }
 
+/// `--renamePrefix`/`--renameIndex` rules (with `--prefix`/`--suffix`), if any.
+fn renamer(cli: &Cli) -> Result<Option<rename::IndexRenamer>> {
+    if cli.rename_prefix.is_empty() && cli.rename_index.is_empty() {
+        return Ok(None);
+    }
+    rename::IndexRenamer::new(
+        &cli.rename_prefix,
+        &cli.rename_index,
+        &cli.prefix,
+        &cli.suffix,
+    )
+    .map(Some)
+    .map_err(|e| usage(format!("{e:#}")))
+}
+
+fn csv_list(raw: Option<&str>) -> Vec<String> {
+    raw.map(|s| {
+        s.split(',')
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 async fn run_meta(
     cli: &Cli,
+    kind: meta::MetaKind,
     input: &Endpoint,
     output: &Endpoint,
     retry: crate::http::RetryPolicy,
     gate: crate::http::gate::RequestGate,
 ) -> Result<pipeline::WriteReport> {
-    let kind = if cli.r#type == DumpType::Mapping {
-        meta::MetaKind::Mapping
-    } else {
-        meta::MetaKind::Settings
-    };
     let cancel = tokio_util::sync::CancellationToken::new();
-    let (src_client, src_index) = match input {
-        Endpoint::Es(ep) => (
-            Some(config::build_client(
-                cli,
-                ep,
-                Direction::Input,
-                gate.clone(),
-            )?),
-            ep.index.clone(),
-        ),
-        _ => (None, None),
+    let (src_client, src_info, src_index, src_doc_type) = match input {
+        Endpoint::Es(ep) => {
+            let c = config::build_client(cli, ep, Direction::Input, gate.clone())?;
+            let info = c.info(retry, &cancel).await?.clone();
+            (Some(c), Some(info), ep.index.clone(), ep.doc_type.clone())
+        }
+        _ => (None, None, None, None),
     };
+    let template_filter = match (kind, cli.filter_system_templates()) {
+        (meta::MetaKind::Template(_), true) => Some(regex::Regex::new(&cli.template_regex).map_err(|e| {
+            usage(format!(
+                "--templateRegex: unsupported pattern (JavaScript look-around and backreferences are not available): {e}"
+            ))
+        })?),
+        _ => None,
+    };
+    if cli.close_index.unwrap_or(false) && kind != meta::MetaKind::Analyzer {
+        log::warn!("--closeIndex only applies to --type analyzer");
+    }
+    let mut opts = meta::MetaOptions::new(kind, retry);
+    opts.skip_existing = cli.skip_existing();
+    opts.ignore_errors = cli.ignore_errors();
+    opts.exclude_settings = csv_list(cli.exclude_settings.as_deref());
+    // Engine-specific settings and fields are stripped automatically only for
+    // cluster→cluster copies, where both flavors are known.
+    opts.source_info = match (&src_info, output) {
+        (Some(s), Endpoint::Es(_)) => Some(s.clone()),
+        _ => None,
+    };
+    opts.object_format = cli.meta_format == "object";
+    opts.template_filter = template_filter;
+    opts.filter_managed = cli.filter_managed();
+    opts.close_index = cli.close_index.unwrap_or(false);
+    opts.exclude_template_fields = csv_list(cli.exclude_template_fields.as_deref());
+    opts.convert_ilm_to_ism = cli.convert_ilm_to_ism.unwrap_or(false);
+    opts.lenient_policy_conversion = cli.lenient_policy_conversion.unwrap_or(false);
+    opts.rename_aliases = cli.rename_aliases.unwrap_or(false);
+    opts.rename_patterns = cli.rename_patterns.unwrap_or(false);
+    if opts.lenient_policy_conversion && !opts.convert_ilm_to_ism {
+        log::warn!("--lenientPolicyConversion has no effect without --convertIlmToIsm");
+    }
+    let src = meta::MetaSource {
+        client: src_client,
+        info: src_info,
+        index: src_index,
+        doc_type: src_doc_type,
+        file: file_path(input),
+    };
+    // read (and validate) the source before touching the target
+    let doc = meta::read(&src, &opts).await?;
     let (dst_client, dst_info, dst_ep) = match output {
         Endpoint::Es(ep) => {
             let c = config::build_client(cli, ep, Direction::Output, gate)?;
@@ -402,47 +503,47 @@ async fn run_meta(
         }
         _ => (None, None, None),
     };
-    // Engine-specific settings are stripped automatically only for
-    // cluster→cluster copies, where both flavors are known.
-    let source_info = match (&src_client, &dst_client) {
-        (Some(s), Some(_)) if kind == meta::MetaKind::Settings => {
-            Some(s.info(retry, &cancel).await?.clone())
-        }
-        _ => None,
+    let renamer = match renamer(cli)? {
+        Some(r) => r,
+        None => rename::IndexRenamer::new(&[], &[], &cli.prefix, &cli.suffix)?,
     };
-    let opts = meta::MetaOptions {
-        kind,
-        retry,
-        skip_existing: cli.skip_existing(),
-        ignore_errors: cli.ignore_errors(),
-        exclude_settings: cli
-            .exclude_settings
-            .as_deref()
-            .map(|s| {
-                s.split(',')
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default(),
-        source_info,
-    };
-    let src = meta::MetaSource {
-        client: src_client,
-        index: src_index,
-        file: file_path(input),
-    };
-    let doc = meta::read(&src, &opts).await?;
     let dst = meta::MetaTarget {
         client: dst_client,
         info: dst_info,
         index: dst_ep.and_then(|e| e.index.clone()),
         doc_type: dst_ep.and_then(|e| e.doc_type.clone()),
-        prefix: cli.prefix.clone(),
-        suffix: cli.suffix.clone(),
+        renamer,
         file: file_options(cli, output)?,
     };
     meta::write(doc, &dst, &opts).await
+}
+
+/// `--type alias` with a two-segment `--input` URL and no `--input-index`:
+/// elasticdump reads `host/index/alias`; elasticdump-rs would read a base
+/// path. Follow elasticdump, with a warning.
+fn node_alias_url(cli: &Cli, input: &mut Endpoint) {
+    let Endpoint::Es(ep) = input else { return };
+    if cli.input_index.is_some() {
+        return;
+    }
+    let segs: Vec<String> = ep
+        .base
+        .path_segments()
+        .map(|s| s.filter(|x| !x.is_empty()).map(String::from).collect())
+        .unwrap_or_default();
+    if segs.len() != 1 || ep.index.is_none() {
+        return;
+    }
+    let index = segs[0].clone();
+    let alias = ep.index.take();
+    log::warn!(
+        "--type alias: reading the --input URL path as <index>/<alias> ('{index}' / '{}') like elasticdump; use --input-index {index}/{} to say so explicitly",
+        alias.as_deref().unwrap_or_default(),
+        alias.as_deref().unwrap_or_default()
+    );
+    ep.base.set_path("/");
+    ep.index = Some(index);
+    ep.doc_type = alias;
 }
 
 pub async fn run() -> Result<()> {
@@ -461,6 +562,9 @@ pub async fn run() -> Result<()> {
         .map_err(|e| usage(format!("{e:#}")))?;
     let mut output = endpoint::parse(&cli.output, Direction::Output, cli.output_index.as_deref())
         .map_err(|e| usage(format!("{e:#}")))?;
+    if cli.r#type == DumpType::Meta(meta::MetaKind::Alias) {
+        node_alias_url(&cli, &mut input);
+    }
     validate(&cli, &input, &output)?;
 
     let auth_file = match &cli.http_auth_file {
@@ -475,10 +579,10 @@ pub async fn run() -> Result<()> {
     }
 
     log::info!(
-        "Starting dump: {} -> {} (type {:?})",
+        "Starting dump: {} -> {} (type {})",
         endpoint::redacted_endpoint(&cli.input),
         endpoint::redacted_endpoint(&cli.output),
-        cli.r#type
+        cli.r#type.name()
     );
 
     let retry = config::retry_policy(&cli)?;
@@ -505,9 +609,7 @@ pub async fn run() -> Result<()> {
                 }
             }
         }
-        DumpType::Mapping | DumpType::Settings => {
-            run_meta(&cli, &input, &output, retry, gate.clone()).await?
-        }
+        DumpType::Meta(kind) => run_meta(&cli, kind, &input, &output, retry, gate.clone()).await?,
     };
 
     if !cli.quiet() {

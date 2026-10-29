@@ -519,6 +519,7 @@ dependencies = [
  "memchr",
  "percent-encoding",
  "pkcs8",
+ "regex",
  "reqwest",
  "rust-ini",
  "rustls",

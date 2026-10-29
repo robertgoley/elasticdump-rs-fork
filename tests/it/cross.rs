@@ -161,7 +161,7 @@ async fn file_export_for_the_other_engine() {
         eprintln!("SKIP: IT_CROSS_DIR not set or secured profile");
         return;
     };
-    let dir = base.join(format!("{}-{}", engine_name(c.engine), c.major().await));
+    let dir = base.join(format!("{}-{}", engine_name(c.engine), c.version().await));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let src = unique("xf_src");
@@ -183,7 +183,15 @@ async fn file_export_for_the_other_engine() {
         );
     }
     let (settings, mapping) = shape(&c, &src).await;
+    // ES OSS builds have no tiers and OpenSearch 1.x no replication.type
+    let live = c
+        .ok("GET", &format!("{src}/_settings?flat_settings=true"), None)
+        .await;
+    let has_own_key = live[&src]["settings"].get(own_key(c.engine)).is_some();
+    let policy = export_policy(&c, &dir).await;
     let expected = json!({
+        "has_own_key": has_own_key,
+        "policy": policy,
         "version": c.version().await,
         "settings": settings,
         "mapping": mapping,
@@ -238,18 +246,26 @@ async fn restore_export(c: &Cluster, from: Engine, dir: &std::path::Path) {
     .await;
     let err = String::from_utf8_lossy(&o.stderr).to_string();
     let short = foreign.rsplit('.').next().unwrap();
-    assert!(
-        err.contains("--excludeSettings") && err.contains(short),
-        "{label}: {err}"
-    );
-    match c.engine {
-        Engine::Elasticsearch => assert!(!o.status.success(), "{label}: {err}"),
-        Engine::OpenSearch => {
-            assert_success(&o);
-            assert!(err.contains("Elasticsearch-only"), "{label}: {err}");
+    if expected["has_own_key"] != false {
+        assert!(
+            err.contains("--excludeSettings") && err.contains(short),
+            "{label}: {err}"
+        );
+        match c.engine {
+            Engine::Elasticsearch => assert!(!o.status.success(), "{label}: {err}"),
+            Engine::OpenSearch => {
+                assert_success(&o);
+                assert!(err.contains("Elasticsearch-only"), "{label}: {err}");
+            }
         }
+    } else {
+        eprintln!("{label}: the source had no {foreign}; nothing to warn about");
+        assert_success(&o);
     }
     c.delete_index(&probe).await;
+    if let Some(name) = expected["policy"].as_str() {
+        restore_policy_export(c, &label, &dir.join("policy.json"), name).await;
+    }
 
     // 2. full restore with the foreign key excluded
     let dst = unique("xf_dst");
@@ -279,4 +295,242 @@ async fn restore_export(c: &Cluster, from: Engine, dir: &std::path::Path) {
     let want: Docs = serde_json::from_value(expected["docs"].clone()).unwrap();
     assert_eq!(c.docs(&dst).await, want, "{label}");
     c.delete_index(&dst).await;
+}
+
+// ------------------------------------------------- policies across engines
+
+/// An ILM policy using every convertible action, or an ISM policy.
+fn ilm_policy() -> Value {
+    // max_size (not max_primary_shard_size): ES 7.10 has no shard-size rollover
+    json!({"policy": {
+        "_meta": {"description": "cross-engine conversion"},
+        "phases": {
+            "hot": {"actions": {"rollover": {"max_age": "1d", "max_size": "50gb"}, "set_priority": {"priority": 100}}},
+            "warm": {"min_age": "7d", "actions": {"forcemerge": {"max_num_segments": 1}, "readonly": {}, "allocate": {"number_of_replicas": 0}, "set_priority": {"priority": 50}}},
+            "delete": {"min_age": "30d", "actions": {"delete": {}}}
+        }
+    }})
+}
+
+fn ism_policy() -> Value {
+    json!({"policy": {"description": "cross-engine", "default_state": "hot",
+        "states": [{"name": "hot", "actions": [], "transitions": [{"state_name": "delete", "conditions": {"min_index_age": "30d"}}]},
+                   {"name": "delete", "actions": [{"delete": {}}], "transitions": []}]}})
+}
+
+fn policy_path(e: Engine, name: &str) -> String {
+    match e {
+        Engine::Elasticsearch => format!("_ilm/policy/{name}"),
+        Engine::OpenSearch => format!("_plugins/_ism/policies/{name}"),
+    }
+}
+
+/// Dump one policy of this cluster to `dir/policy.json`; `None` when the
+/// cluster has no policy API (Elasticsearch OSS build).
+async fn export_policy(c: &Cluster, dir: &std::path::Path) -> Option<String> {
+    if !c.has_policies().await {
+        return None;
+    }
+    let name = unique("xf_pol");
+    let body = match c.engine {
+        Engine::Elasticsearch => ilm_policy(),
+        Engine::OpenSearch => ism_policy(),
+    };
+    c.ok("PUT", &policy_path(c.engine, &name), Some(body)).await;
+    let f = dir.join("policy.json");
+    assert_success(
+        &run(s(&[
+            "--input",
+            &c.url_with_auth(&name),
+            "--output",
+            f.to_str().unwrap(),
+            "--type",
+            "policy",
+        ]))
+        .await,
+    );
+    c.ok("DELETE", &policy_path(c.engine, &name), None).await;
+    Some(name)
+}
+
+async fn restore_policy_export(c: &Cluster, label: &str, file: &std::path::Path, name: &str) {
+    let f = file.to_str().unwrap();
+    let out = c.url_with_auth("");
+    let plain = run_loud(s(&["--input", f, "--output", &out, "--type", "policy"])).await;
+    let err = String::from_utf8_lossy(&plain.stderr).to_string();
+    match c.engine {
+        Engine::Elasticsearch => {
+            // ISM -> ILM: always refused, with or without the flag
+            assert!(
+                !plain.status.success() && err.contains("ISM → ILM"),
+                "{label}: {err}"
+            );
+            let o = run_loud(s(&[
+                "--input",
+                f,
+                "--output",
+                &out,
+                "--type",
+                "policy",
+                "--convertIlmToIsm",
+            ]))
+            .await;
+            assert!(!o.status.success(), "{label}");
+            let (st, _) = c.call("GET", &policy_path(c.engine, name), None).await;
+            assert_eq!(st, 404, "{label}");
+        }
+        Engine::OpenSearch => {
+            // ILM -> ISM: refused without the flag, converted with it
+            assert!(
+                !plain.status.success() && err.contains("--convertIlmToIsm"),
+                "{label}: {err}"
+            );
+            let o = run_loud(s(&[
+                "--input",
+                f,
+                "--output",
+                &out,
+                "--type",
+                "policy",
+                "--convertIlmToIsm",
+            ]))
+            .await;
+            let err = String::from_utf8_lossy(&o.stderr).to_string();
+            assert_success(&o);
+            assert!(
+                err.contains("rollover_alias") && err.contains("not attached"),
+                "{label}: {err}"
+            );
+            let g = c.ok("GET", &policy_path(c.engine, name), None).await;
+            let states: Vec<&str> = g["policy"]["states"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["name"].as_str().unwrap())
+                .collect();
+            assert_eq!(states, ["hot", "warm", "delete"], "{label}: {g}");
+            assert_eq!(g["policy"]["default_state"], "hot");
+            assert_eq!(g["policy"]["description"], "cross-engine conversion");
+            c.ok("DELETE", &policy_path(c.engine, name), None).await;
+            unsafe_conversion_is_refused_unless_lenient(c, label).await;
+        }
+    }
+}
+
+async fn unsafe_conversion_is_refused_unless_lenient(c: &Cluster, label: &str) {
+    let name = unique("xf_unsafe");
+    let doc = json!({ name.as_str(): {"version": 1, "policy": {"phases": {
+        "hot": {"actions": {"rollover": {"max_age": "1d"}}},
+        "cold": {"min_age": "30d", "actions": {"searchable_snapshot": {"snapshot_repository": "repo"}}}}}}});
+    let f = tmp_path("unsafe_ilm", "json");
+    std::fs::write(
+        &f,
+        serde_json::to_string(&Value::String(doc.to_string())).unwrap(),
+    )
+    .unwrap();
+    let out = c.url_with_auth("");
+    let base = s(&[
+        "--input",
+        f.to_str().unwrap(),
+        "--output",
+        &out,
+        "--type",
+        "policy",
+        "--convertIlmToIsm",
+    ]);
+    let o = run_loud(base.clone()).await;
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(
+        !o.status.success()
+            && err.contains("searchable_snapshot")
+            && err.contains("--lenientPolicyConversion"),
+        "{label}: {err}"
+    );
+    let mut a = base;
+    a.push("--lenientPolicyConversion".into());
+    let o = run_loud(a).await;
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert_success(&o);
+    assert!(
+        err.contains("DROPPED") && err.contains("searchable_snapshot"),
+        "{label}: {err}"
+    );
+    c.ok("DELETE", &policy_path(c.engine, &name), None).await;
+}
+
+#[tokio::test]
+async fn cluster_to_cluster_policy_copy_converts_only_on_request() {
+    let Some((os, es)) = pair() else {
+        eprintln!("SKIP: no peer cluster (cross profile only)");
+        return;
+    };
+    let (os, es) = if os.engine == Engine::OpenSearch {
+        (os, es)
+    } else {
+        (es, os)
+    };
+    let name = unique("xc_pol");
+    es.ok("PUT", &policy_path(es.engine, &name), Some(ilm_policy()))
+        .await;
+    let args = |extra: &[&str]| {
+        let mut a = s(&[
+            "--input",
+            &es.url_with_auth(&name),
+            "--output",
+            &os.url_with_auth(""),
+            "--type",
+            "policy",
+        ]);
+        a.extend(s(extra));
+        a
+    };
+    let o = run_loud(args(&[])).await;
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(
+        !o.status.success() && err.contains("--convertIlmToIsm"),
+        "{err}"
+    );
+    assert_eq!(
+        os.call("GET", &policy_path(os.engine, &name), None).await.0,
+        404
+    );
+    let o = run_loud(args(&["--convertIlmToIsm"])).await;
+    assert_success(&o);
+    let g = os.ok("GET", &policy_path(os.engine, &name), None).await;
+    assert_eq!(g["policy"]["states"].as_array().unwrap().len(), 3, "{g}");
+
+    // OpenSearch -> Elasticsearch: refused
+    let o = run_loud(s(&[
+        "--input",
+        &os.url_with_auth(&name),
+        "--output",
+        &es.url_with_auth(""),
+        "--type",
+        "policy",
+        "--convertIlmToIsm",
+    ]))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(!o.status.success() && err.contains("ISM → ILM"), "{err}");
+
+    // templates copy ES -> OS: Elasticsearch-only fields stripped with a warning
+    let t = unique("xc_tpl");
+    es.ok("PUT", &format!("_index_template/{t}"), Some(json!({"index_patterns": [format!("{t}-*")], "priority": 917, "allow_auto_create": true, "template": {"settings": {"index": {"number_of_replicas": "0"}}}}))).await;
+    let o = run_loud(s(&[
+        "--input",
+        &es.url_with_auth(&t),
+        "--output",
+        &os.url_with_auth(""),
+        "--type",
+        "index_template",
+    ]))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr).to_string();
+    assert_success(&o);
+    assert!(err.contains("allow_auto_create"), "{err}");
+    os.ok("GET", &format!("_index_template/{t}"), None).await;
+    es.ok("DELETE", &format!("_index_template/{t}"), None).await;
+    os.ok("DELETE", &format!("_index_template/{t}"), None).await;
+    es.ok("DELETE", &policy_path(es.engine, &name), None).await;
+    os.ok("DELETE", &policy_path(os.engine, &name), None).await;
 }

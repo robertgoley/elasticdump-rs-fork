@@ -1,40 +1,18 @@
-//! `--type mapping` and `--type settings`: dump to a file and restore to a
-//! cluster, with elasticdump-compatible file formats.
+//! Index-scoped metadata: `mapping`, `settings`, `index` and `analyzer`.
 //!
 //! * mapping: one line holding the `GET /_mapping` response object.
-//! * settings: one line holding a JSON *string literal* of the `GET
-//!   /_settings` response (elasticdump's `JSON.stringify` format), with
-//!   cluster-generated keys removed. Plain objects are accepted on restore.
+//! * settings / analyzer: one line holding a JSON *string literal* of the
+//!   `GET /_settings` response with cluster-generated keys removed.
+//! * index: the same for `GET /{index}` (`aliases`, `mappings`, `settings`).
 
-use std::io::Read;
-use std::path::PathBuf;
-
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, bail};
 use reqwest::Method;
-use serde_json::{Map, Value};
-use tokio_util::sync::CancellationToken;
+use serde_json::{Map, Value, json};
 
-use crate::http::{
-    Body, ClusterInfo, EsClient, EsHttpError, RetryMode, RetryPolicy, send_with_retry,
-};
+use super::http::{exists, get_json, is_already_exists, send_json};
+use super::{MetaKind, MetaOptions, MetaTarget};
+use crate::http::{ClusterInfo, EsClient};
 use crate::pipeline::WriteReport;
-use crate::pipeline::file_sink::{FileOptions, FileSink};
-use crate::pipeline::json_split::ValueSplitter;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetaKind {
-    Mapping,
-    Settings,
-}
-
-impl MetaKind {
-    fn api(self) -> &'static str {
-        match self {
-            MetaKind::Mapping => "_mapping",
-            MetaKind::Settings => "_settings",
-        }
-    }
-}
 
 /// Paths (below `settings.index`) that a cluster generates and that cannot
 /// be sent back on index creation (elasticdump's `settingsExclude`).
@@ -55,7 +33,7 @@ const SETTINGS_NOT_CREATABLE: &[&str] =
 const ELASTIC_ONLY: &[&str] = &["lifecycle", "routing.allocation.include._tier_preference"];
 const OPENSEARCH_ONLY: &[&str] = &["replication.type", "plugins", "opendistro"];
 
-const MAPPING_PARAMS: &[&str] = &[
+pub(crate) const MAPPING_PARAMS: &[&str] = &[
     "properties",
     "dynamic",
     "_source",
@@ -93,7 +71,7 @@ fn remove_path(index_settings: &mut Map<String, Value>, path: &str) -> bool {
 
 /// The `index` settings object of one index definition (`{"settings":{"index":{..}}}`),
 /// normalising flat `index.*` keys into it.
-fn index_settings_mut(def: &mut Value) -> Option<&mut Map<String, Value>> {
+pub(crate) fn index_settings_mut(def: &mut Value) -> Option<&mut Map<String, Value>> {
     let settings = def.get_mut("settings")?.as_object_mut()?;
     let flat: Vec<String> = settings
         .keys()
@@ -125,11 +103,11 @@ pub fn strip_settings(def: &mut Value, extra: &[&str]) {
 }
 
 /// Keys in `def` that belong to the other engine, without changing `def`.
-fn foreign_settings(def: &Value, target: &ClusterInfo) -> Vec<String> {
+pub(crate) fn foreign_settings(def: &Value, target: &ClusterInfo) -> Vec<String> {
     strip_for_flavor(&mut def.clone(), target)
 }
 
-fn strip_for_flavor(def: &mut Value, target: &ClusterInfo) -> Vec<String> {
+pub(crate) fn strip_for_flavor(def: &mut Value, target: &ClusterInfo) -> Vec<String> {
     let list = if target.is_opensearch() {
         ELASTIC_ONLY
     } else {
@@ -157,7 +135,12 @@ pub fn typeless_mapping(mappings: &Value) -> Value {
             .collect();
         if obj.len() == 1 && non_params.len() == 1 {
             let inner = &obj[non_params[0]];
-            if inner.get("properties").is_some() || inner.get("dynamic").is_some() {
+            // a type wrapper holds only mapping parameters (`properties`,
+            // `_source`, ...), e.g. `{"type1":{"_source":{"enabled":false}}}`
+            let only_params = inner.as_object().is_some_and(|o| {
+                !o.is_empty() && o.keys().all(|k| MAPPING_PARAMS.contains(&k.as_str()))
+            });
+            if only_params {
                 log::info!("Unwrapping typed mapping '{}'", non_params[0]);
                 m = inner.clone();
             }
@@ -179,185 +162,78 @@ fn strip_all_fields(v: &mut Value) {
     }
 }
 
-/// Read the first JSON value of a file / stdin (gzip auto-detected).
-fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
-    let mut reader = crate::pipeline::file_source::open_reader(path.as_ref())?;
-    let mut splitter = ValueSplitter::new();
-    let mut buf = vec![0u8; 256 * 1024];
-    loop {
-        let n = reader.read(&mut buf).context("Failed to read input")?;
-        if n > 0 {
-            splitter.push(&buf[..n]);
+/// Fetch the document for an index-scoped kind (`index` = endpoint index,
+/// `*` / all indices when host-only).
+pub async fn fetch(client: &EsClient, index: Option<&str>, opts: &MetaOptions) -> Result<Value> {
+    let mut segs: Vec<&str> = Vec::new();
+    match opts.kind {
+        MetaKind::Index => segs.push(index.unwrap_or("*")),
+        MetaKind::Mapping => {
+            segs.extend(index);
+            segs.push("_mapping");
         }
-        if let Some(v) = splitter.next_value(n == 0).map_err(|e| anyhow!(e))? {
-            return serde_json::from_slice(&v).context("Invalid JSON in input");
-        }
-        if n == 0 {
-            bail!("Input is empty");
+        _ => {
+            segs.extend(index);
+            segs.push("_settings");
         }
     }
+    let what = format!(
+        "GET {} for --type {}",
+        segs.join("/"),
+        opts.kind.type_name()
+    );
+    get_json(client, opts.retry, &segs, &what).await
 }
 
-/// A settings file line: a JSON string literal holding the object, or the
-/// object itself.
-fn decode_settings(v: Value) -> Result<Value> {
-    match v {
-        Value::String(s) => serde_json::from_str(&s).context("settings string is not JSON"),
-        other => Ok(other),
+/// Remove generated settings from every index of a dump.
+pub fn strip_generated(doc: &mut Value, kind: MetaKind) {
+    if kind == MetaKind::Mapping {
+        return;
     }
-}
-
-async fn get_json(
-    client: &EsClient,
-    retry: RetryPolicy,
-    segments: &[&str],
-    what: &str,
-) -> Result<Value> {
-    let cancel = CancellationToken::new();
-    let bytes = send_with_retry(retry, &cancel, RetryMode::Idempotent, what, move || {
-        client.send(Method::GET, segments, &[], true, Body::Empty)
-    })
-    .await?;
-    serde_json::from_slice(&bytes).with_context(|| format!("{what} returned invalid JSON"))
-}
-
-async fn send_json(
-    client: &EsClient,
-    retry: RetryPolicy,
-    method: Method,
-    segments: &[&str],
-    body: &Value,
-    what: &str,
-) -> Result<Value> {
-    let cancel = CancellationToken::new();
-    let body = Body::json(body);
-    let body = &body;
-    let method = &method;
-    let bytes = send_with_retry(retry, &cancel, RetryMode::Idempotent, what, move || {
-        client.send(method.clone(), segments, &[], true, body.clone())
-    })
-    .await?;
-    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    if v.get("error").is_some_and(|e| !e.is_null()) {
-        bail!("{what} failed: {v}");
-    }
-    Ok(v)
-}
-
-fn is_already_exists(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<EsHttpError>()
-        .is_some_and(|h| h.error_type_is("resource_already_exists_exception"))
-}
-
-pub struct MetaSource {
-    pub client: Option<EsClient>,
-    pub index: Option<String>,
-    pub file: Option<PathBuf>,
-}
-
-pub struct MetaTarget {
-    pub client: Option<EsClient>,
-    pub info: Option<ClusterInfo>,
-    pub index: Option<String>,
-    pub doc_type: Option<String>,
-    pub prefix: String,
-    pub suffix: String,
-    pub file: FileOptions,
-}
-
-pub struct MetaOptions {
-    pub kind: MetaKind,
-    pub retry: RetryPolicy,
-    pub skip_existing: bool,
-    pub ignore_errors: bool,
-    pub exclude_settings: Vec<String>,
-    /// Flavor of the source cluster (cluster→cluster only): engine-specific
-    /// settings are stripped when it differs from the target's.
-    pub source_info: Option<ClusterInfo>,
-}
-
-/// Read the mapping/settings document from the source.
-pub async fn read(src: &MetaSource, opts: &MetaOptions) -> Result<Value> {
-    let mut v = match &src.client {
-        Some(client) => {
-            let mut segs: Vec<&str> = Vec::new();
-            if let Some(i) = src.index.as_deref() {
-                segs.push(i);
-            }
-            segs.push(opts.kind.api());
-            get_json(
-                client,
-                opts.retry,
-                &segs,
-                &format!("GET {}", opts.kind.api()),
-            )
-            .await?
-        }
-        None => {
-            let file = src.file.clone();
-            let v = tokio::task::spawn_blocking(move || read_first_value(file)).await??;
-            match opts.kind {
-                MetaKind::Settings => decode_settings(v)?,
-                MetaKind::Mapping => v,
-            }
-        }
-    };
-    let Value::Object(obj) = &mut v else {
-        bail!(
-            "{} document must be a JSON object keyed by index",
-            opts.kind.api()
-        );
-    };
-    if opts.kind == MetaKind::Settings {
+    if let Value::Object(obj) = doc {
         for (_, def) in obj.iter_mut() {
-            strip_settings(def, &[]);
+            if def.get("settings").is_some() {
+                strip_settings(def, &[]);
+            }
         }
     }
-    Ok(v)
 }
 
-/// Write the document to a file target (one line) or apply it to a cluster.
-pub async fn write(doc: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<WriteReport> {
-    let Some(client) = &dst.client else {
-        let line = match opts.kind {
-            MetaKind::Mapping => serde_json::to_string(&doc)?,
-            MetaKind::Settings => {
-                serde_json::to_string(&Value::String(serde_json::to_string(&doc)?))?
-            }
-        };
-        let mut opts = dst.file.clone();
-        opts.split = None;
-        opts.source_only = false;
-        let mut sink = FileSink::create(opts).await?;
-        sink.write_lines(format!("{line}\n").as_bytes()).await?;
-        sink.finalize().await?;
-        return Ok(WriteReport {
-            written: 1,
-            failed: 0,
-        });
-    };
-    let info = dst.info.as_ref().expect("target cluster info");
+/// Apply an index-scoped document to a cluster, one index at a time.
+pub async fn write(
+    doc: Value,
+    client: &EsClient,
+    info: &ClusterInfo,
+    dst: &MetaTarget,
+    opts: &MetaOptions,
+) -> Result<WriteReport> {
     let Value::Object(indices) = doc else {
-        unreachable!()
+        bail!(
+            "--type {} document must be a JSON object keyed by index",
+            opts.kind.type_name()
+        )
     };
     if dst.index.is_some() && indices.len() > 1 {
         bail!(
             "the {} document holds {} indices but a single output index was given; use a host-only --output to restore each under its own name",
-            opts.kind.api(),
+            opts.kind.type_name(),
             indices.len()
+        );
+    }
+    if opts.close_index && opts.kind == MetaKind::Analyzer {
+        log::warn!(
+            "--closeIndex: existing target indices are closed (OFFLINE for reads and writes) while their analysis settings change"
         );
     }
     let mut report = WriteReport::default();
     for (src_index, mut def) in indices {
-        let target = format!(
-            "{}{}{}",
-            dst.prefix,
-            dst.index.clone().unwrap_or(src_index.clone()),
-            dst.suffix
-        );
+        let target = dst.target_index(&src_index)?;
         let result = match opts.kind {
             MetaKind::Settings => apply_settings(client, info, &target, &mut def, opts).await,
             MetaKind::Mapping => apply_mapping(client, info, &target, &def, dst, opts).await,
+            MetaKind::Index => apply_index(client, info, &target, def, dst, opts).await,
+            MetaKind::Analyzer => apply_analyzer(client, info, &target, def, opts).await,
+            _ => unreachable!("not an index-scoped kind"),
         };
         match result {
             Ok(true) => report.written += 1,
@@ -365,25 +241,23 @@ pub async fn write(doc: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<W
             Err(e) if opts.ignore_errors => {
                 log::error!(
                     "{} for '{target}' failed (--ignore-errors): {e:#}",
-                    opts.kind.api()
+                    opts.kind.type_name()
                 );
                 report.failed += 1;
             }
-            Err(e) => return Err(e.context(format!("restoring {} of '{target}'", opts.kind.api()))),
+            Err(e) => {
+                return Err(e.context(format!("restoring {} of '{target}'", opts.kind.type_name())));
+            }
         }
     }
     Ok(report)
 }
 
-async fn apply_settings(
-    client: &EsClient,
-    info: &ClusterInfo,
-    target: &str,
-    def: &mut Value,
-    opts: &MetaOptions,
-) -> Result<bool> {
+/// Strip generated, excluded and (for known sources) foreign-engine keys from
+/// `def` (`{"settings":{..}}`); warn about foreign keys from files.
+fn prepare_settings(def: &mut Value, info: &ClusterInfo, target: &str, opts: &MetaOptions) {
     if def.get("settings").is_none() {
-        *def = serde_json::json!({ "settings": def.clone() });
+        *def = json!({ "settings": def.clone() });
     }
     let extra: Vec<&str> = SETTINGS_NOT_CREATABLE
         .iter()
@@ -413,20 +287,44 @@ async fn apply_settings(
         // silently stores Elasticsearch-only keys such as `_tier_preference`.
         let foreign = foreign_settings(def, info);
         if !foreign.is_empty() {
-            let other = if info.is_opensearch() {
-                "Elasticsearch"
-            } else {
-                "OpenSearch"
-            };
             log::warn!(
-                "Settings for {target} contain {other}-only keys that {} does not use: {}; drop them with --excludeSettings={}",
+                "Settings for {target} contain {}-only keys that {} does not use: {}; drop them with --excludeSettings={}",
+                other_engine(info),
                 info.flavor_name(),
                 foreign.join(","),
                 foreign.join(",")
             );
         }
     }
-    let body = serde_json::json!({ "settings": def["settings"].clone() });
+}
+
+pub(crate) fn other_engine(info: &ClusterInfo) -> &'static str {
+    if info.is_opensearch() {
+        "Elasticsearch"
+    } else {
+        "OpenSearch"
+    }
+}
+
+fn create_error(e: anyhow::Error, opts: &MetaOptions, what: &str) -> Result<bool> {
+    if opts.source_info.is_none() {
+        Err(e.context(format!(
+            "if this setting is engine-specific (Elasticsearch vs OpenSearch), drop it with --excludeSettings ({what})"
+        )))
+    } else {
+        Err(e)
+    }
+}
+
+async fn apply_settings(
+    client: &EsClient,
+    info: &ClusterInfo,
+    target: &str,
+    def: &mut Value,
+    opts: &MetaOptions,
+) -> Result<bool> {
+    prepare_settings(def, info, target, opts);
+    let body = json!({ "settings": def["settings"].clone() });
     match send_json(client, opts.retry, Method::PUT, &[target], &body, "create index").await {
         Ok(_) => Ok(true),
         Err(e) if is_already_exists(&e) && opts.skip_existing => {
@@ -436,10 +334,184 @@ async fn apply_settings(
         Err(e) if is_already_exists(&e) => Err(e.context(
             "settings can only be applied when creating an index (use --skip-existing to skip existing indices)",
         )),
-        Err(e) if opts.source_info.is_none() => Err(e.context(
-            "if this setting is engine-specific (Elasticsearch vs OpenSearch), drop it with --excludeSettings",
+        Err(e) => create_error(e, opts, "settings"),
+    }
+}
+
+/// `--type index`: create the index with its settings, mappings and aliases
+/// in one request.
+async fn apply_index(
+    client: &EsClient,
+    info: &ClusterInfo,
+    target: &str,
+    mut def: Value,
+    dst: &MetaTarget,
+    opts: &MetaOptions,
+) -> Result<bool> {
+    let Value::Object(obj) = &mut def else {
+        bail!("index definition for '{target}' is not an object");
+    };
+    if obj.shift_remove("data_stream").is_some() {
+        log::warn!(
+            "'{target}' was a data stream backing index; restoring it as a plain index (data_stream dropped)"
+        );
+    }
+    let mut body = Map::new();
+    if obj.contains_key("settings") {
+        let mut s = json!({ "settings": obj["settings"].clone() });
+        prepare_settings(&mut s, info, target, opts);
+        body.insert("settings".into(), s["settings"].clone());
+    }
+    if let Some(m) = obj.get("mappings") {
+        let m = if info.has_types() {
+            m.clone()
+        } else {
+            typeless_mapping(m)
+        };
+        body.insert("mappings".into(), m);
+    }
+    if let Some(a) = obj.get("aliases") {
+        let a = match a {
+            Value::Object(m) if opts.rename_aliases => {
+                let mut out = Map::new();
+                for (k, v) in m {
+                    out.insert(dst.renamer.alias(k)?, v.clone());
+                }
+                Value::Object(out)
+            }
+            other => other.clone(),
+        };
+        body.insert("aliases".into(), a);
+    }
+    let body = Value::Object(body);
+    match send_json(
+        client,
+        opts.retry,
+        Method::PUT,
+        &[target],
+        &body,
+        "create index",
+    )
+    .await
+    {
+        Ok(_) => Ok(true),
+        Err(e) if is_already_exists(&e) && opts.skip_existing => {
+            log::warn!("Index '{target}' already exists; skipping it (--skip-existing)");
+            Ok(false)
+        }
+        Err(e) if is_already_exists(&e) => {
+            Err(e
+                .context("the index already exists (use --skip-existing to skip existing indices)"))
+        }
+        Err(e) => create_error(e, opts, "index"),
+    }
+}
+
+/// `--type analyzer`: create the target with the `analysis` settings, or,
+/// for an existing index, skip it (`--skip-existing`) or close it, update
+/// the analysis and reopen it (`--closeIndex`).
+async fn apply_analyzer(
+    client: &EsClient,
+    _info: &ClusterInfo,
+    target: &str,
+    mut def: Value,
+    opts: &MetaOptions,
+) -> Result<bool> {
+    if def.get("settings").is_none() {
+        def = json!({ "settings": def });
+    }
+    let analysis = index_settings_mut(&mut def).and_then(|i| i.get("analysis").cloned());
+    let Some(analysis) = analysis else {
+        log::warn!("No analysis settings for '{target}'; skipping it");
+        return Ok(false);
+    };
+    if !exists(client, opts.retry, &[target]).await? {
+        let body = json!({"settings": {"index": {"analysis": analysis}}});
+        send_json(
+            client,
+            opts.retry,
+            Method::PUT,
+            &[target],
+            &body,
+            "create index",
+        )
+        .await?;
+        return Ok(true);
+    }
+    if opts.skip_existing {
+        log::warn!("Index '{target}' already exists; skipping its analyzers (--skip-existing)");
+        return Ok(false);
+    }
+    if !opts.close_index {
+        bail!(
+            "index '{target}' already exists; analysis settings can only change on a closed index. Use --closeIndex to close, update and reopen it (takes the index offline), or --skip-existing to leave it alone"
+        );
+    }
+    close_put_open(
+        client,
+        target,
+        &json!({"index": {"analysis": analysis}}),
+        opts,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// Close `target`, PUT `_settings`, and always try to reopen it, also when
+/// the update fails or the user interrupts.
+pub(crate) async fn close_put_open(
+    client: &EsClient,
+    target: &str,
+    settings: &Value,
+    opts: &MetaOptions,
+) -> Result<()> {
+    send_json(
+        client,
+        opts.retry,
+        Method::POST,
+        &[target, "_close"],
+        &Value::Null,
+        "close index",
+    )
+    .await?;
+    log::warn!("Index '{target}' is CLOSED (offline) while its analysis settings are updated");
+    let segs = [target, "_settings"];
+    let put = tokio::select! {
+        r = send_json(client, opts.retry, Method::PUT, &segs, settings, "update settings") => r.map(|_| ()),
+        _ = tokio::signal::ctrl_c() => Err(anyhow::anyhow!("interrupted while index '{target}' was closed")),
+    };
+    let open = send_json(
+        client,
+        opts.retry,
+        Method::POST,
+        &[target, "_open"],
+        &Value::Null,
+        "open index",
+    )
+    .await;
+    match &open {
+        Ok(_) => {
+            log::info!("Index '{target}' reopened");
+            let _ = super::http::get_json_q(
+                client,
+                opts.retry,
+                &["_cluster", "health", target],
+                &[("wait_for_status", "yellow"), ("timeout", "60s")],
+                "cluster health",
+            )
+            .await;
+        }
+        Err(e) => log::error!("Index '{target}' could NOT be reopened; it is still closed: {e:#}"),
+    }
+    match (put, open) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(p), Ok(_)) => Err(p.context(format!(
+            "updating '{target}' failed (the index was reopened)"
+        ))),
+        (Ok(()), Err(o)) => Err(o.context(format!("index '{target}' is still closed"))),
+        (Err(p), Err(o)) => Err(anyhow::anyhow!(
+            "updating '{target}' failed: {p:#}; reopening failed too, the index is still closed: {o:#}"
         )),
-        Err(e) => Err(e),
     }
 }
 
@@ -457,7 +529,7 @@ async fn apply_mapping(
         opts.retry,
         Method::PUT,
         &[target],
-        &serde_json::json!({}),
+        &json!({}),
         "create index",
     )
     .await
@@ -558,17 +630,12 @@ mod tests {
         assert_eq!(typeless_mapping(&tricky), tricky);
         let params = json!({"dynamic": "strict", "properties": {}});
         assert_eq!(typeless_mapping(&params), params);
-    }
-
-    #[test]
-    fn settings_string_literal_round_trip() {
-        let v = json!({"i": {"settings": {"index": {"number_of_shards": "1"}}}});
-        let line =
-            serde_json::to_string(&Value::String(serde_json::to_string(&v).unwrap())).unwrap();
-        assert!(line.starts_with("\"{\\\"i\\\""));
-        let parsed: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(decode_settings(parsed).unwrap(), v);
-        assert_eq!(decode_settings(v.clone()).unwrap(), v);
+        // elasticdump's template_6x fixture: a type holding only `_source`
+        let six = json!({"type1": {"_source": {"enabled": false}}});
+        assert_eq!(
+            typeless_mapping(&six),
+            json!({"_source": {"enabled": false}})
+        );
     }
 
     #[test]

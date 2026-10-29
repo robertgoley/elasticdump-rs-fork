@@ -28,10 +28,33 @@ async fn pit_request_shape_matches_engine() {
     assert_success(&o);
     assert_eq!(lines(&out).len() as u64, c.count(&index).await);
     let log = String::from_utf8_lossy(&o.stderr);
+    if !c.has_pit().await {
+        // ES < 7.10 / OpenSearch < 2.4: clear warning, then scroll
+        assert!(
+            log.contains("does not support point-in-time search"),
+            "{log}"
+        );
+        assert!(log.contains("using scroll instead"), "{log}");
+        assert!(log.contains("scroll="), "{log}");
+        assert!(
+            !log.contains("/_pit?") && !log.contains("point_in_time?"),
+            "{log}"
+        );
+        c.delete_index(&index).await;
+        return;
+    }
     match c.engine {
         Engine::Elasticsearch => {
             assert!(log.contains(&format!("/{index}/_pit?keep_alive=")), "{log}");
-            assert!(log.contains(r#""sort":["_shard_doc"]"#), "{log}");
+            if c.vnum().await >= (7, 12) {
+                assert!(log.contains(r#""sort":["_shard_doc"]"#), "{log}");
+            } else {
+                // `_shard_doc` arrived in 7.12: `_doc` + `_id` tiebreaker
+                assert!(
+                    log.contains(r#"{"_id":{"#) && !log.contains("_shard_doc"),
+                    "{log}"
+                );
+            }
             assert!(log.contains("DELETE ") && log.contains("/_pit"), "{log}");
             assert!(!log.contains("point_in_time"), "{log}");
         }
@@ -53,13 +76,41 @@ async fn typeless_dump_shapes() {
     let c = Cluster::from_env();
     let index = unique("eng_tl");
     seed_index(&c, &index, 20).await;
-    // data: no _type on ES >= 8 / OpenSearch
+    // data: no _type on ES >= 8 / OpenSearch >= 2; ES 7 hits still carry
+    // `"_type":"_doc"`, which is kept in the file (elasticdump does the same)
+    // and never sent back to a 7+/OpenSearch target.
+    // ES 7 and OpenSearch 1.x hits still carry `"_type":"_doc"`
+    let es7 = c.major().await
+        == if c.engine == Engine::Elasticsearch {
+            7
+        } else {
+            1
+        };
     let out = tmp_path("eng_tl", "json");
     assert_success(&run(input_args(&c, &index, &out)).await);
     for l in lines(&out) {
         let v: Value = serde_json::from_str(&l).unwrap();
-        assert!(v.get("_type").is_none(), "{l}");
+        match v.get("_type") {
+            None => {}
+            Some(t) => assert!(es7 && t == "_doc", "{l}"),
+        }
     }
+    // a file with `_type` restores into a typeless cluster
+    let back = unique("eng_tl_back");
+    c.delete_index(&back).await;
+    // explicit mapping first: ES 7 dynamically maps the seed's out-of-range
+    // integers as `long` and rejects them (ES 8+ maps them as float)
+    c.copy_shape(&index, &back).await;
+    let mut a = s(&[
+        "--input",
+        out.to_str().unwrap(),
+        "--output",
+        &c.url_with_auth(&back),
+    ]);
+    a.extend(c.tls_args("output"));
+    assert_success(&run(a).await);
+    assert_eq!(c.docs(&back).await, c.docs(&index).await);
+    c.delete_index(&back).await;
     // mapping: {index: {mappings: {properties: ..}}}, no type level
     let m = tmp_path("eng_tl_m", "json");
     let mut a = input_args(&c, &index, &m);
