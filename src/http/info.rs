@@ -82,6 +82,11 @@ impl ClusterInfo {
         self.flavor == Flavor::Elastic && self.version.major < 7
     }
 
+    /// `_timestamp` / `_ttl` bulk metadata (Elasticsearch < 5 only).
+    pub fn supports_ttl_meta(&self) -> bool {
+        self.flavor == Flavor::Elastic && self.version.major < 5
+    }
+
     pub fn pit_api(&self) -> Option<PitApi> {
         match self.flavor {
             Flavor::Elastic if self.version >= Version::new(7, 10, 0) => Some(PitApi::Elastic),

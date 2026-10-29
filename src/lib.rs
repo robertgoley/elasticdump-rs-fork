@@ -95,6 +95,152 @@ fn file_path(ep: &Endpoint) -> Option<PathBuf> {
     }
 }
 
+const DEFAULT_MAX_BULK_BYTES: u64 = 100 * 1024 * 1024;
+
+async fn build_sink(
+    cli: &Cli,
+    output: &Endpoint,
+    retry: crate::http::RetryPolicy,
+    gate: crate::http::gate::RequestGate,
+) -> Result<Sink> {
+    match output {
+        Endpoint::Es(ep) => {
+            if cli.source_only() {
+                log::warn!("--sourceOnly with an Elasticsearch output: documents get new ids");
+            }
+            let client = config::build_client(cli, ep, Direction::Output, gate)?;
+            let info = client
+                .info(retry, &tokio_util::sync::CancellationToken::new())
+                .await?
+                .clone();
+            let mut meta_fields: Vec<String> = ["routing", "parent", "timestamp", "ttl"]
+                .map(String::from)
+                .to_vec();
+            if let Some(extra) = &cli.parse_extra_fields {
+                meta_fields.extend(
+                    extra
+                        .split(',')
+                        .map(|f| f.trim().trim_start_matches('_').to_string())
+                        .filter(|f| !f.is_empty()),
+                );
+            }
+            let max_bulk_bytes = match &cli.max_bulk_bytes {
+                Some(raw) => raw
+                    .parse::<bytesize::ByteSize>()
+                    .map_err(|e| usage(format!("--maxBulkBytes: {e}")))?
+                    .as_u64(),
+                None => DEFAULT_MAX_BULK_BYTES,
+            };
+            let opts = pipeline::BulkOptions {
+                info,
+                index: ep.index.clone(),
+                doc_type: ep.doc_type.clone(),
+                prefix: cli.prefix.clone(),
+                suffix: cli.suffix.clone(),
+                action: pipeline::BulkAction::parse(&cli.bulk_action)?,
+                handle_version: cli.handle_version(),
+                version_type: cli.version_type.clone(),
+                meta_fields,
+                refresh: !cli.no_refresh(),
+                ignore_es_write_errors: cli.ignore_es_write_errors(),
+                ignore_errors: cli.ignore_errors(),
+                max_bulk_bytes: max_bulk_bytes.max(1) as usize,
+                retry,
+            };
+            Ok(Sink::Bulk(Box::new(pipeline::BulkSink::new(
+                client,
+                opts,
+                tokio_util::sync::CancellationToken::new(),
+            ))))
+        }
+        out => Ok(Sink::File(
+            FileSink::create(file_path(out), cli.overwrite(), cli.source_only()).await?,
+        )),
+    }
+}
+
+async fn es_source_options(
+    cli: &Cli,
+    ep: &endpoint::EsEndpoint,
+    retry: crate::http::RetryPolicy,
+    gate: crate::http::gate::RequestGate,
+) -> Result<retrieval::EsSourceOptions> {
+    let client = config::build_client(cli, ep, Direction::Input, gate)?;
+    let search_type = match cli.effective_search() {
+        EffectiveSearch::Scroll => SearchType::Scroll,
+        EffectiveSearch::Pit => SearchType::PointInTime,
+        EffectiveSearch::SearchAfter => SearchType::SearchAfter,
+    };
+    if cli.search_with_template() {
+        return Err(not_yet("--searchWithTemplate"));
+    }
+    // Cluster detection (`GET /`) is only needed for PIT; scroll dumps work
+    // the same on every flavor and version.
+    let (pit_api, pit_sort) = if search_type == SearchType::PointInTime {
+        let info = client
+            .info(retry, &tokio_util::sync::CancellationToken::new())
+            .await?
+            .clone();
+        let Some(api) = info.pit_api() else {
+            bail!(
+                "{} {} does not support point-in-time search",
+                info.flavor_name(),
+                info.version
+            );
+        };
+        let sort = if info.supports_shard_doc_sort() {
+            json!(["_shard_doc"])
+        } else {
+            // `_doc` alone loses documents across PIT pages on OpenSearch;
+            // `_id` is the tiebreaker. `unmapped_type` keeps indices without
+            // any mapping searchable.
+            json!([{"_doc": "asc"}, {"_id": {"order": "asc", "unmapped_type": "keyword"}}])
+        };
+        (api, sort)
+    } else {
+        (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
+    };
+    let size = (cli.size >= 0).then_some(cli.size as u64 + cli.offset);
+    let search_body =
+        retrieval::search_body::prepare_search_body(cli.search_body.as_deref(), cli.limit, size)
+            .await?;
+    if search_type == SearchType::SearchAfter {
+        use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+        let has_sort = search_body
+            .get("sort")
+            .is_some_and(|s| s.as_array().is_none_or(|a| !a.is_empty()));
+        if !has_sort {
+            return Err(usage(
+                "--searchAfter without --pit needs a \"sort\" in --searchBody ending in a unique tiebreaker",
+            ));
+        }
+        if cli.slices > 1 {
+            return Err(usage(
+                "--slices needs scroll or PIT; it cannot be used with --searchAfter alone",
+            ));
+        }
+        log::warn!(
+            "--searchAfter without --pit is not snapshot-consistent; concurrent writes may be missed or duplicated"
+        );
+    }
+    Ok(retrieval::EsSourceOptions {
+        client,
+        index: ep.index.clone(),
+        search_body,
+        search_type,
+        pit_api,
+        pit_sort,
+        scroll_ttl: cli.scroll.clone(),
+        pit_keep_alive: cli.pit_keep_alive.clone(),
+        slices: cli.slices,
+        workers: cli.workers,
+        buffer_size: cli.buffer_size,
+        quiet: cli.quiet(),
+        retry,
+        resume_scroll_id: cli.scroll_id.clone(),
+    })
+}
+
 pub async fn run() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
@@ -135,97 +281,37 @@ pub async fn run() -> Result<()> {
     let gate = config::request_gate(&cli);
     let window = DocWindow::new(cli.offset, cli.size);
 
-    let written = match (cli.r#type, &input, &output) {
-        (DumpType::Data, _, Endpoint::Es(_)) => return Err(not_yet("Writing to Elasticsearch")),
-        (DumpType::Data, Endpoint::Es(ep), out) => {
-            let client = config::build_client(&cli, ep, Direction::Input, gate.clone())?;
-            let search_type = match cli.effective_search() {
-                EffectiveSearch::Scroll => SearchType::Scroll,
-                EffectiveSearch::Pit => SearchType::PointInTime,
-                EffectiveSearch::SearchAfter => {
-                    return Err(not_yet("--searchAfter without --pit"));
+    let report = match cli.r#type {
+        DumpType::Data => {
+            let sink = build_sink(&cli, &output, retry, gate.clone()).await?;
+            match &input {
+                Endpoint::Es(ep) => {
+                    let opts = es_source_options(&cli, ep, retry, gate.clone()).await?;
+                    retrieval::dump_data(opts, sink, window).await?
                 }
-            };
-            if cli.scroll_id.is_some() {
-                return Err(not_yet("--scrollId"));
-            }
-            if cli.search_with_template() {
-                return Err(not_yet("--searchWithTemplate"));
-            }
-            // Cluster detection (`GET /`) is only needed for PIT; scroll dumps
-            // work the same on every flavor and version.
-            let (pit_api, pit_sort) = if search_type == SearchType::PointInTime {
-                let info = client
-                    .info(retry, &tokio_util::sync::CancellationToken::new())
+                inp => {
+                    pipeline::file_to_sink(
+                        file_path(inp),
+                        cli.limit,
+                        window,
+                        sink,
+                        tokio_util::sync::CancellationToken::new(),
+                    )
                     .await?
-                    .clone();
-                let Some(api) = info.pit_api() else {
-                    bail!(
-                        "{} {} does not support point-in-time search",
-                        info.flavor_name(),
-                        info.version
-                    );
-                };
-                let sort = if info.supports_shard_doc_sort() {
-                    json!(["_shard_doc"])
-                } else {
-                    // `_doc` alone loses documents across PIT pages on
-                    // OpenSearch; `_id` is the tiebreaker. `unmapped_type`
-                    // keeps indices without any mapping searchable.
-                    json!([{"_doc": "asc"}, {"_id": {"order": "asc", "unmapped_type": "keyword"}}])
-                };
-                (api, sort)
-            } else {
-                (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
-            };
-            let size = (cli.size >= 0).then_some(cli.size as u64 + cli.offset);
-            let search_body = retrieval::search_body::prepare_search_body(
-                cli.search_body.as_deref(),
-                cli.limit,
-                size,
-            )
-            .await?;
-            let sink = Sink::File(
-                FileSink::create(file_path(out), cli.overwrite(), cli.source_only()).await?,
-            );
-            let opts = retrieval::EsSourceOptions {
-                client,
-                index: ep.index.clone(),
-                search_body,
-                search_type,
-                pit_api,
-                pit_sort,
-                scroll_ttl: cli.scroll.clone(),
-                pit_keep_alive: cli.pit_keep_alive.clone(),
-                slices: cli.slices,
-                workers: cli.workers,
-                buffer_size: cli.buffer_size,
-                quiet: cli.quiet(),
-                retry,
-            };
-            retrieval::dump_data(opts, sink, window).await?
+                }
+            }
         }
-        (DumpType::Data, inp, out) => {
-            let sink = Sink::File(
-                FileSink::create(file_path(out), cli.overwrite(), cli.source_only()).await?,
-            );
-            pipeline::file_to_sink(
-                file_path(inp),
-                cli.limit,
-                window,
-                sink,
-                tokio_util::sync::CancellationToken::new(),
-            )
-            .await?
-        }
-        (DumpType::Mapping | DumpType::Settings, _, _) => {
+        DumpType::Mapping | DumpType::Settings => {
             return Err(not_yet("--type mapping/settings"));
         }
     };
 
     if !cli.quiet() {
         let mut err = std::io::stderr().lock();
-        let _ = writeln!(err, "Total Writes: {written}");
+        let _ = writeln!(err, "Total Writes: {}", report.written);
+        if report.failed > 0 {
+            let _ = writeln!(err, "Failed Writes: {}", report.failed);
+        }
         let _ = writeln!(err, "dump complete");
     }
     Ok(())

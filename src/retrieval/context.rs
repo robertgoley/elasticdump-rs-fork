@@ -30,6 +30,8 @@ pub(crate) struct RetrievalContext {
     /// failing sibling slices all fire the same token.
     pub(crate) cancel: CancellationToken,
     pub(crate) retry: RetryPolicy,
+    /// `--scrollId`: resume this scroll instead of running an initial search.
+    pub(crate) resume_scroll_id: Option<std::sync::Arc<str>>,
 }
 
 impl RetrievalContext {
@@ -51,6 +53,26 @@ impl RetrievalContext {
                     ("scroll", scroll_ttl),
                     ("allow_partial_search_results", "false"),
                 ],
+                true,
+                body,
+            )
+            .await
+    }
+
+    /// `POST /{index}/_search?allow_partial_search_results=false` (no scroll).
+    pub(crate) async fn plain_search(
+        &self,
+        body: Body,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let segments: Vec<&str> = match self.index.as_deref() {
+            Some(index) => vec![index, "_search"],
+            None => vec!["_search"],
+        };
+        self.client
+            .send(
+                Method::POST,
+                &segments,
+                &[("allow_partial_search_results", "false")],
                 true,
                 body,
             )

@@ -1,5 +1,6 @@
 //! Generic source → sink plumbing shared by every transfer direction.
 
+pub mod bulk;
 pub mod file_source;
 pub mod json_split;
 pub mod sink;
@@ -10,6 +11,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
+pub use bulk::{BulkAction, BulkOptions, BulkSink, WriteReport};
 pub use sink::{FileSink, Sink};
 pub use window::DocWindow;
 
@@ -21,9 +23,8 @@ pub async fn file_to_sink(
     mut window: DocWindow,
     mut sink: Sink,
     cancel: CancellationToken,
-) -> Result<u64> {
+) -> Result<WriteReport> {
     let mut rx = file_source::spawn_file_source(input, limit, 4, cancel.clone());
-    let mut written = 0u64;
     let result: Result<()> = async {
         if window.is_exhausted() {
             return Ok(());
@@ -39,7 +40,6 @@ pub async fn file_to_sink(
                     }
                     return Err(e);
                 }
-                written += docs;
             }
             if window.is_exhausted() {
                 break;
@@ -57,8 +57,7 @@ pub async fn file_to_sink(
                     return Err(e);
                 }
             }
-            sink.finalize().await?;
-            Ok(written)
+            sink.finalize().await
         }
         Err(e) => {
             sink.abort().await;

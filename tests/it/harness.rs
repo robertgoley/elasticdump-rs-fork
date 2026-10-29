@@ -134,6 +134,25 @@ impl Cluster {
         v["count"].as_u64().unwrap()
     }
 
+    /// Create `dst` with `src`'s mappings and analysis settings (so a data
+    /// restore does not depend on dynamic mapping).
+    pub async fn copy_shape(&self, src: &str, dst: &str) {
+        let m = self.ok("GET", &format!("{src}/_mapping"), None).await;
+        let st = self.ok("GET", &format!("{src}/_settings"), None).await;
+        let analysis = st[src]["settings"]["index"]["analysis"].clone();
+        let mut settings = json!({"number_of_shards": 2, "number_of_replicas": 0});
+        if !analysis.is_null() {
+            settings["analysis"] = analysis;
+        }
+        self.delete_index(dst).await;
+        self.ok(
+            "PUT",
+            dst,
+            Some(json!({"settings": settings, "mappings": m[src]["mappings"].clone()})),
+        )
+        .await;
+    }
+
     pub async fn delete_index(&self, index: &str) {
         let _ = self.call("DELETE", index, None).await;
     }
@@ -145,6 +164,7 @@ impl Cluster {
         index: &str,
     ) -> std::collections::BTreeMap<String, (Option<String>, Value)> {
         let mut out = std::collections::BTreeMap::new();
+        self.ok("POST", &format!("{index}/_refresh"), None).await;
         let mut v = self
             .ok(
                 "POST",

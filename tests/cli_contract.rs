@@ -417,3 +417,50 @@ async fn size_stops_early_and_clears_scroll() {
         "{reqs:#?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_requests_are_shaped_like_elasticdump() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        format!("{}\n{}\n", hit("1", "{\"a\":1}"), hit("2", "{\"a\":2}")),
+    )
+    .unwrap();
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#),
+        CannedResponse::ok(r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#),
+        CannedResponse::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#),
+    ])
+    .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            mock.input_url("dst"),
+            "--esCompress".into(),
+            "--output-params".into(),
+            r#"{"pipeline":"p1"}"#.into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let reqs = mock.requests();
+    assert_eq!(reqs.len(), 3, "{reqs:#?}");
+    assert!(reqs[0].starts_with("GET / "), "{}", reqs[0]);
+    assert!(
+        reqs[1].starts_with("POST /dst/_bulk?pipeline=p1 "),
+        "{}",
+        reqs[1]
+    );
+    let bulk = reqs[1].to_ascii_lowercase();
+    assert!(
+        bulk.contains("content-type: application/x-ndjson"),
+        "{bulk}"
+    );
+    assert!(bulk.contains("content-encoding: gzip"), "{bulk}");
+    assert!(reqs[2].starts_with("POST /dst/_refresh "), "{}", reqs[2]);
+    assert!(stderr(&o).contains("Total Writes: 2"), "{}", stderr(&o));
+}

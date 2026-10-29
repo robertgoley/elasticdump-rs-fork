@@ -13,7 +13,7 @@ use super::{
     context::RetrievalContext,
     messages::{BatchJob, BatchProcessingFailure, RetrievalMessage},
     pit::SharedPitCoordinator,
-    pit_search, scroll,
+    pit_search, scroll, search_after,
     slice_state::SliceState,
 };
 use crate::cli::SearchType;
@@ -202,7 +202,7 @@ pub(crate) async fn cleanup_search_context(
                 Err(e) => warn!("Slice {}: Failed to clear scroll context: {}", slice_id, e),
             }
         }
-        SearchType::PointInTime => {}
+        SearchType::PointInTime | SearchType::SearchAfter => {}
     }
 }
 
@@ -225,6 +225,7 @@ pub fn spawn_retrieval_task(
             SearchType::PointInTime => {
                 pit_search::run_pit_slice(&ctx, &mut state, &pit_keep_alive, shared_pit).await
             }
+            SearchType::SearchAfter => search_after::run_search_after_slice(&ctx, &mut state).await,
         };
 
         if let Err(error) = &result {
@@ -279,6 +280,7 @@ mod tests {
             start_time: Instant::now(),
             cancel: tokio_util::sync::CancellationToken::new(),
             retry: super::RetryPolicy::none(),
+            resume_scroll_id: None,
         }
     }
 

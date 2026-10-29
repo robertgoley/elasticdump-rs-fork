@@ -86,7 +86,7 @@ fn count_hits_and_last_sort_raw(
         let hit = hit?;
         doc_count += 1;
 
-        if matches!(search_type, SearchType::PointInTime) {
+        if search_type.uses_sort() {
             match hit.get("sort") {
                 Some(value) if value.is_array() => {
                     let buffer = last_sort_raw.get_or_insert_with(Vec::new);
@@ -145,9 +145,9 @@ fn finalize_metadata(
     doc_count: u64,
     last_sort_raw: Option<Vec<u8>>,
 ) -> Result<BatchMetadata> {
-    if matches!(search_type, SearchType::PointInTime) && doc_count > 0 && last_sort_raw.is_none() {
+    if search_type.uses_sort() && doc_count > 0 && last_sort_raw.is_none() {
         return Err(anyhow!(
-            "PIT response contains hits but the final hit is missing a usable sort value"
+            "search_after response contains hits but the final hit is missing a usable sort value"
         ));
     }
 
@@ -231,7 +231,7 @@ pub(crate) fn extract_batch(
         buffer.extend_from_slice(hit.as_raw_str().as_bytes());
         buffer.push(b'\n');
 
-        if matches!(search_type, SearchType::PointInTime) {
+        if search_type.uses_sort() {
             match hit.get("sort") {
                 Some(value) if value.is_array() => {
                     let sort_buffer = last_sort_raw.get_or_insert_with(Vec::new);

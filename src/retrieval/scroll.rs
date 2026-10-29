@@ -53,23 +53,40 @@ pub(crate) async fn run_scroll_slice(
     let body = &body;
     let initial_attempted = &AtomicBool::new(false);
     let slice_id = state.slice_id;
-    let response_bytes = send_checked_with_retry(
-        ctx.retry,
-        &ctx.cancel,
-        RetryMode::Idempotent,
-        state.slice_id,
-        "initial search",
-        move || {
-            if initial_attempted.swap(true, Ordering::Relaxed) {
-                debug!(
-                    "Slice {}: retrying initial search; a previous attempt whose response was lost may strand a scroll context until its TTL expires",
-                    slice_id
-                );
-            }
-            ctx.scroll_search(scroll_ttl, body.clone())
-        },
-    )
-    .await?;
+    let response_bytes = if let Some(resume_id) = ctx.resume_scroll_id.as_deref() {
+        // `--scrollId`: continue an existing scroll. This advances a cursor,
+        // so it gets the scroll-continuation retry rules.
+        state.current_id = Some(resume_id.to_string());
+        let resume_body = Body::sonic(&build_scroll_request_body(scroll_ttl, resume_id));
+        let resume_body = &resume_body;
+        send_checked_with_retry(
+            ctx.retry,
+            &ctx.cancel,
+            RetryMode::RejectionOnly,
+            state.slice_id,
+            "scroll resume",
+            move || ctx.scroll_continue(resume_body.clone()),
+        )
+        .await?
+    } else {
+        send_checked_with_retry(
+            ctx.retry,
+            &ctx.cancel,
+            RetryMode::Idempotent,
+            state.slice_id,
+            "initial search",
+            move || {
+                if initial_attempted.swap(true, Ordering::Relaxed) {
+                    debug!(
+                        "Slice {}: retrying initial search; a previous attempt whose response was lost may strand a scroll context until its TTL expires",
+                        slice_id
+                    );
+                }
+                ctx.scroll_search(scroll_ttl, body.clone())
+            },
+        )
+        .await?
+    };
     let initial_bytes = response_bytes.len() as u64;
     debug!(
         "Slice {}: Read {} bytes for initial response",

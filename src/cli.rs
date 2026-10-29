@@ -9,6 +9,16 @@ pub enum SearchType {
     Scroll,
     #[value(name = "pit")]
     PointInTime,
+    /// `--searchAfter` without PIT (selected via that flag, not `--searchType`).
+    #[value(skip)]
+    SearchAfter,
+}
+
+impl SearchType {
+    /// Pages are chained through the last hit's `sort` values.
+    pub fn uses_sort(&self) -> bool {
+        matches!(self, SearchType::PointInTime | SearchType::SearchAfter)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
@@ -459,6 +469,7 @@ impl Cli {
         match self.search_type {
             Some(SearchType::PointInTime) => EffectiveSearch::Pit,
             Some(SearchType::Scroll) => EffectiveSearch::Scroll,
+            Some(SearchType::SearchAfter) => EffectiveSearch::SearchAfter,
             None if is(self.search_after) && is(self.pit) => EffectiveSearch::Pit,
             None if is(self.search_after) => EffectiveSearch::SearchAfter,
             None => {

@@ -6,6 +6,7 @@ mod pit_search;
 mod progress;
 mod retrieval_task;
 mod scroll;
+mod search_after;
 pub mod search_body;
 mod slice_state;
 mod worker;
@@ -62,6 +63,8 @@ pub struct EsSourceOptions {
     pub buffer_size: usize,
     pub quiet: bool,
     pub retry: RetryPolicy,
+    /// `--scrollId`
+    pub resume_scroll_id: Option<String>,
 }
 
 /// Aborts the wrapped task when dropped, so the Ctrl+C listener dies with
@@ -161,7 +164,11 @@ async fn close_pit_best_effort(
 
 /// Read documents from Elasticsearch/OpenSearch into `sink`, honouring
 /// `window` (`--offset`/`--size`). Returns the number of documents written.
-pub async fn dump_data(opts: EsSourceOptions, sink: Sink, window: DocWindow) -> Result<u64> {
+pub async fn dump_data(
+    opts: EsSourceOptions,
+    sink: Sink,
+    window: DocWindow,
+) -> Result<crate::pipeline::WriteReport> {
     let client = &opts.client;
     let pit_api = opts.pit_api;
     debug!(
@@ -385,6 +392,7 @@ pub async fn dump_data(opts: EsSourceOptions, sink: Sink, window: DocWindow) -> 
         start_time,
         cancel: cancel.clone(),
         retry,
+        resume_scroll_id: opts.resume_scroll_id.as_deref().map(Arc::<str>::from),
     };
 
     debug!(
@@ -570,7 +578,7 @@ pub async fn dump_data(opts: EsSourceOptions, sink: Sink, window: DocWindow) -> 
 
     // Make the dump durable FIRST; PIT cleanup afterwards can no longer
     // destroy it and is best-effort only.
-    output_target.finalize().await?;
+    let report = output_target.finalize().await?;
     close_pit_best_effort(client, pit_api, &shared_pit).await;
 
     let elapsed = start_time.elapsed();
@@ -626,7 +634,8 @@ pub async fn dump_data(opts: EsSourceOptions, sink: Sink, window: DocWindow) -> 
         ByteSize(bytes_per_sec as u64)
     );
 
-    Ok(written_docs)
+    let _ = written_docs;
+    Ok(report)
 }
 
 #[cfg(test)]

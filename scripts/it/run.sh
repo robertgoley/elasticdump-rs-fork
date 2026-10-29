@@ -13,7 +13,11 @@ shift || true
 IT_DIR="${IT_DIR:-${TMPDIR:-/tmp}/elasticdump-rs-it}"
 export IT_DIR
 
+# Every test binary is compiled up front with ONE feature set; a later
+# `cargo test` with different features would recompile next to the running
+# node and risk the OOM killer.
 cargo build --profile it --features it --tests --bins -j "${CARGO_JOBS:-4}"
+cargo test --profile it --features it --tests --no-run -j "${CARGO_JOBS:-4}"
 
 # Note: a RETURN trap would fire when `source` below finishes, so cleanup is
 # an EXIT trap plus an explicit down.sh per profile.
@@ -26,7 +30,7 @@ run_profile() {
   source "$IT_DIR/env"
   cargo test --profile it --features it --test it -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" "$@"
   if [[ "$p" == opensearch-plain && "${IT_LEGACY:-1}" == 1 ]]; then
-    cargo test --profile it --test integration_test -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" "$@"
+    cargo test --profile it --features it --test integration_test -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" "$@"
   fi
   scripts/it/down.sh
 }

@@ -1,0 +1,259 @@
+//! M2: restore (file → cluster), cluster → cluster, search modes, size,
+//! scrollId resume, bulk error handling.
+
+use serde_json::{Value, json};
+
+use crate::harness::*;
+
+fn io_args(c: &Cluster, input: &str, output: &str) -> Vec<String> {
+    let mut a = s(&["--input", input, "--output", output]);
+    if input.starts_with("http") {
+        a.extend(c.tls_args("input"));
+    }
+    if output.starts_with("http") {
+        a.extend(c.tls_args("output"));
+    }
+    a
+}
+
+async fn dump_to_file(c: &Cluster, index: &str, extra: &[&str]) -> std::path::PathBuf {
+    let out = tmp_path("dump", "json");
+    let mut a = io_args(c, &c.url_with_auth(index), out.to_str().unwrap());
+    a.extend(s(extra));
+    assert_success(&run(a).await);
+    out
+}
+
+fn ids(path: &std::path::Path) -> Vec<String> {
+    lines(path)
+        .iter()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).unwrap()["_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn file_restore_round_trip_is_lossless() {
+    let c = Cluster::from_env();
+    let src = unique("rt_src");
+    let dst = unique("rt_dst");
+    seed_index(&c, &src, 10_000).await;
+    let file = dump_to_file(&c, &src, &[]).await;
+    c.copy_shape(&src, &dst).await;
+
+    let mut a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
+    a.extend(s(&["--limit", "250"]));
+    let o = run(a).await;
+    assert_success(&o);
+
+    assert_eq!(
+        c.docs(&src).await,
+        c.docs(&dst).await,
+        "ids, routing and sources"
+    );
+    // big integers and unicode survive byte-for-byte
+    let back = dump_to_file(&c, &dst, &[]).await;
+    assert_eq!(raw_sources_by_id(&file), raw_sources_by_id(&back));
+
+    for i in [&src, &dst] {
+        c.delete_index(i).await;
+    }
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(back);
+}
+
+#[tokio::test]
+async fn cluster_to_cluster_with_prefix_suffix_and_gzip_requests() {
+    let c = Cluster::from_env();
+    let src = unique("c2c_src");
+    seed_index(&c, &src, 600).await;
+    let dst = format!("pre_{src}_suf");
+    c.copy_shape(&src, &dst).await;
+    let mut a = io_args(&c, &c.url_with_auth(&src), &c.url_with_auth(&src));
+    a.extend(s(&[
+        "--prefix",
+        "pre_",
+        "--suffix",
+        "_suf",
+        "--esCompress",
+        "--limit",
+        "128",
+    ]));
+    let o = run(a).await;
+    assert_success(&o);
+    assert_eq!(c.docs(&src).await, c.docs(&dst).await);
+    c.delete_index(&src).await;
+    c.delete_index(&dst).await;
+}
+
+#[tokio::test]
+async fn host_only_input_with_output_index_and_pit_slices() {
+    let c = Cluster::from_env();
+    let src = unique("pitc2c");
+    let dst = unique("pitc2c_dst");
+    seed_index(&c, &src, 700).await;
+    c.copy_shape(&src, &dst).await;
+    let mut a = io_args(&c, &c.url_with_auth(&src), &c.url_with_auth(""));
+    a.extend(s(&[
+        "--output-index",
+        &dst,
+        "--searchType",
+        "pit",
+        "--slices",
+        "2",
+        "--noRefresh",
+    ]));
+    let o = run(a).await;
+    assert_success(&o);
+    assert_eq!(c.docs(&src).await, c.docs(&dst).await);
+    c.delete_index(&src).await;
+    c.delete_index(&dst).await;
+}
+
+#[tokio::test]
+async fn exact_size_with_scroll_and_sliced_pit() {
+    let c = Cluster::from_env();
+    let src = unique("size1234");
+    seed_index(&c, &src, 1500).await;
+    for extra in [
+        vec!["--limit", "500"],
+        vec!["--searchType", "pit", "--slices", "3", "--limit", "200"],
+    ] {
+        let mut e = extra.clone();
+        e.extend(["--size", "1234"]);
+        let f = dump_to_file(&c, &src, &e).await;
+        let got = ids(&f);
+        assert_eq!(got.len(), 1234, "{extra:?}");
+        let uniq: std::collections::BTreeSet<_> = got.iter().collect();
+        assert_eq!(uniq.len(), 1234, "{extra:?}");
+        let _ = std::fs::remove_file(f);
+    }
+    c.delete_index(&src).await;
+}
+
+#[tokio::test]
+async fn search_after_without_pit_requires_sort_and_returns_all() {
+    let c = Cluster::from_env();
+    let src = unique("sa");
+    seed_index(&c, &src, 450).await;
+    let out = tmp_path("sa", "json");
+    let mut a = io_args(&c, &c.url_with_auth(&src), out.to_str().unwrap());
+    a.extend(s(&["--searchAfter"]));
+    let o = run(a.clone()).await;
+    assert_eq!(o.status.code(), Some(2), "sort is required");
+
+    a.extend(s(&[
+        "--searchBody",
+        r#"{"query":{"match_all":{}},"sort":[{"k":"asc"}]}"#,
+        "--limit",
+        "100",
+    ]));
+    let o = run(a).await;
+    assert_success(&o);
+    let got = ids(&out);
+    assert_eq!(got.len() as u64, c.count(&src).await);
+    let uniq: std::collections::BTreeSet<_> = got.iter().collect();
+    assert_eq!(uniq.len(), got.len());
+    c.delete_index(&src).await;
+    let _ = std::fs::remove_file(out);
+}
+
+#[tokio::test]
+async fn scroll_id_resumes_an_open_scroll() {
+    let c = Cluster::from_env();
+    let src = unique("resume");
+    seed_index(&c, &src, 250).await;
+    let total = c.count(&src).await;
+    let first = c
+        .ok(
+            "POST",
+            &format!("{src}/_search?scroll=5m"),
+            Some(json!({"size": 100, "sort": ["_doc"]})),
+        )
+        .await;
+    let sid = first["_scroll_id"].as_str().unwrap().to_string();
+    let out = tmp_path("resume", "json");
+    let mut a = io_args(&c, &c.url_with_auth(&src), out.to_str().unwrap());
+    a.extend(s(&["--scrollId", &sid]));
+    let o = run(a).await;
+    assert_success(&o);
+    assert_eq!(lines(&out).len() as u64, total - 100);
+    c.delete_index(&src).await;
+    let _ = std::fs::remove_file(out);
+}
+
+#[tokio::test]
+async fn typed_6x_fixture_restores_typeless() {
+    let c = Cluster::from_env();
+    let dst = unique("typed");
+    let file = tmp_path("typed", "json");
+    std::fs::write(
+        &file,
+        "{\"_index\":\"old\",\"_type\":\"doc\",\"_id\":\"1\",\"_routing\":\"r\",\"_source\":{\"a\":1}}\n{\"_index\":\"old\",\"_type\":\"doc\",\"_id\":\"2\",\"_source\":{\"a\":2}}\n",
+    )
+    .unwrap();
+    let a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
+    assert_success(&run(a).await);
+    let docs = c.docs(&dst).await;
+    assert_eq!(docs.len(), 2);
+    assert_eq!(docs["1"], (Some("r".to_string()), json!({"a": 1})));
+    c.delete_index(&dst).await;
+    let _ = std::fs::remove_file(file);
+}
+
+#[tokio::test]
+async fn bulk_item_errors_respect_ignore_flags() {
+    let c = Cluster::from_env();
+    let dst = unique("strict");
+    c.ok(
+        "PUT",
+        &dst,
+        Some(json!({"mappings": {"dynamic": "strict", "properties": {"a": {"type": "integer"}}}})),
+    )
+    .await;
+    let file = tmp_path("strict", "json");
+    std::fs::write(
+        &file,
+        "{\"_id\":\"1\",\"_source\":{\"a\":1}}\n{\"_id\":\"2\",\"_source\":{\"b\":2}}\n{\"_id\":\"3\",\"_source\":{\"a\":3}}\n",
+    )
+    .unwrap();
+
+    // default: ignore-es-write-errors=true → exit 0, item on stderr
+    let mut a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
+    a.push("--noImplicitRetry".into());
+    let o = run_env(a.clone(), vec![]).await;
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("strict_dynamic_mapping_exception"), "{err}");
+    assert_eq!(c.count(&dst).await, 2);
+
+    // ignore-es-write-errors=false → exit 1
+    a.extend(s(&["--ignore-es-write-errors", "false"]));
+    let o = run(a).await;
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("bulk write failed"));
+    c.delete_index(&dst).await;
+    let _ = std::fs::remove_file(file);
+}
+
+#[tokio::test]
+async fn source_only_dump_restores_with_new_ids() {
+    let c = Cluster::from_env();
+    let src = unique("srconly");
+    let dst = unique("srconly_dst");
+    seed_index(&c, &src, 120).await;
+    let f = dump_to_file(&c, &src, &["--sourceOnly"]).await;
+    c.copy_shape(&src, &dst).await;
+    let first: Value = serde_json::from_str(&lines(&f)[0]).unwrap();
+    assert!(first.get("_id").is_none() && first.get("k").is_some());
+    let a = io_args(&c, f.to_str().unwrap(), &c.url_with_auth(&dst));
+    assert_success(&run(a).await);
+    assert_eq!(c.count(&dst).await, c.count(&src).await);
+    c.delete_index(&src).await;
+    c.delete_index(&dst).await;
+    let _ = std::fs::remove_file(f);
+}

@@ -6,16 +6,19 @@ use std::path::PathBuf;
 use anyhow::Result;
 use sonic_rs::JsonValueTrait;
 
+use super::bulk::{BulkSink, WriteReport};
 use crate::output::{OutputTarget, create_output_target};
 
 pub enum Sink {
     File(FileSink),
+    Bulk(Box<BulkSink>),
 }
 
 pub struct FileSink {
     target: OutputTarget,
     source_only: bool,
     scratch: Vec<u8>,
+    written: u64,
 }
 
 impl FileSink {
@@ -24,6 +27,7 @@ impl FileSink {
             target: create_output_target(path.as_deref(), overwrite).await?,
             source_only,
             scratch: Vec::new(),
+            written: 0,
         })
     }
 }
@@ -55,40 +59,60 @@ impl Sink {
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         match self {
             Sink::File(f) => {
+                let docs = memchr::memchr_iter(b'\n', buf).count() as u64;
                 if f.source_only {
                     let mut scratch = std::mem::take(&mut f.scratch);
                     source_only_lines(buf, &mut scratch);
                     let r = f.target.write_all(&scratch).await;
                     f.scratch = scratch;
-                    r
+                    r?;
                 } else {
-                    f.target.write_all(buf).await
+                    f.target.write_all(buf).await?;
                 }
+                f.written += docs;
+                Ok(())
             }
+            Sink::Bulk(b) => b.write_batch(buf).await,
         }
     }
 
     pub async fn flush(&mut self) -> Result<()> {
         match self {
             Sink::File(f) => f.target.flush().await,
+            Sink::Bulk(_) => Ok(()),
         }
     }
 
     pub fn is_stdout(&self) -> bool {
         match self {
             Sink::File(f) => f.target.is_stdout(),
+            Sink::Bulk(_) => false,
         }
     }
 
-    pub async fn finalize(self) -> Result<()> {
+    pub fn report(&self) -> WriteReport {
         match self {
-            Sink::File(f) => f.target.finalize().await,
+            Sink::File(f) => WriteReport {
+                written: f.written,
+                failed: 0,
+            },
+            Sink::Bulk(b) => b.report,
         }
+    }
+
+    pub async fn finalize(self) -> Result<WriteReport> {
+        let report = self.report();
+        match self {
+            Sink::File(f) => f.target.finalize().await?,
+            Sink::Bulk(_) => {}
+        }
+        Ok(report)
     }
 
     pub async fn abort(self) {
         match self {
             Sink::File(f) => f.target.abort().await,
+            Sink::Bulk(_) => {}
         }
     }
 }
