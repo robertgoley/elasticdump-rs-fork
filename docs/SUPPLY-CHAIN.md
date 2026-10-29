@@ -147,3 +147,22 @@ Not covered: unsafe deltas. `scripts/sup/geiger-gate.sh` in the `supply-chain` j
 Any flagged crate that is not on the allow-list fails the job. The allow-list is `ring` (BoringSSL-derived C/asm) and `zstd-sys` (vendored libzstd).
 
 Verified: adding `libz-sys` fails the check. `deny.toml` also bans it, so `cargo deny` fails as well.
+
+## Secret scanning and canaries (SUP-015, L-210)
+
+`scripts/sup/secret-scan.sh` runs three checks:
+
+1. gitleaks 8.28.0 over the whole git history, or only the PR's commits;
+2. gitleaks over the tracked files;
+3. the `tests/secrets.rs` canary suite.
+
+The `secret-scan` job in `security.yml` runs it on every push and PR.
+
+Results on 2026-10-29:
+
+- 137 commits scanned, no findings.
+- Tracked tree clean.
+- Canary suite: 3/3 tests pass.
+- Negative check: a planted `ghp_…` token is caught, exit 1.
+
+Untracked `target/` holds 44 "private-key" hits. These are test PEMs that dependencies embed in build output. They are not scanned, because `target/` is ignored and never committed.
