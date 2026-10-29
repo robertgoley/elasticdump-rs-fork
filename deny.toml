@@ -3,6 +3,13 @@
 
 [graph]
 all-features = true
+# Shipped targets only (Linux). Windows/wasm-only crates are out of scope.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+]
 
 [advisories]
 # RustSec advisory DB; any vulnerability fails. Unmaintained / unsound crates
@@ -33,9 +40,84 @@ allow = [
 ]
 
 [bans]
-multiple-versions = "warn"
+# SUP-005: one version per crate unless skipped below with a reason.
+multiple-versions = "deny"
 wildcards = "deny"
 allow-wildcard-paths = true
+skip = [
+    # hyper-util uses base64 0.23; reqwest and our code use 0.22.
+    { crate = "base64@0.22.1", reason = "reqwest 0.12 / our code; hyper-util moved to 0.23" },
+    # rust-ini -> ordered-multimap pins hashbrown 0.14.
+    { crate = "hashbrown@0.14.5", reason = "rust-ini -> ordered-multimap 0.7" },
+    # const-random-macro (via rust-ini -> dlv-list) still on getrandom 0.2.
+    { crate = "getrandom@0.2.17", reason = "rust-ini -> dlv-list -> const-random" },
+]
+# Crates we never want in the graph: OpenSSL / native TLS, libgit2, other HTTP
+# clients (reqwest/hyper is the only one), libcurl.
+deny = [
+    { crate = "openssl", reason = "TLS is rustls only" },
+    { crate = "openssl-sys", reason = "TLS is rustls only" },
+    { crate = "native-tls", reason = "TLS is rustls only" },
+    { crate = "hyper-tls", reason = "TLS is rustls only" },
+    { crate = "git2", reason = "no libgit2" },
+    { crate = "libgit2-sys", reason = "no libgit2" },
+    { crate = "curl", reason = "HTTP client is reqwest/hyper" },
+    { crate = "curl-sys", reason = "HTTP client is reqwest/hyper" },
+    { crate = "isahc", reason = "HTTP client is reqwest/hyper" },
+    { crate = "ureq", reason = "HTTP client is reqwest/hyper" },
+    { crate = "surf", reason = "HTTP client is reqwest/hyper" },
+    { crate = "attohttpc", reason = "HTTP client is reqwest/hyper" },
+    { crate = "libz-sys", reason = "zlib is the pure-Rust zlib-rs backend (SUP-021)" },
+]
+
+# SUP-005 / SUP-009 / SUP-021: build scripts run arbitrary code at build time.
+# Only the crates below may have one; a new build-script crate fails until it
+# is reviewed and added here (docs/SUPPLY-CHAIN.md, "Build scripts").
+[bans.build]
+executables = "deny"
+include-dependencies = true
+include-archives = true
+interpreted = "deny"
+allow-build-scripts = [
+    { crate = "ahash" }, # cfg probe (rustc version / target features)
+    { crate = "anyhow" }, # rustc feature probe (backtrace)
+    { crate = "crc32fast" }, # cfg probe
+    { crate = "crunchy" }, # generates unrolling macros (OUT_DIR only)
+    { crate = "generic-array" }, # rustc version probe
+    { crate = "getrandom" }, # cfg probe
+    { crate = "httparse" }, # SIMD cfg probe
+    { crate = "icu_normalizer_data" }, # cfg probe for baked data
+    { crate = "icu_properties_data" }, # cfg probe for baked data
+    { crate = "libc" }, # rustc version / target cfg probe
+    { crate = "parking_lot_core" }, # cfg probe
+    { crate = "portable-atomic" }, # target-feature cfg probe
+    { crate = "proc-macro2" }, # rustc version probe
+    { crate = "quote" }, # rustc version probe
+    { crate = "ref-cast" }, # rustc version probe
+    { crate = "ring" }, # NATIVE: compiles C/asm via cc (SUP-021 allow-list)
+    { crate = "rustix" }, # cfg probe (linux_raw backend)
+    { crate = "rustls" }, # cfg probe
+    { crate = "serde" }, # rustc version probe
+    { crate = "serde_core" }, # rustc version probe
+    { crate = "serde_json" }, # cfg probe
+    { crate = "thiserror" }, # rustc nightly-feature probe
+    { crate = "tiny-keccak" }, # cfg probe
+    { crate = "zerocopy" }, # rustc version probe
+    { crate = "zmij" }, # cfg probe
+    { crate = "zstd-safe" }, # cfg probe
+    { crate = "zstd-sys" }, # NATIVE: compiles bundled zstd C via cc (SUP-021 allow-list)
+]
+# Scripts shipped in the package that the build never runs (reviewed at these
+# exact versions; a version bump needs a fresh look):
+#  - untrusted: maintainer shell scripts under mk/;
+#  - ring: perlasm generators; the crates.io package carries pregenerated
+#    assembly and build.rs only runs perl when building from a git checkout;
+#  - zerocopy: maintainer CI scripts.
+bypass = [
+    { crate = "untrusted@0.9.0", allow-globs = ["mk/*"] },
+    { crate = "ring@0.17.14", allow-globs = ["crypto/**/*.pl"] },
+    { crate = "zerocopy@0.8.63", allow-globs = ["cargo.sh", "ci/*.sh"] },
+]
 
 [sources]
 unknown-registry = "deny"
