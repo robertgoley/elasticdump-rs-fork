@@ -1,0 +1,18 @@
+{
+  "task": "L-108",
+  "findings": ["F-04", "F-11", "F-12", "F-13", "F-14"],
+  "reqs": ["INF-014", "SUP-018 (part)"],
+  "date": "2026-10-29",
+  "it_runs": {
+    "es717-plain": "45 passed, 0 failed",
+    "es717-secure": "45 passed, 0 failed",
+    "opensearch-plain": "45 passed, 0 failed",
+    "opensearch-secure": "45 passed, 0 failed",
+    "es717-plain_default_IT_DIR": "45 passed; IT_DIR=$HOME/.cache/elasticdump-rs-it mode 700, env 600"
+  },
+  "images": "ES/OS containers started by digest (e.g. elasticsearch@sha256:3f55a7f6...)",
+  "clean_tree": "scripts/check-clean-tree.sh: working tree unchanged by tests; no new files in repo root or plan dir after 5 IT profile runs",
+  "make_image": "built with digest-pinned FROMs, --version OK, test image removed",
+  "stray_oom": "No code path writes 'oom' (no literal in src/tests/scripts or any commit except .dockerignore). Repo 'oom' predates M0 commit 6cc6a5f by 6 s (ad-hoc shell redirect); plan-dir 'oom' created 12:27:28 EDT 2026-10-29 by no process of this task. Tracked junk files left in place as instructed.",
+  "notes": "env file is rm'd before rewrite so a pre-existing 0644 file cannot keep its mode; OpenSearch < 2.12 still uses admin/admin (demo config requirement)."
+}

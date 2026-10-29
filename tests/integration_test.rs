@@ -25,6 +25,14 @@ use support::mock_es::{CannedResponse, MockEs};
 
 /// Target cluster for the live integration suite. Defaults to the historical
 /// `http://localhost:9200`; the podman harness exports `IT_ES_URL`.
+/// Scratch path for a test file: never the working directory (F-11), so a
+/// failing test cannot leave `test_query_*.json` / `*.jsonl` in the repo.
+fn scratch(name: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("edrs-integration-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    dir.join(name).to_string_lossy().into_owned()
+}
+
 fn es_url() -> &'static str {
     static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     URL.get_or_init(|| {
@@ -356,7 +364,7 @@ async fn cleanup(test_index: &str, output_file: &str) -> Result<()> {
 async fn test_basic_dump() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -416,7 +424,7 @@ async fn test_basic_dump() -> Result<()> {
 async fn test_filtered_dump() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -524,7 +532,7 @@ async fn test_stdout_output() -> Result<()> {
 async fn test_pagination_and_complex_query() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -591,7 +599,7 @@ async fn test_pagination_and_complex_query() -> Result<()> {
 #[tokio::test]
 async fn test_scroll_dump_preserves_full_hit_documents() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = format!("test_scroll_streaming_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_scroll_streaming_output_{}.jsonl", test_index));
 
     setup_test_data(&test_index).await?;
 
@@ -630,8 +638,8 @@ async fn test_scroll_dump_preserves_full_hit_documents() -> Result<()> {
 async fn test_search_body_from_file() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
-    let query_file_path = format!("test_query_{}.json", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
+    let query_file_path = scratch(&format!("test_query_{}.json", test_index));
 
     // Create a temporary query file
     let query_content = r#"{"query":{"term":{"tags":"odd"}}}"#;
@@ -687,7 +695,7 @@ async fn test_search_body_from_file() -> Result<()> {
 async fn test_overwrite_flag() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -838,7 +846,7 @@ async fn test_reports_index_not_found_error_for_pit() -> Result<()> {
 async fn test_performance_benchmark() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -912,7 +920,7 @@ async fn test_performance_benchmark() -> Result<()> {
 async fn test_large_scale_performance() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -984,7 +992,7 @@ async fn test_large_scale_performance() -> Result<()> {
 #[tokio::test]
 async fn test_sliced_scroll() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = format!("test_sliced_scroll_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_sliced_scroll_output_{}.jsonl", test_index));
 
     // Set up test data
     setup_test_data(&test_index).await?;
@@ -1050,13 +1058,13 @@ async fn test_sliced_scroll() -> Result<()> {
 #[tokio::test]
 async fn test_sliced_scroll_with_query() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = format!("test_sliced_scroll_with_query_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_sliced_scroll_with_query_output_{}.jsonl", test_index));
 
     // Set up test data
     setup_test_data(&test_index).await?;
 
     // Create a temporary file to hold the query JSON
-    let query_file = format!("test_slice_query_{}.json", test_index);
+    let query_file = scratch(&format!("test_slice_query_{}.json", test_index));
     std::fs::write(&query_file, r#"{"query": {"term": {"tags": "even"}}}"#)?;
 
     // Run elasticdump-rs with slices=3 and a query to get only even-tagged documents
@@ -1111,7 +1119,7 @@ async fn test_sliced_scroll_with_query() -> Result<()> {
 #[tokio::test]
 async fn test_slices_performance_comparison() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file_base = format!("test_slices_performance_output_{}", test_index);
+    let output_file_base = scratch(&format!("test_slices_performance_output_{}", test_index));
 
     // Create an index with more documents for meaningful benchmarking
     // First set up the basic test data with 100 documents
@@ -1231,7 +1239,7 @@ async fn test_slices_performance_comparison() -> Result<()> {
 async fn test_basic_pit() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -1294,7 +1302,7 @@ async fn test_basic_pit() -> Result<()> {
 #[tokio::test]
 async fn test_basic_pit_still_dumps_all_documents_with_streaming_extractor() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = format!("test_pit_streaming_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_pit_streaming_output_{}.jsonl", test_index));
 
     setup_test_data(&test_index).await?;
 
@@ -1337,7 +1345,7 @@ async fn test_basic_pit_still_dumps_all_documents_with_streaming_extractor() -> 
 async fn test_pit_with_query() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -1392,7 +1400,7 @@ async fn test_pit_with_query() -> Result<()> {
 async fn test_sliced_pit() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -1458,8 +1466,8 @@ async fn test_sliced_pit() -> Result<()> {
 async fn test_compare_scroll_vs_pit() -> Result<()> {
     // Get a unique test index and output files
     let test_index = get_unique_test_index();
-    let scroll_output = format!("test_output_scroll_{}.jsonl", test_index);
-    let pit_output = format!("test_output_pit_{}.jsonl", test_index);
+    let scroll_output = scratch(&format!("test_output_scroll_{}.jsonl", test_index));
+    let pit_output = scratch(&format!("test_output_pit_{}.jsonl", test_index));
 
     // Setup more test data for a meaningful performance test
     setup_test_data(&test_index).await?;
@@ -1562,7 +1570,7 @@ async fn test_compare_scroll_vs_pit() -> Result<()> {
 async fn test_sliced_pit_large_dataset() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_{}.jsonl", test_index));
 
     // Setup test data
     setup_test_data(&test_index).await?;
@@ -1691,7 +1699,7 @@ async fn test_create_data_for_manual_testing() -> Result<()> {
 async fn test_dump_correctness() -> Result<()> {
     // Get a unique test index and output file
     let test_index = get_unique_test_index();
-    let output_file = format!("test_output_correctness_{}.jsonl", test_index);
+    let output_file = scratch(&format!("test_output_correctness_{}.jsonl", test_index));
 
     // Setup test data (100 documents)
     setup_test_data(&test_index).await?;

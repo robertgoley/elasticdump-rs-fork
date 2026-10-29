@@ -17,9 +17,9 @@
 #   make image-public      rust:1.99-trixie -> debian:trixie-slim (public, glibc)
 # CVE comparison of these bases: SECURITY-CVE.md.
 ARG BUILDER_IMAGE=dhi.io/rust
-ARG BUILDER_TAG=1.99.0-alpine3.23-dev
+ARG BUILDER_TAG=1.99.0-alpine3.23-dev@sha256:2d4387114840f672c75a8cec9414a300e07b285798382c76a466eafec4686b6e
 ARG BASE_IMAGE=dhi.io/alpine-base
-ARG BASE_TAG=3.24-alpine3.24-dev
+ARG BASE_TAG=3.24-alpine3.24-dev@sha256:7182e0bc2f186386bb23bc0718508913450ba1876e93cf07e5e3cf263c4dbb63
 
 # ----------------------------------------------------------------- builder
 FROM ${BUILDER_IMAGE}:${BUILDER_TAG} AS builder

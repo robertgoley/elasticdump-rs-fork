@@ -1,13 +1,17 @@
 services:
   es01:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.28
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29@sha256:3f55a7f6f29b95345dc33808d6e914f81d125d4ca90a414e26c81a3521400980
     container_name: es01
     environment:
       - node.name=es01
       - cluster.name=es-docker-cluster
       - discovery.type=single-node
       - bootstrap.memory_lock=true
-      - xpack.security.enabled=false
+      # F-12: security on, bound to loopback. Set ELASTIC_PASSWORD before
+      # `docker compose up` and point the benchmark at
+      # ES_URL=http://elastic:$ELASTIC_PASSWORD@localhost:9200
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set ELASTIC_PASSWORD}
       # Keep the benchmark heap close to the intended production-like local
       # setup. Do not pair this with a tight container memory limit: Lucene's
       # filesystem cache is accounted to the container cgroup too.
@@ -19,7 +23,7 @@ services:
     # No mem_limit here on purpose. A tight cgroup limit also constrains the
     # filesystem cache used by Lucene during dump/search benchmarks.
     ports:
-      - 9200:9200
+      - 127.0.0.1:9200:9200
     networks:
       - es-network
 

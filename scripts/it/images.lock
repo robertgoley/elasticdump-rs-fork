@@ -1,0 +1,14 @@
+# F-14 / INF-012: IT and tool images pinned by (manifest-list) digest.
+# Format: <image:tag> <digest>. Regenerate: podman images --digests. scripts/it/up.sh
+# appends @digest to a matching image unless IT_UNPINNED=1.
+docker.elastic.co/elasticsearch/elasticsearch:7.10.2 sha256:d528cec81720266974fdfe7a0f12fee928dc02e5a2c754b45b9a84c84695bfd9
+docker.elastic.co/elasticsearch/elasticsearch:7.17.29 sha256:3f55a7f6f29b95345dc33808d6e914f81d125d4ca90a414e26c81a3521400980
+docker.elastic.co/elasticsearch/elasticsearch:8.19.23 sha256:4d0724bb8d78d7a2330693623e26ca4d621079d062ecc8a30b3e1fc180ec14c1
+docker.io/bitnamilegacy/elasticsearch:7.10.2 sha256:73128f92f1d370b782a32928c569772bd7563d54b39b0a11d27269ae4494c593
+docker.io/bitnamilegacy/elasticsearch:8.6.1-debian-11-r0 sha256:af815f5356650ca1663092084f7bd4cc88bff50f1e4542ac63e6c61eb1cbf3b3
+docker.io/bitnamilegacy/elasticsearch:9.1.2-debian-12-r0 sha256:00176a47afa0c0cfc9d11bdbafda13cbad7c9098ff1e6092112df2c751de301a
+docker.io/library/alpine:3.24.3 sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+docker.io/opensearchproject/opensearch:1.3.20 sha256:0ecf20d1ec1b682fa1cf36c74900b547bd1d7da5817a14edf4236472e110863e
+docker.io/opensearchproject/opensearch:2 sha256:3bfa1ec74d56928c2e018033d45c460ce2c0ea65a5cedd577de3102326c31b89
+docker.io/opensearchproject/opensearch:3 sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e
+ghcr.io/shopify/toxiproxy:2.12.0 sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e

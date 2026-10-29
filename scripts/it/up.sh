@@ -30,12 +30,26 @@ ES_IMAGE="${ES_IMAGE:-docker.io/bitnamilegacy/elasticsearch:${ES_TAG}}"
 # bitnami images use their own env conventions (see below).
 ES_OFFICIAL=0
 [[ "$ES_IMAGE" == docker.elastic.co/* ]] && ES_OFFICIAL=1
+# F-14: pin by digest from images.lock (IT_UNPINNED=1 to use the bare tag).
+pin() {
+  local img="$1" d
+  [[ "$img" == *@sha256:* || "${IT_UNPINNED:-0}" == 1 ]] && { echo "$img"; return; }
+  d=$(awk -v i="$img" '$1 == i {print $2}' "$(dirname "$0")/images.lock" 2>/dev/null)
+  if [[ -n "$d" ]]; then echo "$img@$d"; else echo "warning: $img is not pinned in images.lock" >&2; echo "$img"; fi
+}
+OS_IMAGE=$(pin "$OS_IMAGE")
+ES_IMAGE=$(pin "$ES_IMAGE")
 # OpenSearch < 2.12 ignores OPENSEARCH_INITIAL_ADMIN_PASSWORD; its demo
 # config always uses admin/admin.
 OS_LEGACY_ADMIN=0
 [[ "$OS_TAG" == 1* || "$OS_TAG" =~ ^2\.([0-9]|1[01])(\.|$) ]] && OS_LEGACY_ADMIN=1
 RUN_ID="${RUN_ID:-$$}"
-IT_DIR="${IT_DIR:-${TMPDIR:-/tmp}/elasticdump-rs-it}"
+# F-13: per-run secrets live in a private directory (not world-readable /tmp
+# defaults): umask 077, IT_DIR mode 0700, random passwords and key passphrase.
+umask 077
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+gen_secret() { printf 'It-%s-Aa1!' "$(openssl rand -hex 12)"; }
+KEY_PASS="${IT_KEY_PASS:-$(openssl rand -hex 16)}"
 HEAP="${OS_HEAP:-512m}"
 # Elasticsearch heap (default: same as OS_HEAP). ES 9 at 512m is ~950 MB RSS;
 # on a box with ~1.5 GB free use ES_HEAP=320m IT_LEAN_JVM=1.
@@ -47,7 +61,9 @@ LEAN_OPTS=""
 if [[ "${IT_LEAN_JVM:-0}" == 1 ]]; then
   LEAN_OPTS="-XX:ReservedCodeCacheSize=64m -XX:MaxDirectMemorySize=128m -Xss512k -XX:CICompilerCount=2"
 fi
-mkdir -p "$IT_DIR"
+mkdir -p "$IT_DIR" && chmod 700 "$IT_DIR"
+# A pre-existing env file keeps its old mode on `>`; recreate it 0600.
+rm -f "$IT_DIR/env"
 
 engine() { podman "$@"; }
 
@@ -77,13 +93,16 @@ es_pki() {
     openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 3 \
       -extfile client.ext -out client.pem 2>/dev/null
     openssl pkcs8 -topk8 -v2 aes-256-cbc -in client-key.pem -out client-key-enc.pem \
-      -passout pass:it-secret 2>/dev/null
+      -passout "pass:$KEY_PASS" 2>/dev/null
     # Optional client certificates on HTTP (presented certs are verified
     # against the CA; authentication stays basic auth: the PKI realm is a
     # paid feature and bitnami exposes no switch for it).
     printf "xpack.security.http.ssl.client_authentication: optional\nxpack.ml.enabled: false\n" > my_elasticsearch.yml
+    # readable by the container's non-root user; IT_DIR (0700) keeps them
+    # private from other host users
     chmod 644 ./*
   )
+  chmod 755 "$d"
   echo "$d"
 }
 
@@ -103,7 +122,7 @@ case "$PROFILE" in
   opensearch-secure)
     PORT="${PORT:-19201}"
     NAME="it-os-sec-${RUN_ID}"
-    ADMIN_PW="${IT_ADMIN_PW:-Str0ng!Passw0rd#2026}"
+    ADMIN_PW="${IT_ADMIN_PW:-$(gen_secret)}"
     [[ $OS_LEGACY_ADMIN == 1 ]] && ADMIN_PW=admin
     engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
       -p "127.0.0.1:${PORT}:9200" \
@@ -151,7 +170,7 @@ case "$PROFILE" in
   elasticsearch-secure)
     PORT="${PORT:-19203}"
     NAME="it-es-sec-${RUN_ID}"
-    ADMIN_PW="${IT_ADMIN_PW:-Str0ng-Elastic-2026}"
+    ADMIN_PW="${IT_ADMIN_PW:-$(gen_secret)}"
     if [[ $ES_OFFICIAL == 1 ]]; then
       CERTS=$(es_pki)
       C=/usr/share/elasticsearch/config/certs
@@ -233,7 +252,7 @@ if [[ "$PROFILE" == opensearch-secure ]]; then
   engine cp "$NAME:$CFG/kirk.pem" "$IT_DIR/client.pem"
   engine cp "$NAME:$CFG/kirk-key.pem" "$IT_DIR/client-key.pem"
   openssl pkcs8 -topk8 -v2 aes-256-cbc -in "$IT_DIR/client-key.pem" \
-    -out "$IT_DIR/client-key-enc.pem" -passout pass:it-secret 2>/dev/null
+    -out "$IT_DIR/client-key-enc.pem" -passout "pass:$KEY_PASS" 2>/dev/null
   {
     echo "export IT_ADMIN_USER=admin"
     printf "export IT_ADMIN_PW=%q\n" "$ADMIN_PW"
@@ -241,7 +260,7 @@ if [[ "$PROFILE" == opensearch-secure ]]; then
     echo "export IT_CLIENT_CERT=$IT_DIR/client.pem"
     echo "export IT_CLIENT_KEY=$IT_DIR/client-key.pem"
     echo "export IT_CLIENT_KEY_ENC=$IT_DIR/client-key-enc.pem"
-    echo "export IT_CLIENT_KEY_PASS=it-secret"
+    printf "export IT_CLIENT_KEY_PASS=%q\n" "$KEY_PASS"
   } >> "$IT_DIR/env"
 fi
 
@@ -253,7 +272,7 @@ if [[ "$PROFILE" == elasticsearch-secure ]]; then
     echo "export IT_CLIENT_CERT=$CERTS/client.pem"
     echo "export IT_CLIENT_KEY=$CERTS/client-key.pem"
     echo "export IT_CLIENT_KEY_ENC=$CERTS/client-key-enc.pem"
-    echo "export IT_CLIENT_KEY_PASS=it-secret"
+    printf "export IT_CLIENT_KEY_PASS=%q\n" "$KEY_PASS"
     # client certs do not authenticate on their own here (see es_pki)
     echo "export IT_CERT_AUTH=0"
   } >> "$IT_DIR/env"
