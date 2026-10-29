@@ -1,0 +1,21 @@
+{
+  "task": "L-003",
+  "status": "done-with-deviation",
+  "scripts": ["scripts/res/memguard.sh", "scripts/res/heavy.sh", "scripts/res/cg-run.sh"],
+  "acceptance": {
+    "memguard": "memguard.sh 4 0 -> exit 0 at 14067 MB available",
+    "cg_run": "cg-run.sh 64M python3 -c 'bytearray(200<<20)' -> MemoryError, exit 1; 512M -> ok",
+    "deviation": "Root cgroups not approved by the owner; rootless podman --memory is not enforced here (cgroupfs manager, memory.max=max inside). cg-run.sh uses RLIMIT_AS (ulimit -v) instead. True cgroup OOM-kill tests (BRK-RES-001 exit-137 behaviour) are deferred."
+  },
+  "heap_table": [
+    {"image": "opensearch 1.3.20", "heap": "512m", "rss_mb_approx": 900},
+    {"image": "opensearch 2.19.7", "heap": "512m", "rss_mb_approx": 1000},
+    {"image": "opensearch 3.9.0", "heap": "512m", "rss_mb_approx": 1100},
+    {"image": "elasticsearch 7.10.2 (oss/default)", "heap": "512m", "rss_mb_approx": 900},
+    {"image": "elasticsearch 7.17.29", "heap": "512m", "rss_mb_approx": 950},
+    {"image": "elasticsearch 8.6.1 (bitnamilegacy)", "heap": "512m", "rss_mb_approx": 950},
+    {"image": "elasticsearch 8.19.23", "heap": "512m", "rss_mb_approx": 1000},
+    {"image": "elasticsearch 9.1.2", "heap": "512m", "rss_mb_approx": 950}
+  ],
+  "heap_note": "Heaps are the scripts/it/up.sh defaults (OS_HEAP/ES_HEAP); RSS figures are approximate from earlier IT runs on this box. Load tasks (L1L) use a 2 GB heap."
+}
