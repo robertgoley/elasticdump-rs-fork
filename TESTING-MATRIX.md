@@ -1,0 +1,155 @@
+# Testing matrix
+
+This file records which engines and images the suites ran against, what is not or cannot be tested, and every
+data modification the tool makes. Where Node elasticdump is buggy, incomplete or dead, the behaviour is documented
+in [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md). Security scanning is in [SECURITY-CVE.md](SECURITY-CVE.md).
+
+Minimum supported versions are **Elasticsearch 7.x** and **OpenSearch 1.x**. ES 6.8 is out of scope.
+
+## 1. Tested images and results
+
+- **Run:** commit `958e9d5` on branch `rewrite`, 2026-10-29 12:08–12:28 America/New_York.
+- **Command:** `scripts/it/run.sh matrix`, then `all`, then `OS_TAG=3 … opensearch`.
+- **Resources:** one engine container at a time, except the cluster → cluster leg. Settings: `IT_THREADS=2`, `CARGO_JOBS=2`.
+
+Suites:
+
+- **`it`**: `tests/it`, 45 tests. Covers data, files, metadata types, renaming, ILM→ISM, cross-engine, TLS/auth and concurrency.
+- **legacy**: `tests/integration_test.rs`. Runs on plain profiles only. 3 tests are `#[ignore]`d benchmarks.
+- **unit + contract**: `cargo test --lib --bins` (150) and `cargo test --test cli_contract` (22), both passing at `958e9d5`.
+
+### Single-engine profiles
+
+| Profile | Engine version | Image reference | Digest | Source | `it` pass / fail / skip* | legacy pass / fail / ignored |
+|---|---|---|---|---|---|---|
+| opensearch-plain (`OS_TAG=2`) | OpenSearch 2.19.7 | `docker.io/opensearchproject/opensearch:2` | `sha256:3bfa1ec74d56928c2e018033d45c460ce2c0ea65a5cedd577de3102326c31b89` | official | 45 / 0 / 3 | 31 / 0 / 3 |
+| opensearch-secure (`OS_TAG=2`) | OpenSearch 2.19.7 | same | same | official | 45 / 0 / 5 | – |
+| opensearch-plain (`OS_TAG=3`) | OpenSearch 3.9.0 | `docker.io/opensearchproject/opensearch:3` | `sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e` | official | 45 / 0 / 4 | 31 / 0 / 3 |
+| opensearch-secure (`OS_TAG=3`) | OpenSearch 3.9.0 | same | same | official | 45 / 0 / 5 | – |
+| os13-plain | OpenSearch 1.3.20 (latest 1.3) | `docker.io/opensearchproject/opensearch:1.3.20` | `sha256:0ecf20d1ec1b682fa1cf36c74900b547bd1d7da5817a14edf4236472e110863e` | official | 45 / 0 / 3 | 31 / 0 / 3 |
+| os13-secure | OpenSearch 1.3.20 | same | same | official | 45 / 0 / 5 | – |
+| elasticsearch-plain | Elasticsearch 9.1.2 | `docker.io/bitnamilegacy/elasticsearch:9.1.2-debian-12-r0` | `sha256:00176a47afa0c0cfc9d11bdbafda13cbad7c9098ff1e6092112df2c751de301a` | bitnamilegacy | 45 / 0 / 2 | 31 / 0 / 3 |
+| elasticsearch-secure | Elasticsearch 9.1.2 | same | same | bitnamilegacy | 45 / 0 / 4 | – |
+| elasticsearch8-plain | Elasticsearch 8.6.1 | `docker.io/bitnamilegacy/elasticsearch:8.6.1-debian-11-r0` | `sha256:af815f5356650ca1663092084f7bd4cc88bff50f1e4542ac63e6c61eb1cbf3b3` | bitnamilegacy | 45 / 0 / 2 | 31 / 0 / 3 |
+| elasticsearch8-secure | Elasticsearch 8.6.1 | same | same | bitnamilegacy | 45 / 0 / 4 | – |
+| es819-plain | Elasticsearch 8.19.23 (latest 8.19) | `docker.elastic.co/elasticsearch/elasticsearch:8.19.23` | `sha256:4d0724bb8d78d7a2330693623e26ca4d621079d062ecc8a30b3e1fc180ec14c1` | official (bitnamilegacy stops at 8.18.0) | 45 / 0 / 3 | 31 / 0 / 3 |
+| es819-secure | Elasticsearch 8.19.23 | same | same | official | 45 / 0 / 4 | – |
+| es717-plain | Elasticsearch 7.17.29 (latest 7.17) | `docker.elastic.co/elasticsearch/elasticsearch:7.17.29` | `sha256:3f55a7f6f29b95345dc33808d6e914f81d125d4ca90a414e26c81a3521400980` | official (bitnamilegacy stops at 7.17.26) | 45 / 0 / 3 | 31 / 0 / 3 |
+| es717-secure | Elasticsearch 7.17.29 | same | same | official | 45 / 0 / 4 | – |
+| es710-plain | Elasticsearch 7.10.2 **OSS** build | `docker.io/bitnamilegacy/elasticsearch:7.10.2` | `sha256:73128f92f1d370b782a32928c569772bd7563d54b39b0a11d27269ae4494c593` | bitnamilegacy | 45 / 0 / 4 | 31 / 0 / 3 |
+| es710-secure | Elasticsearch 7.10.2 default distribution | `docker.elastic.co/elasticsearch/elasticsearch:7.10.2` | `sha256:d528cec81720266974fdfe7a0f12fee928dc02e5a2c754b45b9a84c84695bfd9` | official (the bitnami 7.10.2 build is OSS and has no security) | 45 / 0 / 4 | – |
+
+\* A skipped test is counted as passed by libtest. It prints `SKIP: <reason>` and is counted separately by
+`run.sh`. The reasons in this run:
+
+| Reason | Where | Why |
+|---|---|---|
+| `no peer cluster (cross profile only)` | ×2, every profile | The two `cluster_to_cluster_*` tests need two nodes. They ran for real in the cross leg below. |
+| `IT_CROSS_DIR not set or secured profile` | ×1, secure profiles | File exports for the other engine are written by plain profiles only. |
+| `no opensearch export yet` / `no elasticsearch export yet` | ×1, when the other engine has not exported yet in this sequence | The final `opensearch-plain cross::file_dump_from…` leg restores every ES export. |
+| `Elasticsearch only` | ×1, OpenSearch | Managed (`_meta.managed`) templates and ILM built-ins exist only on Elasticsearch. |
+| `ILM needs X-Pack; this is an Elasticsearch OSS build (refusal checked)` | ×1, es710-plain | Policy round-trip. The refusal message is asserted before the skip. |
+
+No `node elasticdump not installed` skips occurred, because Node elasticdump is installed on the test host.
+
+### Cross-engine legs
+
+Same run, commit `958e9d5`.
+
+| Leg | Result |
+|---|---|
+| File: OpenSearch 2.19.7 restores the ES exports from 7.10.2, 7.17.29, 8.6.1, 8.19.23 and 9.1.2 (`cross::file_dump_from_the_other_engine_restores_here`). Includes ILM → ISM with `--convertIlmToIsm`, refusal without it, and an unsafe-action refusal unless `--lenientPolicyConversion` is given. | 1 / 0 |
+| File: ES 9.1.2 and 8.6.1 restore the OpenSearch 1.3.20 and 2.19.7 exports. ISM → ILM is refused. These ran inside the elasticsearch(8)-plain profiles. | passed (no skip) |
+| Cluster → cluster: ES 9.1.2 ↔ OpenSearch 2.19.7, both directions (`cluster_to_cluster_full_copy_both_directions`, `cluster_to_cluster_policy_copy_converts_only_on_request`), 256 MB heaps | 2 / 0 (both ran; no SKIP) |
+
+### Feature coverage included in every profile above
+
+- **Renaming:**
+  - `meta_types::rename_prefix_wildcard_restore_and_copy_across_types` covers `--renamePrefix` and `--renameIndex` on `logstash-*` with `--renameAliases` / `--renamePatterns`, wildcard file restore, cluster copy with `--suffix`, and the invalid-name error.
+  - Unit tests: 4 in `rename::tests`. The contract test `rename_rules_apply_to_data_and_conflict_with_an_output_index` covers the explicit `--output-index` error.
+- **ILM → ISM:**
+  - `meta_types::policy_round_trip_same_engine` and the cross legs above.
+  - Unit tests: 3 in `meta::policy::ilm_to_ism::tests` (hot/warm/delete with rollover, without rollover with a pending state, refusals and lenient drops).
+- **Full backup order:** `meta_types::full_backup_and_restore_in_documented_order`. The policy step is skipped on the OSS build.
+
+### Container image
+
+Commit `c620b80`, built and tested with podman 5 (buildah 1.39.3).
+
+| Build | Builder image | Runtime image | Result |
+|---|---|---|---|
+| `make image` (default) | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` | **not built**: `dhi.io` pulls fail with `authentication required` (no login here) |
+| `make image-public` | `docker.io/library/rust:1.99-trixie` (`sha256:09027f873d45…`) | `docker.io/library/debian:trixie-slim` (`sha256:f6b08b09a057…`) | `make test-image` ok (`--version`, `--help`, bash 5.2.37, uid 65532, `elasticdump` symlink, CA bundle). Dump of mapping, data and index, then restore through the `elasticdump` entrypoint, against OpenSearch 2.19.7: 500/500 docs and the mapping identical. |
+| `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` (`sha256:b1d5dd5a22a0…`) | `docker.io/library/alpine:3.24.3` (`sha256:be2656061b53…`) | `make test-image` ok (bash 5.3.9, uid 65532, musl). Image size ~20 MB. |
+
+## 2. Untested or untestable differences per version
+
+These are behaviours the suite cannot exercise, or that differ between versions and are handled by gating or a fallback. Each row gives the reason.
+
+| Version / image | What differs or is not covered | How the tool handles it | Test status |
+|---|---|---|---|
+| ES 7.10.2 OSS (bitnamilegacy, plain profile) | **No point-in-time.** PIT is X-Pack, and `build_flavor: "oss"`. | Warns "… (OSS build) does not support point-in-time search … using scroll instead" and switches to scroll. | Tested: the PIT test expects the warning, a `scroll=` request and no `/_pit?`. |
+| ES 7.10.2 OSS | **No ILM** (X-Pack). | `--type=policy` fails with "ILM is an X-Pack feature and this is an OSS build". | Refusal tested. Policy round-trip and the policy step of the full backup are **SKIP** ("ILM needs X-Pack; this is an Elasticsearch OSS build (refusal checked)"). |
+| ES 7.10.2 OSS | **No security plugin**, so a secure profile is impossible on this image. | – | The secure profile uses the official `elasticsearch:7.10.2` (default distribution, basic licence) instead. |
+| ES 7.10.2 default distribution | **No sliced PIT** (needs ES ≥ 7.15). | Warns and uses sliced scroll. | Tested (es710-secure). |
+| ES 7.10.2 | **No `_shard_doc` sort** (needs ≥ 7.12). | PIT sorts by `_doc` + `_id`. | Tested. |
+| ES 7.10.2 | **ILM rollover `max_primary_shard_size`** (7.13+) and **policy `_meta`** (7.14+) do not exist. | Passed through unchanged; the target cluster rejects them. | The tests use only fields the version supports, so the rejection path itself is not tested. |
+| ES 7.x and OpenSearch 1.x | **Hits carry `_type: "_doc"`.** | Dump files keep `_type` as Node does. Restore to a typeless engine drops `_type` from the bulk **action line** only. | Tested: the typeless test accepts `_type:"_doc"` on ES 7 / OS 1 and compares the restored documents. |
+| ES 7.x | **Dynamic mapping rejects out-of-range integers.** | The document fails; it is reported in "Failed Writes" and the exit code stays 0 (Node parity). | Tested: the test pre-creates the index shape, then compares documents. |
+| ES 7.0–7.7 | **No component or index templates** (added in 7.8). | Read and write fail with a version error before any request is sent. | Not run against a live cluster; no 7.0–7.7 image is in the matrix. |
+| ES 6.x and older, OpenSearch < 1.0 | **Out of scope** (minimum is ES 7.x / OS 1.x). | Typed (6.x) mapping files are still unwrapped on restore, and `_all` is dropped. | Unit tests only. |
+| OpenSearch 1.3 / < 2.12 | **Demo admin password is `admin`**, not a custom one. | Handled by the test harness (`OS_LEGACY_ADMIN`). | Tested (os13-secure). |
+| OpenSearch < 2.4 | **No PIT.** | Scroll fallback, the same as for OSS builds. | Tested (os13). |
+| Cluster → cluster across engines | Needs two nodes at once. Only **ES 9.1.2 ↔ OpenSearch `OS_TAG` (2.19.7)** runs, because the memory rules allow one pair. | – | 7.10, 7.17, 8.6, 8.19, OS 1.3 and OS 3 are covered **file-wise** (export → restore across engines); they are not covered cluster to cluster. |
+| ILM features that need an Enterprise licence or tiers: `searchable_snapshot`, `frozen`, `downsample` (8.5+), `wait_for_snapshot` | Cannot be created on a basic-licence cluster. | Conversion refuses them, or drops them with `--lenientPolicyConversion`. | Unit tests, plus an IT refusal on a policy file. Not tested against a real Enterprise cluster. |
+| Data streams | Backing indices restore as plain indices (`data_stream` dropped, with a warning). | – | Unit test only. Data stream round-trips (`_data_stream`) are not a supported `--type`. |
+| dhi.io images (`make image`, the default) | `dhi.io` needs a Docker login, which this environment does not have. | – | **Not built or scanned here.** The same Dockerfile was built and tested with the public Debian 13 bases (same glibc) and with Alpine/musl. |
+| Node elasticdump comparisons | Some tests run the Node tool when it is installed. | – | Ran here, because Node is installed. Elsewhere they SKIP ("node elasticdump not installed"). The tests that use Node's committed fixtures (`tests/fixtures/node/`) always run. |
+
+## 3. Data modifications by direction
+
+**Documents (`--type=data`) are never changed.**
+
+- The `_source` bytes of every hit are copied verbatim: the bulk encoder slices the raw JSON and never re-serialises it.
+- Only the bulk **action line** is built, from:
+  - `_id`, `_routing` and (with `--handleVersion`) the version;
+  - the target index name (`--output-index`, `--prefix`/`--suffix`, rename rules);
+  - `_type`, only for ES < 7 targets.
+- `--transform` is refused rather than silently ignored.
+
+How this is verified:
+
+- `index_action_keeps_raw_source_and_routing` (unit test) checks that a 30-digit integer survives byte for byte.
+- On every profile, the integration tests read source and target independently, through a scroll that does not use the tool, and assert `docs(src) == docs(dst)`: the map of `_id → (_routing, _source)`. This runs:
+  - in the engine tests (same engine, all profiles);
+  - in the `cross::file_dump_from_*` legs (ES ↔ OpenSearch through files);
+  - in `cross::cluster_to_cluster_*` (ES 9.1 ↔ OS 2.19).
+
+Metadata types are adjusted as follows. Every change listed here is logged at WARN or INFO, unless it is marked *silent* (meaning it is generated state that the target always rejects).
+
+| Direction | Type(s) | What changes | When | How the user is told |
+|---|---|---|---|---|
+| any → any | `settings`, `index`, `analyzer`, template settings | Cluster-generated keys removed: `index.version`, `creation_date`, `uuid`, `provided_name`, `resize`, `routing.allocation.initial_recovery`, `history.uuid`, `verified_before_close`, `store.snapshot` | always | silent (Node strips the same family; the target would reject them) |
+| any → any | `settings`, `index`, templates | Keys named in `--excludeSettings` / `--excludeTemplateFields` removed | only when the flag is given | the flag itself |
+| any → any | templates | `created_date`, `created_date_millis`, `modified_date`, `modified_date_millis` removed | always | silent (read-only, generated) |
+| any → any | `template`, `component_template`, `index_template`, `policy` | `_meta.managed: true` built-ins skipped | `--filterManaged` (default on); `=false` keeps them | WARN listing the skipped names |
+| any → any | templates | Names matching `--templateRegex` skipped | cluster dumps; `--filterSystemTemplates=false` disables | WARN listing the skipped names |
+| any → any | `script` | An empty `options: {}` is removed | always | silent (an empty object is equivalent) |
+| any → any | `mapping`, `index` | Typed 6.x mappings unwrapped; `_all` / `include_in_all` dropped | file input from 6.x dumps | INFO "Unwrapping typed mapping", WARN "Dropping '_all'" |
+| any → any | `index` | `data_stream` dropped; the backing index is restored as a plain index | the source index was a data stream backing index | WARN "restoring it as a plain index (data_stream dropped)" |
+| any → any | `index`, `settings`, `mapping`, `analyzer`, `alias`, `data` | Index names rewritten | `--renamePrefix` / `--renameIndex` (then `--prefix`/`--suffix`) | INFO "Renaming index 'a' -> 'b' (rule)", once per index |
+| any → any | `alias` | Alias names rewritten | `--renameAliases` | INFO "Renaming alias …" |
+| any → any | templates, ISM `ism_template` | `index_patterns` rewritten | `--renamePatterns` | INFO |
+| ES 7 → typeless | `data` | `_type` omitted from the bulk **action line** (never from `_source`) | target ES ≥ 7 / OpenSearch | silent (the target rejects or ignores typed actions) |
+| ES → OpenSearch, cluster to cluster | `settings`, `index`, template settings | `index.lifecycle.*`, `index.routing.allocation.include._tier_preference` dropped | source engine known (cluster input) | WARN "Dropping Elasticsearch settings not supported by OpenSearch: …" |
+| ES → OpenSearch, from a file | same keys | **kept**, because the source engine is unknown | file input | WARN with the exact `--excludeSettings=…` to add |
+| ES → OpenSearch, cluster to cluster | `component_template`, `index_template` | `allow_auto_create`, `ignore_missing_component_templates`, `deprecated`, `data_stream_options`, `template.lifecycle`, `template.data_stream_options`, `data_stream.{hidden,allow_custom_routing,failure_store}` dropped | source engine known | WARN "dropping Elasticsearch-only fields: …" |
+| ES → OpenSearch, from a file | same fields | **kept** | file input | WARN with the exact `--excludeTemplateFields=…` |
+| ES → OpenSearch | `policy` | **Refused** | without `--convertIlmToIsm` | error naming the flag |
+| ES → OpenSearch | `policy` | ILM → ISM conversion (mapping table in README "ILM → ISM conversion"). Approximations (`min_age` → `min_index_age`, rollover conditions, allocate) are logged; `migrate`, `delete_searchable_snapshot`, `_meta` keys other than `description` are dropped | `--convertIlmToIsm` | WARN per approximated or dropped feature; INFO that converted policies are not attached to indices |
+| ES → OpenSearch | `policy` | Unsafe parts (`searchable_snapshot`, `frozen`, `downsample`, `wait_for_snapshot`, …) | `--convertIlmToIsm` | **error** naming the phase and action; with `--lenientPolicyConversion` they are dropped with a `DROPPED …` WARN |
+| OpenSearch → ES | `settings`, `index`, template settings | `index.replication.type`, `index.plugins.*`, `index.opendistro.*` dropped (from a file: kept and warned) | cluster to cluster | WARN, as above |
+| OpenSearch → ES | templates | `data_stream.timestamp_field`, `context` dropped (from a file: kept and warned) | cluster to cluster | WARN |
+| OpenSearch → ES | `policy` | **Always refused** (no ISM → ILM conversion) | always | error |
+| OpenSearch → OpenSearch | `policy` | `_seq_no` / `_primary_term` used for optimistic-concurrency overwrite; the policy body is unchanged | existing policy | – |
+| any | `analyzer` on an existing index | Index **closed**, analysis updated, then always reopened | `--closeIndex` | WARN that the index is offline meanwhile |
