@@ -98,3 +98,14 @@ jobs:
         with: { name: sbom-image, path: "sbom-image.*.json" }
       - if: always()
         run: podman logout dhi.io || true
+
+  # L-204 / SUP-007: cargo-udeps (nightly, compiles every target incl. the it/load test features).
+  unused-deps:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly
+        with: { toolchain: nightly }
+      - run: cargo +nightly install --locked --version 0.1.61 cargo-udeps
+      - run: cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load

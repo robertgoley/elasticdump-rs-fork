@@ -18,6 +18,10 @@ default-members = ["."]
 name = "elasticdump_rs"
 path = "src/lib.rs"
 
+[package.metadata.cargo-machete]
+# rust-ini is imported as `ini` (machete matches on the package name)
+ignored = ["rust-ini"]
+
 [[bin]]
 name = "elasticdump-rs"
 path = "src/main.rs"
@@ -54,7 +58,6 @@ sonic-rs = "0.5.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 anyhow = "1.0.102"
-thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 indicatif = "0.18"

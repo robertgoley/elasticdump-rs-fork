@@ -532,7 +532,6 @@ dependencies = [
  "serde_json",
  "sonic-rs",
  "tempfile",
- "thiserror",
  "tokio",
  "tokio-util",
  "url",

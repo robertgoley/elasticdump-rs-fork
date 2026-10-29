@@ -61,3 +61,34 @@ Negative check (2026-10-29): adding `libz-sys` and `num-traits` reports
 ## Test-only tools
 
 `tools/edverify` and `tools/edgen` are workspace members, but they are never shipped: `default-members` is the root crate, and the image builds only `elasticdump-rs`. In cargo-vet they have `criteria = "safe-to-run"` (`[policy.edgen]`, `[policy.edverify]`), so `rand`, `rand_chacha` and `ppv-lite86` need only the safe-to-run level they already had as dev-dependencies.
+
+## Unused dependencies and enabled features (SUP-007, L-204)
+
+- `cargo machete` runs in the `supply-chain` job on every PR and push. `rust-ini` is in
+  `[package.metadata.cargo-machete] ignored`: it is imported as `ini`, which machete does not match to the package
+  name. `cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load` runs weekly in
+  `security.yml`; it must compile the `it`/`load` tests, otherwise `lipsum` (used only by
+  `tests/integration_test.rs`) is reported as unused. L-204 removed `thiserror`, which was declared but never used.
+- No `cargo hack` on the box. The crate's own features (`it`, `load`, `chaos`, `fuzz`, and the deprecated aliases
+  `large_scale_test` and `manual_test`) gate tests only; none of them changes the shipped binary.
+
+Every non-default feature enabled in `Cargo.toml` is listed below with its reason.
+
+| Crate | Feature | Why |
+|---|---|---|
+| tokio | `rt-multi-thread`, `macros` | `#[tokio::main]` multi-thread runtime; `tokio::select!` in the pipeline and signal handling |
+| tokio | `fs`, `io-util`, `io-std` | async file input/output; stdin/stdout as `$` endpoints |
+| tokio | `sync`, `time` | channels and semaphores between reader and writers; retry backoff and throttling |
+| tokio | `signal` | SIGINT/SIGTERM handling (staging-file cleanup) |
+| reqwest | `gzip` | transparent decompression of gzip-encoded responses |
+| reqwest | `http2` | servers that negotiate h2 over ALPN |
+| reqwest | `rustls-tls-manual-roots` | rustls only, and we choose the trust roots (`--ca`, native, webpki); no OpenSSL (deny.toml bans it) |
+| rustls | `ring`, `std`, `tls12` | crypto provider without aws-lc/cmake; TLS 1.2 for older clusters |
+| rustls | `logging` | rustls handshake diagnostics under `RUST_LOG` (header values are marked sensitive; see H-10) |
+| pkcs8 | `encryption`, `pem`, `std` | encrypted PKCS#8 client keys (`--key` with a passphrase) |
+| clap | `derive`, `wrap_help` | CLI definition; readable `--help` |
+| serde | `derive` | config and wire types |
+| serde_json | `preserve_order`, `arbitrary_precision` | byte-faithful `_source` (key order, big integers and decimals unchanged) |
+| flate2 | `zlib-rs` (no default) | pure-Rust deflate; no `libz-sys` (banned) |
+| zstd | no default features | no legacy/zdict builder; the `zstd-sys` C code is on the native allow-list |
+| regex | `std`, `unicode-perl`, `unicode-case` (no default) | template/rename patterns with `\w`/`\d` and `(?i)`; the rest of the Unicode tables and the perf features are off |
