@@ -5,12 +5,15 @@
 #   make image-dhi-debian      # dhi.io Debian 13 bases (needs the login)
 #   make image-public          # public Debian 13 bases (no login)
 #   make image-alpine          # public Alpine/musl bases (no login, fewest CVEs)
-#   make test-image            # --version, --help, bash present, non-root
+#   make test-image            # SUP-017: non-root, --read-only + /data, binary set, base digest
 #   make sbom scan             # syft SBOM + grype/trivy scan of the image
 REGISTRY   ?= localhost
 IMAGE_NAME ?= elasticdump-rs
 IMAGE_TAG  ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 IMAGE      := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+
+# docker/image-binaries.<variant>.txt used by test-image (dhi-alpine | alpine | dhi-debian | public)
+IMAGE_VARIANT ?= dhi-alpine
 
 CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
@@ -76,9 +79,7 @@ image-alpine:
 	  -t $(IMAGE) .
 
 test-image:
-	$(CONTAINER) run --rm $(IMAGE) --version
-	$(CONTAINER) run --rm $(IMAGE) --help >/dev/null
-	$(CONTAINER) run --rm --entrypoint /bin/bash $(IMAGE) -c 'echo "bash $$BASH_VERSION, uid $$(id -u)"; test "$$(id -u)" != 0; command -v elasticdump; test -s /etc/ssl/certs/ca-certificates.crt'
+	CONTAINER=$(CONTAINER) scripts/test-image.sh $(IMAGE) $(IMAGE_VARIANT)
 
 save:
 	$(CONTAINER) save -o image.tar $(IMAGE)

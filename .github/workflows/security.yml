@@ -90,7 +90,16 @@ jobs:
             alpine) make image-alpine CONTAINER=podman ;;
             *) echo "::error::unknown base '$BASE' (allowed: dhi, dhi-debian, alpine, debian)"; exit 1 ;;
           esac
-      - run: make test-image CONTAINER=podman
+      # L-211 / SUP-017: non-root, --read-only + /data, executable set, base digest
+      - name: Image hardening tests
+        env:
+          BASE: ${{ inputs.base || 'dhi' }}
+        run: |
+          case "$BASE" in
+            dhi) v=dhi-alpine ;; dhi-debian) v=dhi-debian ;; debian) v=public ;; alpine) v=alpine ;;
+            *) echo "::error::unknown base '$BASE'"; exit 1 ;;
+          esac
+          make test-image CONTAINER=podman IMAGE_VARIANT="$v"
       - name: SBOM (CycloneDX + SPDX)
         run: make sbom CONTAINER=podman
       - name: grype + trivy (fail on HIGH/CRITICAL)

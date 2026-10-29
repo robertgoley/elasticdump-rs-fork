@@ -166,3 +166,28 @@ Results on 2026-10-29:
 - Negative check: a planted `ghp_…` token is caught, exit 1.
 
 Untracked `target/` holds 44 "private-key" hits. These are test PEMs that dependencies embed in build output. They are not scanned, because `target/` is ignored and never committed.
+
+## Image hardening tests (SUP-017, L-211)
+
+`make test-image` runs `scripts/test-image.sh <image> <variant>`. It checks:
+
+- `--version` and `--help` work;
+- bash, the `elasticdump` symlink and the CA bundle are present;
+- the image runs as non-root (uid 65532), with working directory `/data`;
+- a file-to-file dump into a writable `/data` volume works under `--read-only --cap-drop ALL --security-opt no-new-privileges --network none`;
+- the root filesystem cannot be written under `--read-only`;
+- the image contains no executable outside the documented set in `docker/image-binaries.<variant>.txt`;
+- the base image label is pinned by digest.
+
+The executable baselines were reviewed on 2026-10-29 from images rebuilt at L-211:
+
+| Variant | Executables |
+|---|---|
+| `dhi-alpine` | 62 |
+| `alpine` | 68 |
+| `dhi-debian` | 300 |
+| `public` | 409 |
+
+All four variants pass. Negative check: testing the old dhi-debian image against the dhi-alpine baseline fails, both on undocumented executables and on a base that is not pinned by digest.
+
+After a reviewed base change, refresh a baseline with `scripts/test-image.sh <image> <variant> --update`.
