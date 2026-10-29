@@ -192,8 +192,8 @@
    "proc-macro": 18
   },
   "linux": {
-   "build.rs": 32,
-   "proc-macro": 14
+   "build.rs": 26,
+   "proc-macro": 10
   }
  },
  "linux": {
@@ -215,13 +215,6 @@
   "crunchy@0.2.4": [
    "build.rs"
   ],
-  "defmt-macros@1.2.0": [
-   "build.rs",
-   "proc-macro"
-  ],
-  "defmt@1.2.0": [
-   "build.rs"
-  ],
   "displaydoc@0.2.7": [
    "proc-macro"
   ],
@@ -229,9 +222,6 @@
    "build.rs"
   ],
   "getrandom@0.3.4": [
-   "build.rs"
-  ],
-  "getrandom@0.4.3": [
    "build.rs"
   ],
   "httparse@1.10.1": [
@@ -246,25 +236,10 @@
   "libc@0.2.191": [
    "build.rs"
   ],
-  "munge_macro@0.4.7": [
-   "proc-macro"
-  ],
-  "parking_lot_core@0.9.12": [
-   "build.rs"
-  ],
   "portable-atomic@1.15.0": [
    "build.rs"
   ],
   "proc-macro2@1.0.107": [
-   "build.rs"
-  ],
-  "ptr_meta_derive@0.3.2": [
-   "proc-macro"
-  ],
-  "quinn-udp@0.5.16": [
-   "build.rs"
-  ],
-  "quinn@0.11.12": [
    "build.rs"
   ],
   "quote@1.0.47": [
@@ -278,9 +253,6 @@
   ],
   "ring@0.17.14": [
    "build.rs"
-  ],
-  "rkyv_derive@0.8.18": [
-   "proc-macro"
   ],
   "rustix@1.1.6": [
    "build.rs"
@@ -341,28 +313,19 @@
   "const-random-macro@0.1.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crc32fast@1.5.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crunchy@0.2.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "defmt-macros@1.2.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "defmt@1.2.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "displaydoc@0.2.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "generic-array@0.14.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "getrandom@0.3.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "getrandom@0.4.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "httparse@1.10.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "icu_normalizer_data@2.1.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "icu_properties_data@2.1.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "libc@0.2.191": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "munge_macro@0.4.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "parking_lot_core@0.9.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "portable-atomic@1.15.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "proc-macro2@1.0.107": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "ptr_meta_derive@0.3.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "quinn-udp@0.5.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "quinn@0.11.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "quote@1.0.47": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "ref-cast-impl@1.0.27": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "ref-cast@1.0.27": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "ring@0.17.14": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "rkyv_derive@0.8.18": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "rustix@1.1.6": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "rustls@0.23.46": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "serde@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",

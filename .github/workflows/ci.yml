@@ -39,6 +39,8 @@ jobs:
       # L-204 / SUP-007: no unused dependencies (rust-ini ignored: imported as `ini`).
       - run: cargo install --locked --version 0.9.2 cargo-machete
       - run: cargo machete
+      # L-213 / SUP-021: native code only from the allow-list (ring, zstd-sys).
+      - run: scripts/sup/native-code-check.py
       # L-203 / SUP-006: unsafe inventory; a rise against the baseline fails.
       - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly (cargo-geiger 0.14 needs >= 1.97)
         with: { toolchain: nightly }

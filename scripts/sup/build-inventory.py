@@ -7,7 +7,7 @@
 The inventory lists every package in the resolved graph that has a build script (`custom-build` target) or is a proc macro. It covers two scopes:
 
 - `all`: every package in Cargo.lock, for all targets;
-- `linux`: the packages active for x86_64/aarch64-unknown-linux-gnu, as normal and build dependencies of the shipped binary.
+- `linux`: the packages active for x86_64/aarch64-unknown-linux-gnu, as normal and build dependencies of the shipped binary. This scope comes from the feature-resolved `cargo tree`.
 
 The gate fails if anything is added to the linux scope, or if an entry's version changes. A version change needs re-review: the baseline pins `name@version`.
 """
@@ -63,7 +63,7 @@ def inventory():
     for plat in ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"):
         m = meta(plat)
         pk = {p["id"]: p for p in m["packages"]}
-        for i in shipped_closure(m):
+        for i in tree_closure(m, plat, MANIFEST):
             p = pk[i]
             k = kinds(p)
             if k and p["source"]:
@@ -71,6 +71,19 @@ def inventory():
     out["counts"] = {s: {"build.rs": sum("build.rs" in v for v in out[s].values()),
                          "proc-macro": sum("proc-macro" in v for v in out[s].values())} for s in ("all", "linux")}
     return out
+
+
+def tree_closure(m, plat, manifest):
+    """Real feature-resolved graph of the shipped binary (normal + build deps) via `cargo tree`."""
+    out = subprocess.run(["cargo", "tree", "-p", "elasticdump-rs", "-e", "normal,build", "--target", plat,
+                          "--prefix", "none", "-f", "{p}", "--locked", "--manifest-path", manifest],
+                         check=True, capture_output=True, text=True).stdout
+    want = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("v"):
+            want.add((parts[0], parts[1][1:]))
+    return {p["id"] for p in m["packages"] if (p["name"], p["version"]) in want}
 
 
 def main():

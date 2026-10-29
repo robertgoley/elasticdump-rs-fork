@@ -100,7 +100,7 @@ Every non-default feature enabled in `Cargo.toml` is listed below with its reaso
 `supply-chain/build-inventory.json` lists every package that runs code at build time: build scripts and proc macros.
 
 - **All of Cargo.lock:** 45 build scripts and 18 proc macros.
-- **Shipped graph:** normal and build dependencies of `elasticdump-rs` on x86_64/aarch64 Linux, 32 build scripts and 14 proc macros. This is an over-approximation: `cargo metadata` unifies features across the workspace.
+- **Shipped graph:** normal and build dependencies of `elasticdump-rs` on x86_64/aarch64 Linux, 26 build scripts and 10 proc macros. This is the feature-resolved graph from `cargo tree`; L-213 refined the over-approximated metadata closure, which had given 32/14.
 
 Each entry is pinned as `name@version` and carries a review note.
 
@@ -135,3 +135,15 @@ Verified locally on 2026-10-29 with `rust:1.99-trixie`: the probe showed the net
 The `sbom-diff` job in `security.yml` runs on every PR. It attaches the diff as an artefact and adds it to the job summary. A non-empty diff fails the job until the PR carries the `sbom-reviewed` label.
 
 Not covered: unsafe deltas. `scripts/sup/geiger-gate.sh` in the `supply-chain` job catches those.
+
+## Native-code allow-list (SUP-021, L-213)
+
+`scripts/sup/native-code-check.py` runs in the `supply-chain` job. It inspects the feature-resolved Linux graph of the shipped binary and flags any crate that has:
+
+- a `links =` key;
+- a `cc`, `cmake`, `bindgen` or `pkg-config` build dependency;
+- C, C++ or assembly sources.
+
+Any flagged crate that is not on the allow-list fails the job. The allow-list is `ring` (BoringSSL-derived C/asm) and `zstd-sys` (vendored libzstd).
+
+Verified: adding `libz-sys` fails the check. `deny.toml` also bans it, so `cargo deny` fails as well.
