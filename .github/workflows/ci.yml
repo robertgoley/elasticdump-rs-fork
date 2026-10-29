@@ -32,6 +32,15 @@ jobs:
           - { profile: elasticsearch-secure }
           - { profile: elasticsearch8-plain }    # pinned regression tag 8.6.1
           - { profile: elasticsearch8-secure }
+          # regression matrix (exact images in scripts/it/run.sh, TESTING-MATRIX.md)
+          - { profile: es717-plain }             # official 7.17.29
+          - { profile: es717-secure }
+          - { profile: es710-plain }             # bitnamilegacy 7.10.2 (OSS build)
+          - { profile: es710-secure }            # official 7.10.2 (default distribution)
+          - { profile: es819-plain }             # official 8.19.23
+          - { profile: es819-secure }
+          - { profile: os13-plain }              # opensearchproject/opensearch:1.3.20
+          - { profile: os13-secure }
     env:
       OS_TAG: ${{ matrix.os_tag || '2' }}
       IT_DIR: /tmp/edrs-it
@@ -61,7 +70,11 @@ jobs:
           scripts/it/run.sh opensearch-plain cross::file
           scripts/it/run.sh elasticsearch-plain cross::file
           scripts/it/run.sh elasticsearch8-plain cross::file
+          scripts/it/run.sh es717-plain cross::file
+          scripts/it/run.sh es710-plain cross::file
+          scripts/it/run.sh es819-plain cross::file
           IT_LEGACY=0 scripts/it/run.sh opensearch-plain cross::file_dump_from
+          IT_LEGACY=0 scripts/it/run.sh os13-plain cross::file_dump_from
       - run: scripts/it/run.sh cross
       - if: failure()
         run: podman ps -a; for c in $(podman ps -aq); do podman logs --tail 200 $c; done

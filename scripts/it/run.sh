@@ -6,7 +6,9 @@
 #
 # PROFILE: opensearch-plain | opensearch-secure | elasticsearch-plain |
 #          elasticsearch-secure | elasticsearch8-plain | elasticsearch8-secure |
-#          cross | opensearch | elasticsearch | elasticsearch8 | all
+#          cross | opensearch | elasticsearch | elasticsearch8 | all |
+#          es717-{plain,secure} | es710-{plain,secure} | es819-{plain,secure} |
+#          os13-{plain,secure} | es717 | es710 | es819 | os13 | matrix
 #   opensearch/elasticsearch/elasticsearch8 = both variants of that engine;
 #   elasticsearch = latest bitnamilegacy tag (ES_TAG, 9.1.2), elasticsearch8 =
 #   the pinned regression tag (ES8_TAG, 8.6.1). all = every single-engine
@@ -35,10 +37,29 @@ export IT_DIR
 IT_CROSS_DIR="${IT_CROSS_DIR:-$IT_DIR-cross}"
 export IT_CROSS_DIR
 ES8_TAG="${ES8_TAG:-8.6.1-debian-11-r0}"
-if [[ "$PROFILE" == elasticsearch8* ]]; then
-  export ES_TAG="$ES8_TAG"
-  PROFILE="${PROFILE/elasticsearch8/elasticsearch}"
-fi
+# Regression matrix (exact tags verified against the registries 2026-10-29;
+# see TESTING-MATRIX.md for sources and digests):
+OFFICIAL_ES=docker.elastic.co/elasticsearch/elasticsearch
+ES717_IMAGE="${ES717_IMAGE:-$OFFICIAL_ES:7.17.29}"      # bitnamilegacy stops at 7.17.26
+ES710_PLAIN_IMAGE="${ES710_PLAIN_IMAGE:-docker.io/bitnamilegacy/elasticsearch:7.10.2}"  # OSS build
+ES710_SECURE_IMAGE="${ES710_SECURE_IMAGE:-$OFFICIAL_ES:7.10.2}"  # bitnami 7.10.2 has no X-Pack security
+ES819_IMAGE="${ES819_IMAGE:-$OFFICIAL_ES:8.19.23}"      # bitnamilegacy stops at 8.18.0
+OS13_TAG="${OS13_TAG:-1.3.20}"
+
+# Map a matrix profile (es717-plain, os13-secure, ...) onto up.sh's engine
+# profile plus image env. Prints the up.sh profile.
+matrix_env() {
+  local p="$1" variant="${1##*-}"
+  case "$p" in
+    elasticsearch8-*) export ES_TAG="$ES8_TAG" ES_IMAGE="docker.io/bitnamilegacy/elasticsearch:$ES8_TAG"; echo "elasticsearch-$variant" ;;
+    es717-*) export ES_TAG=7.17.29 ES_IMAGE="$ES717_IMAGE"; echo "elasticsearch-$variant" ;;
+    es819-*) export ES_TAG=8.19.23 ES_IMAGE="$ES819_IMAGE"; echo "elasticsearch-$variant" ;;
+    es710-plain) export ES_TAG=7.10.2 ES_IMAGE="$ES710_PLAIN_IMAGE"; echo elasticsearch-plain ;;
+    es710-secure) export ES_TAG=7.10.2 ES_IMAGE="$ES710_SECURE_IMAGE"; echo elasticsearch-secure ;;
+    os13-*) export OS_TAG="$OS13_TAG" OS_IMAGE="docker.io/opensearchproject/opensearch:$OS13_TAG"; echo "opensearch-$variant" ;;
+    *) echo "$p" ;;
+  esac
+}
 
 # Every test binary is compiled up front with ONE feature set; a later
 # `cargo test` with different features would recompile next to the running
@@ -52,10 +73,23 @@ trap 'scripts/it/down.sh' EXIT
 
 run_profile() {
   local p="$1"; shift
+  # matrix profiles only change images for this profile (subshell)
+  if [[ "$(matrix_env "$p")" != "$p" ]]; then
+    ( local up; up=$(matrix_env "$p"); matrix_env "$p" >/dev/null; run_profile "$up" "$@" )
+    return
+  fi
   scripts/it/up.sh "$p"
   # shellcheck disable=SC1091
   source "$IT_DIR/env"
-  cargo test --profile it --features it --test it -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" "$@"
+  # --show-output keeps the "SKIP: <reason>" lines of tests that do not apply
+  # to this version; summarised after the run
+  cargo test --profile it --features it --test it -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" --show-output "$@" 2>&1 \
+    | tee "$IT_DIR/last-it.log" | grep -vE '^\[[0-9TZ:-]+ (DEBUG|INFO|TRACE)' || true
+  local skips
+  skips=$(grep -cE '^SKIP' "$IT_DIR/last-it.log" || true)
+  echo "IT-SUMMARY profile=$p image=${ES_IMAGE:-}${OS_IMAGE:+ os=$OS_IMAGE} $(grep -E '^test result' "$IT_DIR/last-it.log" | tail -1) skipped-by-reason=${skips}"
+  grep -E '^SKIP' "$IT_DIR/last-it.log" | sort | uniq -c || true
+  grep -qE '^test result: ok' "$IT_DIR/last-it.log"
   if [[ "$p" == *-plain && "${IT_LEGACY:-1}" == 1 ]]; then
     cargo test --profile it --features it --test integration_test -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}" "$@"
   fi
@@ -98,17 +132,24 @@ case "$PROFILE" in
     for p in opensearch-plain opensearch-secure elasticsearch-plain elasticsearch-secure; do
       run_profile "$p" "$@"
     done
-    for p in elasticsearch-plain elasticsearch-secure; do
-      ES_TAG="$ES8_TAG" run_profile "$p" "$@"
+    for p in elasticsearch8-plain elasticsearch8-secure; do
+      run_profile "$p" "$@"
     done
     # last file leg: OpenSearch restores the Elasticsearch export
     IT_LEGACY=0 run_profile opensearch-plain cross::file_dump_from "$@"
     run_cross "$@"
     rm -rf "$IT_CROSS_DIR"
     ;;
-  opensearch|elasticsearch)
+  opensearch|elasticsearch|elasticsearch8|es717|es710|es819|os13)
     run_profile "$PROFILE-plain" "$@"
     run_profile "$PROFILE-secure" "$@"
+    ;;
+  matrix)
+    # the older/extra versions, one container at a time
+    for p in es717 es710 es819 os13; do
+      run_profile "$p-plain" "$@"
+      run_profile "$p-secure" "$@"
+    done
     ;;
   cross) run_cross "$@" ;;
   *) run_profile "$PROFILE" "$@" ;;

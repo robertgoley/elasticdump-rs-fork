@@ -25,6 +25,15 @@ OS_IMAGE="${OS_IMAGE:-docker.io/opensearchproject/opensearch:${OS_TAG}}"
 # pinned ES 8 regression target; the bitnami env and config layout are the same.
 ES_TAG="${ES_TAG:-9.1.2-debian-12-r0}"
 ES_IMAGE="${ES_IMAGE:-docker.io/bitnamilegacy/elasticsearch:${ES_TAG}}"
+# Official Elastic images (docker.elastic.co/elasticsearch/elasticsearch:*)
+# take plain `elasticsearch.yml` settings as env vars and run as UID 1000;
+# bitnami images use their own env conventions (see below).
+ES_OFFICIAL=0
+[[ "$ES_IMAGE" == docker.elastic.co/* ]] && ES_OFFICIAL=1
+# OpenSearch < 2.12 ignores OPENSEARCH_INITIAL_ADMIN_PASSWORD; its demo
+# config always uses admin/admin.
+OS_LEGACY_ADMIN=0
+[[ "$OS_TAG" == 1* || "$OS_TAG" =~ ^2\.([0-9]|1[01])(\.|$) ]] && OS_LEGACY_ADMIN=1
 RUN_ID="${RUN_ID:-$$}"
 IT_DIR="${IT_DIR:-${TMPDIR:-/tmp}/elasticdump-rs-it}"
 HEAP="${OS_HEAP:-512m}"
@@ -95,6 +104,7 @@ case "$PROFILE" in
     PORT="${PORT:-19201}"
     NAME="it-os-sec-${RUN_ID}"
     ADMIN_PW="${IT_ADMIN_PW:-Str0ng!Passw0rd#2026}"
+    [[ $OS_LEGACY_ADMIN == 1 ]] && ADMIN_PW=admin
     engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
       -p "127.0.0.1:${PORT}:9200" \
       -e discovery.type=single-node \
@@ -106,14 +116,29 @@ case "$PROFILE" in
     ;;
   elasticsearch-plain)
     PORT="${PORT:-19202}"
+    if [[ $ES_OFFICIAL == 1 ]]; then
+      NAME="it-es-plain-${RUN_ID}"
+      engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+        -p "127.0.0.1:${PORT}:9200" \
+        -e discovery.type=single-node \
+        -e xpack.security.enabled=false \
+        -e xpack.ml.enabled=false \
+        -e "ES_JAVA_OPTS=-Xms${ES_HEAP} -Xmx${ES_HEAP} ${LEAN_OPTS}" \
+        "$ES_IMAGE" >/dev/null
+      URL="http://127.0.0.1:${PORT}"
+      CURL=(curl -fsS)
+    else
     NAME="it-es-plain-${RUN_ID}"
     DATA=$(es_data_dir "$NAME")
     printf "xpack.ml.enabled: false\n" > "$IT_DIR/es-plain.yml"
     chmod 644 "$IT_DIR/es-plain.yml"
+    # (its my_elasticsearch.yml replaces the generated config, so the 7.10.2
+    # OSS image gets none: it has no X-Pack settings to turn off anyway)
+    MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:Z")
+    [[ "$ES_TAG" != 7.10* ]] && MOUNTS+=(-v "$IT_DIR/es-plain.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z")
     engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
       -p "127.0.0.1:${PORT}:9200" \
-      -v "$DATA:/bitnami/elasticsearch/data:Z" \
-      -v "$IT_DIR/es-plain.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z" \
+      "${MOUNTS[@]}" \
       -e "ELASTICSEARCH_HEAP_SIZE=${ES_HEAP}" \
       -e "ES_JAVA_OPTS=${LEAN_OPTS}" \
       -e ELASTICSEARCH_ENABLE_SECURITY=false \
@@ -121,11 +146,32 @@ case "$PROFILE" in
       "$ES_IMAGE" >/dev/null
     URL="http://127.0.0.1:${PORT}"
     CURL=(curl -fsS)
+    fi
     ;;
   elasticsearch-secure)
     PORT="${PORT:-19203}"
     NAME="it-es-sec-${RUN_ID}"
     ADMIN_PW="${IT_ADMIN_PW:-Str0ng-Elastic-2026}"
+    if [[ $ES_OFFICIAL == 1 ]]; then
+      CERTS=$(es_pki)
+      C=/usr/share/elasticsearch/config/certs
+      engine run -d --name "$NAME" --label elasticdump-rs-it=1 \
+        -p "127.0.0.1:${PORT}:9200" \
+        -v "$CERTS:$C:ro,Z" \
+        -e discovery.type=single-node \
+        -e xpack.ml.enabled=false \
+        -e xpack.security.enabled=true \
+        -e "ELASTIC_PASSWORD=${ADMIN_PW}" \
+        -e xpack.security.http.ssl.enabled=true \
+        -e "xpack.security.http.ssl.key=$C/tls.key" \
+        -e "xpack.security.http.ssl.certificate=$C/tls.crt" \
+        -e "xpack.security.http.ssl.certificate_authorities=$C/ca.crt" \
+        -e xpack.security.http.ssl.client_authentication=optional \
+        -e "ES_JAVA_OPTS=-Xms${ES_HEAP} -Xmx${ES_HEAP} ${LEAN_OPTS}" \
+        "$ES_IMAGE" >/dev/null
+      URL="https://localhost:${PORT}"
+      CURL=(curl -fsS --cacert "$CERTS/ca.crt" -u "elastic:${ADMIN_PW}")
+    else
     DATA=$(es_data_dir "$NAME")
     CERTS=$(es_pki)
     # ES 9 entitlements only let the SSL module read files under config/
@@ -148,6 +194,7 @@ case "$PROFILE" in
       "$ES_IMAGE" >/dev/null
     URL="https://localhost:${PORT}"
     CURL=(curl -fsS --cacert "$CERTS/ca.crt" -u "elastic:${ADMIN_PW}")
+    fi
     ;;
   *)
     echo "unknown profile: $PROFILE" >&2
