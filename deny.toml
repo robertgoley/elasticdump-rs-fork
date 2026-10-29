@@ -1,0 +1,43 @@
+# cargo-deny configuration: `cargo deny check advisories bans licenses sources`
+# (CI job `security` in .github/workflows/ci.yml; see SECURITY-CVE.md).
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisory DB; any vulnerability fails. Unmaintained / unsound crates
+# fail too unless listed below with a justification.
+version = 2
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+    "0BSD",
+    # tiny-keccak (rust-ini -> ordered-multimap -> dlv-list -> const-random)
+    "CC0-1.0",
+    "BSL-1.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

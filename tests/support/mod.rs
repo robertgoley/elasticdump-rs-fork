@@ -5,4 +5,5 @@
 //! as its own test crate: only `.rs` files directly under `tests/` become test
 //! targets. It is pulled into `integration_test.rs` via `mod support;`.
 
+pub mod es_shim;
 pub mod mock_es;

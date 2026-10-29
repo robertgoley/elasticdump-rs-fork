@@ -1,10 +1,5 @@
 use anyhow::Result;
-use elasticsearch::{
-    Elasticsearch, SearchParts,
-    http::request::JsonBody,
-    http::transport::{SingleNodeConnectionPool, TransportBuilder},
-    indices::{IndicesCreateParts, IndicesDeleteParts, IndicesRefreshParts},
-};
+
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -19,6 +14,13 @@ use url::Url;
 // Nested under the single integration-test target: only `.rs` files directly in
 // `tests/` become their own test crates, so `support/` stays a plain module.
 mod support;
+use elasticsearch::{
+    Elasticsearch, SearchParts,
+    http::request::JsonBody,
+    http::transport::{SingleNodeConnectionPool, TransportBuilder},
+    indices::{IndicesCreateParts, IndicesDeleteParts, IndicesRefreshParts},
+};
+use support::es_shim as elasticsearch;
 use support::mock_es::{CannedResponse, MockEs};
 
 /// Target cluster for the live integration suite. Defaults to the historical

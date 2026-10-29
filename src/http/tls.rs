@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 
@@ -87,7 +88,7 @@ fn read(path: &Path, what: &str) -> Result<Vec<u8>> {
 
 pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
     let pem = read(path, "certificate file")?;
-    let certs = rustls_pemfile::certs(&mut pem.as_slice())
+    let certs = CertificateDer::pem_slice_iter(&pem)
         .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("Failed to parse PEM certificates in '{}'", path.display()))?;
     if certs.is_empty() {
@@ -130,9 +131,15 @@ pub fn load_key(path: &Path, pass: Option<&str>) -> Result<PrivateKeyDer<'static
             path.display()
         );
     }
-    rustls_pemfile::private_key(&mut pem.as_slice())
-        .with_context(|| format!("Failed to parse private key '{}'", path.display()))?
-        .ok_or_else(|| anyhow!("No private key found in '{}'", path.display()))
+    match PrivateKeyDer::from_pem_slice(&pem) {
+        Ok(key) => Ok(key),
+        Err(rustls::pki_types::pem::Error::NoItemsFound) => {
+            bail!("No private key found in '{}'", path.display())
+        }
+        Err(e) => {
+            Err(anyhow!(e).context(format!("Failed to parse private key '{}'", path.display())))
+        }
+    }
 }
 
 /// Accept-anything verifier for `--insecure`. Signatures are still checked so
