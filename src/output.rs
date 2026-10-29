@@ -65,7 +65,17 @@ impl OutputTarget {
         matches!(self.mode, OutputMode::Stdout)
     }
 
-    pub async fn finalize(mut self) -> Result<()> {
+    pub async fn finalize(self) -> Result<()> {
+        match self.seal().await? {
+            Some(sealed) => sealed.commit().await,
+            None => Ok(()),
+        }
+    }
+
+    /// Flush and fsync a staged file without committing it, closing its
+    /// handle (so many parts can be staged at once). Stdout is flushed and
+    /// yields `None`.
+    pub async fn seal(mut self) -> Result<Option<SealedOutput>> {
         let writer = self.writer.take();
 
         match self.mode {
@@ -76,12 +86,12 @@ impl OutputTarget {
                         // A vanished pipe reader is not our problem to report;
                         // there is nothing left to flush to.
                         if is_broken_pipe(&error) {
-                            return Ok(());
+                            return Ok(None);
                         }
                         return Err(error).context("Failed to flush stdout");
                     }
                 }
-                Ok(())
+                Ok(None)
             }
             OutputMode::StagedFile {
                 final_path,
@@ -93,7 +103,6 @@ impl OutputTarget {
                 // it is committed so a crash after commit cannot expose a
                 // truncated "successful" output.
                 let Some(SinkWriter::File(mut buffered)) = writer else {
-                    // A staged target is always constructed with a file writer.
                     remove_staging(&staging_path).await;
                     return Err(anyhow!(
                         "Staged output '{}' had no file writer to finalize",
@@ -134,54 +143,14 @@ impl OutputTarget {
                         });
                     }
                 }
+                #[cfg(not(unix))]
+                let _ = prior_mode;
 
-                let commit_result = if overwrite {
-                    tokio_fs::rename(&staging_path, &final_path)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "Failed to move staged output '{}' into place at '{}'",
-                                staging_path.display(),
-                                final_path.display()
-                            )
-                        })
-                } else {
-                    // Race-free commit: hard_link fails atomically if the
-                    // destination was created after our start-of-run check.
-                    match tokio_fs::hard_link(&staging_path, &final_path).await {
-                        Ok(()) => tokio_fs::remove_file(&staging_path).await.with_context(|| {
-                            format!(
-                                "Failed to remove staged output '{}' after linking it into place at '{}'",
-                                staging_path.display(),
-                                final_path.display()
-                            )
-                        }),
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(anyhow!(
-                            "Output file '{}' was created while the dump was running. Use --overwrite to replace it.",
-                            final_path.display()
-                        )),
-                        Err(e) => {
-                            log::debug!(
-                                "hard_link commit unsupported ({e}); falling back to rename"
-                            );
-                            tokio_fs::rename(&staging_path, &final_path).await.with_context(|| {
-                                format!(
-                                    "Failed to move staged output '{}' into place at '{}'",
-                                    staging_path.display(),
-                                    final_path.display()
-                                )
-                            })
-                        }
-                    }
-                };
-
-                if let Err(error) = commit_result {
-                    remove_staging(&staging_path).await;
-                    return Err(error);
-                }
-
-                sync_parent_dir(&final_path).await;
-                Ok(())
+                Ok(Some(SealedOutput {
+                    final_path,
+                    staging_path,
+                    overwrite,
+                }))
             }
         }
     }
@@ -202,6 +171,79 @@ impl OutputTarget {
 
     fn close_writer(&mut self) {
         self.writer.take();
+    }
+}
+
+/// A fully written, fsynced staged file awaiting its atomic commit.
+pub struct SealedOutput {
+    final_path: PathBuf,
+    staging_path: PathBuf,
+    overwrite: bool,
+}
+
+impl SealedOutput {
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+
+    /// Move the staged file into place (rename with `--overwrite`, otherwise
+    /// a race-free hard link that refuses to clobber a file created meanwhile).
+    pub async fn commit(self) -> Result<()> {
+        let Self {
+            final_path,
+            staging_path,
+            overwrite,
+        } = self;
+        let commit_result = if overwrite {
+            tokio_fs::rename(&staging_path, &final_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to move staged output '{}' into place at '{}'",
+                        staging_path.display(),
+                        final_path.display()
+                    )
+                })
+        } else {
+            match tokio_fs::hard_link(&staging_path, &final_path).await {
+                Ok(()) => tokio_fs::remove_file(&staging_path).await.with_context(|| {
+                    format!(
+                        "Failed to remove staged output '{}' after linking it into place at '{}'",
+                        staging_path.display(),
+                        final_path.display()
+                    )
+                }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(anyhow!(
+                    "Output file '{}' was created while the dump was running. Use --overwrite to replace it.",
+                    final_path.display()
+                )),
+                Err(e) => {
+                    log::debug!("hard_link commit unsupported ({e}); falling back to rename");
+                    tokio_fs::rename(&staging_path, &final_path)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Failed to move staged output '{}' into place at '{}'",
+                                staging_path.display(),
+                                final_path.display()
+                            )
+                        })
+                }
+            }
+        };
+
+        if let Err(error) = commit_result {
+            remove_staging(&staging_path).await;
+            return Err(error);
+        }
+
+        sync_parent_dir(&final_path).await;
+        Ok(())
+    }
+
+    /// Discard the staged file.
+    pub async fn discard(self) {
+        remove_staging(&self.staging_path).await;
     }
 }
 

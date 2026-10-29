@@ -1,36 +1,17 @@
 //! Output sinks. Every source produces batches of `\n`-terminated JSON
 //! documents (Elasticsearch hits or file values); sinks consume them.
 
-use std::path::PathBuf;
-
 use anyhow::Result;
 use sonic_rs::JsonValueTrait;
 
 use super::bulk::{BulkSink, WriteReport};
-use crate::output::{OutputTarget, create_output_target};
 
 pub enum Sink {
     File(FileSink),
     Bulk(Box<BulkSink>),
 }
 
-pub struct FileSink {
-    target: OutputTarget,
-    source_only: bool,
-    scratch: Vec<u8>,
-    written: u64,
-}
-
-impl FileSink {
-    pub async fn create(path: Option<PathBuf>, overwrite: bool, source_only: bool) -> Result<Self> {
-        Ok(Self {
-            target: create_output_target(path.as_deref(), overwrite).await?,
-            source_only,
-            scratch: Vec::new(),
-            written: 0,
-        })
-    }
-}
+pub use super::file_sink::{FileOptions, FileSink};
 
 /// Lazily located `_source` of one hit line, if present.
 pub fn source_of(line: &[u8]) -> Option<sonic_rs::LazyValue<'_>> {
@@ -60,14 +41,14 @@ impl Sink {
         match self {
             Sink::File(f) => {
                 let docs = memchr::memchr_iter(b'\n', buf).count() as u64;
-                if f.source_only {
+                if f.source_only() {
                     let mut scratch = std::mem::take(&mut f.scratch);
                     source_only_lines(buf, &mut scratch);
-                    let r = f.target.write_all(&scratch).await;
+                    let r = f.write_lines(&scratch).await;
                     f.scratch = scratch;
                     r?;
                 } else {
-                    f.target.write_all(buf).await?;
+                    f.write_lines(buf).await?;
                 }
                 f.written += docs;
                 Ok(())
@@ -78,14 +59,14 @@ impl Sink {
 
     pub async fn flush(&mut self) -> Result<()> {
         match self {
-            Sink::File(f) => f.target.flush().await,
+            Sink::File(f) => f.flush().await,
             Sink::Bulk(_) => Ok(()),
         }
     }
 
     pub fn is_stdout(&self) -> bool {
         match self {
-            Sink::File(f) => f.target.is_stdout(),
+            Sink::File(f) => f.is_stdout(),
             Sink::Bulk(_) => false,
         }
     }
@@ -103,7 +84,7 @@ impl Sink {
     pub async fn finalize(self) -> Result<WriteReport> {
         let report = self.report();
         match self {
-            Sink::File(f) => f.target.finalize().await?,
+            Sink::File(f) => f.finalize().await?,
             Sink::Bulk(_) => {}
         }
         Ok(report)
@@ -111,7 +92,7 @@ impl Sink {
 
     pub async fn abort(self) {
         match self {
-            Sink::File(f) => f.target.abort().await,
+            Sink::File(f) => f.abort().await,
             Sink::Bulk(_) => {}
         }
     }

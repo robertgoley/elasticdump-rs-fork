@@ -62,6 +62,7 @@ console = "0.15"
 tokio-util = "0.7"
 percent-encoding = "2"
 flate2 = "1"
+zstd = { version = "0.13", default-features = false }
 memchr = "2"
 rust-ini = "0.21"
 semver = "1"

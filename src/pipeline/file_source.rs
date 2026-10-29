@@ -20,6 +20,9 @@ pub struct FileBatch {
 
 const READ_CHUNK: usize = 256 * 1024;
 
+/// zstd frame magic number (little-endian 0xFD2FB528).
+pub const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
 pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
     let raw: Box<dyn Read + Send> = match path {
         Some(p) => Box::new(
@@ -33,6 +36,19 @@ pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
     if head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b {
         log::debug!("Input is gzip-compressed");
         Ok(Box::new(flate2::read::MultiGzDecoder::new(buffered)))
+    } else if head.starts_with(&ZSTD_MAGIC) {
+        log::debug!("Input is zstd-compressed");
+        // Concatenated frames (e.g. `cat` of parts) are decoded in sequence.
+        Ok(Box::new(
+            zstd::stream::read::Decoder::with_buffer(buffered).context("zstd decoder")?,
+        ))
+    } else if path.is_some_and(|p| p.extension().is_some_and(|e| e == "zst" || e == "zstd"))
+        && !head.is_empty()
+    {
+        anyhow::bail!(
+            "Input '{}' has a .zst extension but is not a zstd stream",
+            path.unwrap().display()
+        )
     } else {
         Ok(Box::new(buffered))
     }

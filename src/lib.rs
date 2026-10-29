@@ -98,6 +98,59 @@ fn file_path(ep: &Endpoint) -> Option<PathBuf> {
 
 const DEFAULT_MAX_BULK_BYTES: u64 = 100 * 1024 * 1024;
 
+/// File/stdout output options: gzip and splitting.
+fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::FileOptions> {
+    use crate::cli::CompressionType;
+    use pipeline::file_sink::Codec;
+    use pipeline::file_sink::{FileOptions, SplitBy, parse_size};
+    let kind = match (cli.compression_type, cli.fs_compress()) {
+        (Some(t), _) => Some(t),
+        (None, true) => Some(CompressionType::Gzip),
+        (None, false) => None,
+    };
+    let codec = match (kind, cli.compression_level) {
+        (None, Some(_)) => {
+            log::warn!(
+                "--compressionLevel has no effect without --fsCompress or --compressionType"
+            );
+            None
+        }
+        (None, None) => None,
+        (Some(CompressionType::Gzip), None | Some(-1)) => Some(Codec::Gzip(6)),
+        (Some(CompressionType::Gzip), Some(l @ 0..=9)) => Some(Codec::Gzip(l as u32)),
+        (Some(CompressionType::Zstd), None | Some(-1)) => Some(Codec::Zstd(3)),
+        (Some(CompressionType::Zstd), Some(l @ 1..=22)) => Some(Codec::Zstd(l)),
+        (Some(t), Some(l)) => {
+            let range = if t == CompressionType::Gzip {
+                "0-9"
+            } else {
+                "1-22"
+            };
+            return Err(usage(format!(
+                "--compressionLevel {l} is out of range for {t:?} (-1 or {range})"
+            )));
+        }
+    };
+    let path = file_path(output);
+    if codec.is_some() && path.is_none() {
+        log::info!("compression does not apply to stdout output (elasticdump behaviour)");
+    }
+    let split = match (&cli.file_size, cli.max_rows) {
+        (Some(s), _) if s.trim() != "-1" => Some(SplitBy::Bytes(
+            parse_size(s).map_err(|e| usage(format!("--fileSize: {e:#}")))?,
+        )),
+        (_, Some(n)) if n > 0 => Some(SplitBy::Rows(n)),
+        _ => None,
+    };
+    Ok(FileOptions {
+        path,
+        overwrite: cli.overwrite(),
+        source_only: cli.source_only(),
+        codec,
+        split,
+    })
+}
+
 async fn build_sink(
     cli: &Cli,
     output: &Endpoint,
@@ -154,9 +207,7 @@ async fn build_sink(
                 tokio_util::sync::CancellationToken::new(),
             ))))
         }
-        out => Ok(Sink::File(
-            FileSink::create(file_path(out), cli.overwrite(), cli.source_only()).await?,
-        )),
+        out => Ok(Sink::File(FileSink::create(file_options(cli, out)?).await?)),
     }
 }
 
@@ -313,8 +364,7 @@ async fn run_meta(
         doc_type: dst_ep.and_then(|e| e.doc_type.clone()),
         prefix: cli.prefix.clone(),
         suffix: cli.suffix.clone(),
-        file: file_path(output),
-        overwrite: cli.overwrite(),
+        file: file_options(cli, output)?,
     };
     meta::write(doc, &dst, &opts).await
 }

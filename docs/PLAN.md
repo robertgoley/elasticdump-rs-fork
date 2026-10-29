@@ -279,7 +279,10 @@ Legend:
 | `--compressionLevel` | -1 (zlib default 6) | ❌ | 0–9; −1 maps to 6 | M4 |
 | `--fileSize` | -1 | ❌ | `Splitter` sized in uncompressed **bytes** (Node counts UTF-16 units; documented divergence). Same grammar as the `bytes` module (`b,kb,mb,gb,tb,pb`, base 1024, decimals) | M4 |
 | `--maxRows` | -1 | ❌ | `Splitter` by line count | M4 |
-| split naming | `{base}.split-{n}{ext}[.gz]` | ❌ | Identical naming. Each part staged and committed atomically | M4 |
+| `--compressionType` (extension) | none | ❌ | **In scope (user request, 2026-10-28; zstd is the preferred codec).** `gzip` or `zstd`. `--fsCompress` alone keeps meaning gzip (drop-in parity); `--compressionType zstd` turns compression on by itself. Default stays uncompressed for Node compatibility | M4 |
+| zstd write | – | ❌ | Each file / split part is one complete zstd stream (content checksum on). `--compressionLevel` 1–22, −1 maps to 3 | M4 |
+| zstd read | – | ❌ | Auto-detected from the magic `28 b5 2f fd`, like gzip; concatenated frames read in sequence. A `.zst`/`.zstd` file that is not zstd is an error. Node cannot read these files (documented) | M4 |
+| split naming | `{base}.split-{n}{ext}[.gz]` | ❌ | Identical naming. Each part staged and committed atomically. zstd parts use `.zst` | M4 |
 | reading split sets | n/a in Node | ❌ | Extension: if `--input` is a directory or glob, read the parts in numeric `split-N` order | M4 (opt) |
 
 ### 3.5 Auth and TLS
@@ -363,7 +366,8 @@ sonic-rs          = "0.5"         # keep: lazy extraction, raw slices
 serde             = { version = "1", features = ["derive"] }
 serde_json        = { version = "1", features = ["raw_value","arbitrary_precision"] }  # settings/mapping only
 async-compression = { version = "0.4", features = ["tokio","gzip"] }  # fsCompress streaming
-flate2            = "1"           # gzip bulk request bodies (spawn_blocking for large bodies)
+flate2            = "1"           # gzip bulk request bodies and gzip file output
+zstd              = { version = "0.13", default-features = false }  # zstd file output/input (scope addition, M4)
 clap              = { version = "4", features = ["derive","env","wrap_help"] }
 tokio-util        = { version = "0.7", features = ["io","codec"] }   # LinesCodec, CancellationToken
 rust-ini          = "0.21"        # --httpAuthFile
@@ -928,6 +932,7 @@ Replace the hard-coded `http://localhost:9200` in `tests/integration_test.rs` wi
 
 ### M4: Compression and splitting (~4–5 days)
 1. Add gzip write (`--fsCompress`, `--compressionLevel`) for single files and for split parts, and gzip read with auto-detect and multi-member support.
+1a. **Scope addition (2026-10-28):** zstd as a second codec (`--compressionType zstd`, level 1–22), for single files, split parts (`.zst`, one complete stream per part) and mapping/settings files; zstd read auto-detected by magic bytes.
 2. Add the splitter (`--fileSize`, `--maxRows`): Node naming, atomic multi-part commit, overwrite rules.
 3. Optional: directory/glob input for split sets.
 
@@ -937,6 +942,7 @@ Replace the hard-coded `http://localhost:9200` in `tests/integration_test.rs` wi
   * every non-final part is ≥ the threshold and < threshold + one line;
   * restoring all parts gives full equality.
 * Node reads Rust's `.gz` files and vice versa.
+* zstd: dump (single file and `--fileSize` split) → restore gives full equality; every part decodes on its own.
 * Gzip throughput meets §8.
 
 ### M5: Concurrency, throttling and retries (~1 week)

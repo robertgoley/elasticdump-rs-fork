@@ -28,6 +28,12 @@ pub enum RetryBackoffArg {
     Exponential,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CompressionType {
+    Gzip,
+    Zstd,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DumpType {
     Data,
@@ -282,9 +288,14 @@ pub struct Cli {
     #[arg(long = "fsCompress", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub fs_compress: Option<bool>,
 
-    /// gzip level for --fsCompress (0-9)
-    #[arg(long = "compressionLevel")]
-    pub compression_level: Option<u32>,
+    /// Output compression codec: gzip (same as --fsCompress) or zstd
+    /// (extension). Input compression is always auto-detected.
+    #[arg(long = "compressionType", value_enum)]
+    pub compression_type: Option<CompressionType>,
+
+    /// Compression level: gzip 0-9 (-1 = 6), zstd 1-22 (-1 = 3)
+    #[arg(long = "compressionLevel", allow_hyphen_values = true)]
+    pub compression_level: Option<i32>,
 
     // ---------------------------------------- concurrency and throttling
     /// Maximum concurrent write batches
@@ -678,6 +689,17 @@ mod tests {
         assert!(!c.ignore_errors());
         assert_eq!(c.r#type, DumpType::Data);
         assert_eq!(c.effective_search(), EffectiveSearch::Scroll);
+    }
+
+    #[test]
+    fn compression_flags() {
+        let c = parse(&["--compressionType", "zstd", "--compressionLevel", "-1"]).unwrap();
+        assert_eq!(c.compression_type, Some(CompressionType::Zstd));
+        assert_eq!(c.compression_level, Some(-1));
+        let c = parse(&["--compressionType=gzip"]).unwrap();
+        assert_eq!(c.compression_type, Some(CompressionType::Gzip));
+        assert!(parse(&["--compressionType", "brotli"]).is_err());
+        assert_eq!(parse(&[]).unwrap().compression_type, None);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Generic source → sink plumbing shared by every transfer direction.
 
 pub mod bulk;
+pub mod file_sink;
 pub mod file_source;
 pub mod json_split;
 pub mod sink;

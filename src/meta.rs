@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 use crate::http::{
     Body, ClusterInfo, EsClient, EsHttpError, RetryMode, RetryPolicy, send_with_retry,
 };
-use crate::output::create_output_target;
 use crate::pipeline::WriteReport;
+use crate::pipeline::file_sink::{FileOptions, FileSink};
 use crate::pipeline::json_split::ValueSplitter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,8 +257,7 @@ pub struct MetaTarget {
     pub doc_type: Option<String>,
     pub prefix: String,
     pub suffix: String,
-    pub file: Option<PathBuf>,
-    pub overwrite: bool,
+    pub file: FileOptions,
 }
 
 pub struct MetaOptions {
@@ -321,11 +320,12 @@ pub async fn write(doc: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<W
                 serde_json::to_string(&Value::String(serde_json::to_string(&doc)?))?
             }
         };
-        let mut target = create_output_target(dst.file.as_deref(), dst.overwrite).await?;
-        target.write_all(line.as_bytes()).await?;
-        target.write_all(b"\n").await?;
-        target.flush().await?;
-        target.finalize().await?;
+        let mut opts = dst.file.clone();
+        opts.split = None;
+        opts.source_only = false;
+        let mut sink = FileSink::create(opts).await?;
+        sink.write_lines(format!("{line}\n").as_bytes()).await?;
+        sink.finalize().await?;
         return Ok(WriteReport {
             written: 1,
             failed: 0,
