@@ -100,14 +100,40 @@ fn push_json_str(out: &mut Vec<u8>, s: &str) {
     sonic_rs::to_writer(&mut *out, s).expect("string serialization");
 }
 
+/// The top-level members of one document line, parsed in a single pass
+/// (a hit has a handful of keys; looking each one up with `sonic_rs::get`
+/// rescanned the whole line per lookup).
+struct Top<'a> {
+    members: Vec<(std::borrow::Cow<'a, str>, LazyValue<'a>)>,
+}
+
+impl<'a> Top<'a> {
+    fn parse(line: &'a [u8]) -> Self {
+        let members = sonic_rs::to_object_iter(line)
+            .filter_map(|m| m.ok())
+            .filter(|(_, v)| !v.is_null())
+            .collect();
+        Self { members }
+    }
+
+    fn get(&self, key: &str) -> Option<&LazyValue<'a>> {
+        self.members.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    fn str(&self, key: &str) -> Option<String> {
+        self.get(key).and_then(|v| v.as_str().map(str::to_string))
+    }
+}
+
 /// Meta field lookup in elasticdump order: `X`, `_X`, `fields.X`, `fields._X`
 /// (single-element arrays from `fields` are unwrapped). Returns raw JSON.
-fn meta(line: &[u8], name: &str) -> Option<String> {
+fn meta(top: &Top, name: &str) -> Option<String> {
     let under = format!("_{name}");
-    if let Some(v) = get(line, &[name]).or_else(|| get(line, &[under.as_str()])) {
+    if let Some(v) = top.get(name).or_else(|| top.get(&under)) {
         return Some(v.as_raw_str().to_string());
     }
-    let v = get(line, &["fields", name]).or_else(|| get(line, &["fields", under.as_str()]))?;
+    let fields = top.get("fields")?.as_raw_str().as_bytes();
+    let v = get(fields, &[name]).or_else(|| get(fields, &[under.as_str()]))?;
     if !v.is_array() {
         return Some(v.as_raw_str().to_string());
     }
@@ -218,14 +244,12 @@ impl BulkSink {
         self.inflight.abort_all();
     }
 
-    fn index_for(&self, line: &[u8]) -> Result<String> {
+    fn index_for(&self, top: &Top) -> Result<String> {
         let base = match &self.opts.index {
             Some(i) => i.clone(),
-            None => get(line, &["_index"])
-                .and_then(|v| v.as_str().map(str::to_string))
-                .ok_or_else(|| {
-                    anyhow!("document has no _index and no output index was given (--output-index)")
-                })?,
+            None => top.str("_index").ok_or_else(|| {
+                anyhow!("document has no _index and no output index was given (--output-index)")
+            })?,
         };
         Ok(format!("{}{}{}", self.opts.prefix, base, self.opts.suffix))
     }
@@ -233,15 +257,16 @@ impl BulkSink {
     /// Append the action (and body) lines for one document.
     pub fn encode_doc(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<()> {
         let action = self.opts.action;
-        let source = get(line, &["_source"]);
-        let is_hit = source.is_some() || get(line, &["_id"]).is_some();
+        let top = Top::parse(line);
+        let source = top.get("_source");
+        let is_hit = source.is_some() || top.get("_id").is_some();
 
         out.extend_from_slice(b"{\"");
         out.extend_from_slice(action.as_str().as_bytes());
         out.extend_from_slice(b"\":{\"_index\":");
-        push_json_str(out, &self.index_for(line)?);
+        push_json_str(out, &self.index_for(&top)?);
         if is_hit {
-            if let Some(id) = get(line, &["_id"]) {
+            if let Some(id) = top.get("_id") {
                 out.extend_from_slice(b",\"_id\":");
                 out.extend_from_slice(id.as_raw_str().as_bytes());
             }
@@ -251,23 +276,23 @@ impl BulkSink {
                 .opts
                 .doc_type
                 .clone()
-                .or_else(|| get(line, &["_type"]).and_then(|v| v.as_str().map(str::to_string)))
+                .or_else(|| top.str("_type"))
                 .unwrap_or_else(|| "_doc".to_string());
             out.extend_from_slice(b",\"_type\":");
             push_json_str(out, &ty);
         }
         if is_hit {
-            for name in self.opts.meta_fields.clone() {
+            for name in self.opts.meta_fields.iter() {
                 if matches!(name.as_str(), "timestamp" | "ttl")
                     && !self.opts.info.supports_ttl_meta()
                 {
-                    if meta(line, &name).is_some() && !self.warned_ttl.swap(true, Ordering::Relaxed)
+                    if meta(&top, name).is_some() && !self.warned_ttl.swap(true, Ordering::Relaxed)
                     {
                         log::warn!("Dropping _{name}: not supported by the target cluster");
                     }
                     continue;
                 }
-                if let Some(v) = meta(line, &name) {
+                if let Some(v) = meta(&top, name) {
                     out.extend_from_slice(b",\"");
                     out.extend_from_slice(name.as_bytes());
                     out.extend_from_slice(b"\":");
@@ -275,7 +300,7 @@ impl BulkSink {
                 }
             }
             if self.opts.handle_version {
-                if let Some(v) = get(line, &["_version"]).or_else(|| get(line, &["version"])) {
+                if let Some(v) = top.get("_version").or_else(|| top.get("version")) {
                     out.extend_from_slice(b",\"version\":");
                     out.extend_from_slice(v.as_raw_str().as_bytes());
                     if let Some(vt) = &self.opts.version_type {
@@ -291,11 +316,11 @@ impl BulkSink {
             BulkAction::Delete => {}
             BulkAction::Update => {
                 out.extend_from_slice(b"{\"doc\":");
-                out.extend_from_slice(source_bytes(line, source.as_ref(), is_hit));
+                out.extend_from_slice(source_bytes(line, source, is_hit));
                 out.extend_from_slice(b"}\n");
             }
             BulkAction::Index | BulkAction::Create => {
-                out.extend_from_slice(source_bytes(line, source.as_ref(), is_hit));
+                out.extend_from_slice(source_bytes(line, source, is_hit));
                 out.push(b'\n');
             }
         }
@@ -505,7 +530,7 @@ impl BulkSink {
     }
 }
 
-fn source_bytes<'a>(line: &'a [u8], source: Option<&'a LazyValue<'a>>, is_hit: bool) -> &'a [u8] {
+fn source_bytes<'a>(line: &'a [u8], source: Option<&'a LazyValue<'_>>, is_hit: bool) -> &'a [u8] {
     match source {
         Some(s) => s.as_raw_str().as_bytes(),
         // a hit without _source (e.g. stored_fields only): empty document

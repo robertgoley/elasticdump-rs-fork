@@ -5,6 +5,12 @@
 > **Reference implementation:** `elasticsearch-dump/elasticsearch-dump` @ `600db62` (main, 2026-10-18; `package.json` version 6.125.1, Apache-2.0).
 > **Written:** 2026-10-28. Facts marked **[verified]** were checked against source code or by running both tools against OpenSearch 2.19.7 in podman on the box. Facts marked **[uncertain]** still need confirming during implementation.
 
+
+> **Implementation status (2026-10-28, branch `rewrite`, local only):** M0–M6 implemented (M6 partially, see
+> README "Performance" and the notes below). Scope addition: zstd compression (§3.4, M4).
+> Not done: ES 7.17/8.x benchmark and CI jobs (no ES in scope/box), the ±5% regression benchmark against
+> `b32b6e9` on the 2M-doc ES dataset, a release (fat-LTO/musl) build run, directory/glob input for split sets.
+
 ---
 
 ## 0. TL;DR

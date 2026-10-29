@@ -629,6 +629,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ced92e76e966ca2fd84c8f7aa01a4aea65b0eb6648d72f7c8f3e2764a67fece"
 dependencies = [
  "crc32fast",
+ "libz-rs-sys",
  "miniz_oxide",
 ]
 
@@ -1183,6 +1184,15 @@ name = "libc"
 version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
+
+[[package]]
+name = "libz-rs-sys"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c10501e7805cee23da17c7790e59df2870c0d4043ec6d03f67d31e2b53e77415"
+dependencies = [
+ "zlib-rs",
+]
 
 [[package]]
 name = "linux-raw-sys"
@@ -2955,6 +2965,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zmij"

@@ -61,7 +61,7 @@ bytesize = "2.0"
 console = "0.15"
 tokio-util = "0.7"
 percent-encoding = "2"
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 zstd = { version = "0.13", default-features = false }
 memchr = "2"
 rust-ini = "0.21"

@@ -1,0 +1,33 @@
+# Static musl builds. Manual trigger only; artifacts are attached to the run.
+# Nothing is published (no GitHub release, no crates.io) without Robert's approval.
+name: release-build
+on:
+  workflow_dispatch:
+
+jobs:
+  musl:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+        with: { targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: "${{ matrix.target }}" }
+      # zig provides the C cross-compiler for zstd-sys / ring.
+      - uses: mlugg/setup-zig@v1
+        with: { version: 0.13.0 }
+      - run: cargo install cargo-zigbuild --locked
+      - run: cargo zigbuild --release --target ${{ matrix.target }}
+      - run: |
+          f=target/${{ matrix.target }}/release/elasticdump-rs
+          file "$f"
+          tar czf elasticdump-rs-${{ matrix.target }}.tar.gz -C "$(dirname "$f")" elasticdump-rs
+          sha256sum elasticdump-rs-${{ matrix.target }}.tar.gz > elasticdump-rs-${{ matrix.target }}.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elasticdump-rs-${{ matrix.target }}
+          path: elasticdump-rs-${{ matrix.target }}.tar.gz*

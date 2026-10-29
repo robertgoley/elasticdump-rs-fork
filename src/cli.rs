@@ -149,7 +149,7 @@ pub struct Cli {
     #[arg(long = "searchBody")]
     pub search_body: Option<String>,
 
-    /// Treat --searchBody as {"id":..,"params":..} of a stored search template
+    /// Treat --searchBody as a search template ({"id"|"source":..,"params":..}), rendered with _render/template
     #[arg(long = "searchWithTemplate", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub search_with_template: Option<bool>,
 

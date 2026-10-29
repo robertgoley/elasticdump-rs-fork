@@ -1,0 +1,102 @@
+{
+ "n_docs": 100000,
+ "dataset_bytes": 42052460,
+ "results": [
+  {
+   "scenario": "dump limit=100",
+   "tool": "node",
+   "seconds": 4.28,
+   "docs_per_s": 23353,
+   "cpu_s": 2.64,
+   "max_rss_mb_cumulative": 165
+  },
+  {
+   "scenario": "dump limit=100",
+   "tool": "rust",
+   "seconds": 1.51,
+   "docs_per_s": 66304,
+   "cpu_s": 0.26,
+   "max_rss_mb_cumulative": 165
+  },
+  {
+   "scenario": "dump limit=5000",
+   "tool": "node",
+   "seconds": 1.14,
+   "docs_per_s": 87963,
+   "cpu_s": 1.43,
+   "max_rss_mb_cumulative": 184
+  },
+  {
+   "scenario": "dump limit=5000",
+   "tool": "rust",
+   "seconds": 0.28,
+   "docs_per_s": 352254,
+   "cpu_s": 0.13,
+   "max_rss_mb_cumulative": 184
+  },
+  {
+   "scenario": "dump limit=5000 sliced PIT x4",
+   "tool": "rust",
+   "seconds": 0.92,
+   "docs_per_s": 109025,
+   "cpu_s": 0.19,
+   "max_rss_mb_cumulative": 184
+  },
+  {
+   "scenario": "dump limit=5000 gzip",
+   "tool": "node",
+   "seconds": 3.22,
+   "docs_per_s": 31100,
+   "cpu_s": 3.36,
+   "max_rss_mb_cumulative": 215
+  },
+  {
+   "scenario": "dump limit=5000 gzip",
+   "tool": "rust",
+   "seconds": 1.02,
+   "docs_per_s": 98481,
+   "cpu_s": 1.09,
+   "max_rss_mb_cumulative": 215
+  },
+  {
+   "scenario": "dump limit=5000 zstd",
+   "tool": "rust",
+   "seconds": 0.29,
+   "docs_per_s": 342906,
+   "cpu_s": 0.18,
+   "max_rss_mb_cumulative": 215
+  },
+  {
+   "scenario": "restore limit=5000 conc=4 noRefresh",
+   "tool": "node",
+   "seconds": 2.5,
+   "docs_per_s": 40062,
+   "cpu_s": 2.65,
+   "max_rss_mb_cumulative": 244
+  },
+  {
+   "scenario": "restore limit=5000 conc=4 noRefresh",
+   "tool": "rust",
+   "seconds": 0.98,
+   "docs_per_s": 101810,
+   "cpu_s": 0.23,
+   "max_rss_mb_cumulative": 244
+  },
+  {
+   "scenario": "copy limit=5000 conc=4",
+   "tool": "node",
+   "seconds": 1.92,
+   "docs_per_s": 52025,
+   "cpu_s": 2.08,
+   "max_rss_mb_cumulative": 245
+  },
+  {
+   "scenario": "copy limit=5000 conc=4",
+   "tool": "rust",
+   "seconds": 1.13,
+   "docs_per_s": 88493,
+   "cpu_s": 0.24,
+   "max_rss_mb_cumulative": 245
+  }
+ ]
+}
