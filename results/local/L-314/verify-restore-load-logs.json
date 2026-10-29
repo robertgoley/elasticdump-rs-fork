@@ -1,0 +1,15 @@
+{
+  "equal": true,
+  "a": {
+    "count": 100000,
+    "digest": "12253377b57fab8a638c68da013e9530",
+    "bad_lines": 0
+  },
+  "b": {
+    "count": 100000,
+    "digest": "12253377b57fab8a638c68da013e9530",
+    "bad_lines": 0
+  },
+  "mismatched_buckets": 0,
+  "first_differences": []
+}

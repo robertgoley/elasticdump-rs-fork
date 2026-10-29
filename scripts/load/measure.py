@@ -111,6 +111,26 @@ def sizes(paths):
     return tot
 
 
+SECRET_FLAGS = re.compile(r"^--(password|pass|input-pass|output-pass|[a-z-]*key-?pass[a-z-]*)$", re.I)
+
+
+def redact(cmd):
+    """Mask secret flag values and URL userinfo before the command is recorded."""
+    out, hide = [], False
+    for arg in cmd:
+        if hide:
+            out.append("***")
+            hide = False
+            continue
+        if SECRET_FLAGS.match(arg):
+            hide = True
+        elif "=" in arg and SECRET_FLAGS.match(arg.split("=", 1)[0]):
+            arg = arg.split("=", 1)[0] + "=***"
+        arg = re.sub(r"(https?://)[^/@\s]+@", r"\1***@", arg)
+        out.append(arg)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", default=None)
@@ -186,7 +206,7 @@ def main():
         "schema": "edrs-metrics/v1",
         "run_id": run_id,
         "started": started,
-        "command": cmd,
+        "command": redact(cmd),
         "exit_code": code,
         "wall_s": round(wall, 3),
         "user_s": round(ru.ru_utime, 3),

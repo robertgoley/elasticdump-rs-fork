@@ -1,0 +1,14 @@
+# Seed -> direct cluster-to-cluster copy into a renamed index -> verify -> leak check.
+name        = "copy-logs"
+description = "Cluster -> cluster copy (data) with sliced scroll"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+kind = "copy"
+args = ["--limit=2000", "--slices=2"]

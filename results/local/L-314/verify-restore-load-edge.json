@@ -1,0 +1,15 @@
+{
+  "equal": true,
+  "a": {
+    "count": 9431,
+    "digest": "9b7682ed7cf30e565bde18f9a8330cba",
+    "bad_lines": 0
+  },
+  "b": {
+    "count": 9431,
+    "digest": "9b7682ed7cf30e565bde18f9a8330cba",
+    "bad_lines": 0
+  },
+  "mismatched_buckets": 0,
+  "first_differences": []
+}

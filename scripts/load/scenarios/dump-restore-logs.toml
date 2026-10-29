@@ -1,0 +1,25 @@
+# Seed -> dump to file -> verify -> restore to new index -> verify -> leak check.
+name        = "dump-restore-logs"
+description = "Round trip: cluster -> NDJSON (zstd) -> cluster, logs and edge-case documents"
+engine      = "es717-plain"     # default; override with --engine
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"                # the tier's doc count
+
+[[seed]]
+index   = "load-edge"
+profile = "edge"
+seed    = 1
+docs    = "tier.edge_docs"
+
+[[step]]
+kind     = "dump"
+compress = "zstd"               # none | gzip | zstd
+args     = ["--limit=2000"]
+
+[[step]]
+kind = "restore"
+args = ["--limit=2000"]

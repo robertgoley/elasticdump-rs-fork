@@ -1,0 +1,123 @@
+{
+ "schema": "edrs-load/v1",
+ "run_id": "l0-final",
+ "scenario": "dump-restore-logs",
+ "tier": "L0",
+ "place": "box",
+ "engine": "es717-plain",
+ "up_profile": "elasticsearch-plain",
+ "image": "docker.elastic.co/elasticsearch/elasticsearch:7.17.29",
+ "heap": "1024m",
+ "git": "b49c5c1",
+ "tool": "elasticdump-rs 0.1.0",
+ "started": "2026-10-29T14:29:10-04:00",
+ "seeds": [
+  {
+   "index": "load-logs",
+   "profile": "logs",
+   "seed": 1,
+   "generated": 100000,
+   "stored": 100000,
+   "rejected": 0,
+   "store_bytes": 52591628,
+   "overwritten": 0,
+   "store_ratio": 0.526,
+   "reject_reasons": {},
+   "seconds": 4.89,
+   "mapping_engine": "es"
+  },
+  {
+   "index": "load-edge",
+   "profile": "edge",
+   "seed": 1,
+   "generated": 10000,
+   "stored": 9431,
+   "rejected": 285,
+   "store_bytes": 14469051,
+   "overwritten": 284,
+   "store_ratio": 3.617,
+   "reject_reasons": {
+    "request_400": 285
+   },
+   "seconds": 17.94,
+   "mapping_engine": "es"
+  }
+ ],
+ "steps": [
+  {
+   "name": "dump-load-logs",
+   "exit": 0,
+   "metrics": "results/load/l0-final/metrics-dump-load-logs.json",
+   "wall_s": 0.704,
+   "max_rss_kb": 33776,
+   "docs_per_s": 142002.9,
+   "retries": {},
+   "verify": {
+    "name": "dump-load-logs",
+    "ok": true,
+    "report": "results/load/l0-final/verify-dump-load-logs.json",
+    "a_count": 100000,
+    "b_count": 100000
+   }
+  },
+  {
+   "name": "restore-load-logs",
+   "exit": 0,
+   "metrics": "results/load/l0-final/metrics-restore-load-logs.json",
+   "wall_s": 5.523,
+   "max_rss_kb": 40300,
+   "docs_per_s": 18107.0,
+   "retries": {},
+   "verify": {
+    "name": "restore-load-logs",
+    "ok": true,
+    "report": "results/load/l0-final/verify-restore-load-logs.json",
+    "a_count": 100000,
+    "b_count": 100000
+   }
+  },
+  {
+   "name": "dump-load-edge",
+   "exit": 0,
+   "metrics": "results/load/l0-final/metrics-dump-load-edge.json",
+   "wall_s": 1.106,
+   "max_rss_kb": 266268,
+   "docs_per_s": 8529.9,
+   "retries": {},
+   "verify": {
+    "name": "dump-load-edge",
+    "ok": true,
+    "report": "results/load/l0-final/verify-dump-load-edge.json",
+    "a_count": 9431,
+    "b_count": 9431
+   }
+  },
+  {
+   "name": "restore-load-edge",
+   "exit": 0,
+   "metrics": "results/load/l0-final/metrics-restore-load-edge.json",
+   "wall_s": 2.611,
+   "max_rss_kb": 481824,
+   "docs_per_s": 3612.1,
+   "retries": {},
+   "verify": {
+    "name": "restore-load-edge",
+    "ok": true,
+    "report": "results/load/l0-final/verify-restore-load-edge.json",
+    "a_count": 9431,
+    "b_count": 9431
+   }
+  }
+ ],
+ "leak": {
+  "scroll_current": 0,
+  "pit_current": 0,
+  "part_files": [],
+  "unexpected_indices": [],
+  "new_system_indices": []
+ },
+ "failures": [],
+ "engine_version": "7.17.29",
+ "finished": "2026-10-29T14:29:57-04:00",
+ "pass": true
+}

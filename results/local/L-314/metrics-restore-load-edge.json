@@ -1,0 +1,72 @@
+{
+ "schema": "edrs-metrics/v1",
+ "run_id": "l0-final-restore-load-edge",
+ "started": "2026-10-29T14:29:53-04:00",
+ "command": [
+  "/workspace/elasticdump-rs/target/release/elasticdump-rs",
+  "--input",
+  "/var/tmp/elasticdump-rs-load/l0-final/load-edge.ndjson.zst",
+  "--output",
+  "http://127.0.0.1:19202/load-edge-restore",
+  "--type=data",
+  "--limit=2000"
+ ],
+ "exit_code": 0,
+ "wall_s": 2.611,
+ "user_s": 0.62,
+ "sys_s": 0.608,
+ "cpu_s": 1.227,
+ "max_rss_kb": 481824,
+ "rss_peak_kb_sampled": 478160,
+ "fds_peak": 11,
+ "threads_peak": 10,
+ "vol_ctx_switches": 208,
+ "invol_ctx_switches": 1,
+ "read_bytes": 0,
+ "write_bytes": 0,
+ "docs": 9431,
+ "docs_per_s": 3612.1,
+ "input_bytes": null,
+ "output_bytes": null,
+ "mb_per_s_in": null,
+ "mb_per_s_out": null,
+ "compression_ratio": null,
+ "total_writes": 9431,
+ "failed_writes": null,
+ "retries": {},
+ "cluster": {
+  "before": {
+   "index_total": 209748,
+   "query_total": 436,
+   "scroll_total": 21,
+   "scroll_current": 0,
+   "point_in_time_current": null,
+   "write_rejected": 0,
+   "search_rejected": 0
+  },
+  "after": {
+   "index_total": 219179,
+   "query_total": 436,
+   "scroll_total": 21,
+   "scroll_current": 0,
+   "point_in_time_current": null,
+   "write_rejected": 0,
+   "search_rejected": 0
+  },
+  "indexing_rate": 3612.1475521263164,
+  "search_query_rate": 0.0,
+  "write_rejected": 0,
+  "search_rejected": 0,
+  "open_scroll_contexts_after": 0,
+  "open_pit_contexts_after": null
+ },
+ "host": {
+  "nproc": 8,
+  "kernel": "6.12.94+"
+ },
+ "labels": {
+  "step": "restore-load-edge",
+  "tier": "L0",
+  "engine": "es717-plain"
+ }
+}

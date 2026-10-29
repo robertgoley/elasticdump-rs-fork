@@ -32,3 +32,4 @@ sbom-*.json
 /results/*.json
 /results/*.json.stderr
 /results/load/
+__pycache__/

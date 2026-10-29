@@ -1,0 +1,45 @@
+# Load tiers and execution places (TST-LOAD-001, TST-LOAD-012).
+# run.py refuses a tier that does not fit the place: if the tier is not
+# allowed there, or the estimated heap, memory or disk exceed the place budget.
+
+[place.box]        # shared dev box: one engine at a time, no root
+max_heap_mb   = 4096
+container_mem = "6g"
+tool_mem_mb   = 1024   # the tool's max RSS must stay under this (asserted)
+max_disk_mb   = 25000  # total budget including dataset cache
+tiers         = ["L0", "L1R", "L1"]
+
+[place.runner]     # hosted CI runner (~14 GB disk, 7 GB RAM)
+max_heap_mb   = 2048
+container_mem = "4g"
+tool_mem_mb   = 1024
+max_disk_mb   = 12000
+tiers         = ["L0", "L1R"]
+
+[place.big]        # dedicated load host (Phase B)
+max_heap_mb   = 16384
+container_mem = "32g"
+tool_mem_mb   = 2048
+max_disk_mb   = 500000
+tiers         = ["L0", "L1R", "L1", "L2"]
+
+[tier.L0]
+docs      = 100000
+edge_docs = 10000
+heap_mb   = 1024
+
+[tier.L1R]         # reduced L1 for hosted runners: zstd only, no dataset cache
+docs      = 5000000
+edge_docs = 10000
+heap_mb   = 2048
+compress  = ["zstd"]
+
+[tier.L1]
+docs      = 10000000
+edge_docs = 10000
+heap_mb   = 4096
+
+[tier.L2]
+docs      = 100000000
+edge_docs = 10000
+heap_mb   = 8192
