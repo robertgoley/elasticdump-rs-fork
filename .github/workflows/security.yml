@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Image bases: alpine (public, musl), debian (public Debian 13), dhi (needs DHI_USERNAME/DHI_TOKEN secrets)"
-        default: alpine
+        description: "Image bases: dhi (default; dhi.io Alpine), dhi-debian, alpine (public), debian (public)"
+        default: dhi
   schedule:
     - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
 
@@ -40,13 +40,27 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      # The default target is the dhi.io image (`make image`). Docker Hardened
+      # Images need a pull login: add repository secrets DHI_USERNAME (Docker
+      # ID) and DHI_TOKEN (a read-only/pull access token). No values live in
+      # this repo; the login is pull-only and never reaches an image layer.
+      # Without the secrets, run manually with base=alpine (public bases).
       - name: Log in to dhi.io (pull only)
-        if: github.event.inputs.base == 'dhi'
-        run: echo "${{ secrets.DHI_TOKEN }}" | podman login dhi.io -u "${{ secrets.DHI_USERNAME }}" --password-stdin
+        if: startsWith(github.event.inputs.base || 'dhi', 'dhi')
+        env:
+          DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
+          DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+        run: |
+          if [ -z "$DHI_USERNAME" ] || [ -z "$DHI_TOKEN" ]; then
+            echo "::error::DHI_USERNAME/DHI_TOKEN secrets are not set; dhi.io pulls need them (or dispatch with base=alpine)"
+            exit 1
+          fi
+          printf '%s' "$DHI_TOKEN" | podman login dhi.io -u "$DHI_USERNAME" --password-stdin
       - name: Build image (local only)
         run: |
-          case "${{ github.event.inputs.base || 'alpine' }}" in
+          case "${{ github.event.inputs.base || 'dhi' }}" in
             dhi) make image CONTAINER=podman ;;
+            dhi-debian) make image-dhi-debian CONTAINER=podman ;;
             debian) make image-public CONTAINER=podman ;;
             *) make image-alpine CONTAINER=podman ;;
           esac
@@ -58,3 +72,5 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: sbom-image, path: "sbom-image.*.json" }
+      - if: always()
+        run: podman logout dhi.io || true

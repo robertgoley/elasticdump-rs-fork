@@ -223,22 +223,27 @@ elasticdump-rs --input data.json --output http://os:9200 --renamePrefix logstash
 
 ## Container image
 
-`Dockerfile` is a two-stage build: a Rust builder (release profile, `CARGO_BUILD_JOBS=2` by
-default because the fat-LTO link peaks at ~1.5-2 GB) and a Debian 13 runtime. Both stages are
-Debian 13 (glibc 2.41), so the dynamically linked binary matches the runtime libc.
+`Dockerfile` is a two-stage build: a Rust builder (release profile, `CARGO_BUILD_JOBS=2` by default
+because the fat-LTO link peaks at ~1.5-2 GB) and a runtime with `bash`. Builder and runtime always use the
+same libc. All four builds use the same Dockerfile through the `BUILDER_IMAGE`/`BUILDER_TAG`/`BASE_IMAGE`/`BASE_TAG`
+build args:
 
-| Build arg | Default | Public fallback (`make image-public`) |
-|---|---|---|
-| `BUILDER_IMAGE` / `BUILDER_TAG` | `dhi.io/rust` / `1.99.1-debian13-dev` | `docker.io/library/rust` / `1.99-trixie` |
-| `BASE_IMAGE` / `BASE_TAG` | `dhi.io/debian-base` / `trixie-debian13-dev` | `docker.io/library/debian` / `trixie-slim` |
+| Make target | Builder | Runtime | libc | Size | HIGH/CRITICAL CVEs (2026-10-29) |
+|---|---|---|---|---|---|
+| `make image` (**default**) | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` | musl | 20 MB | **0** (0 at any severity) |
+| `make image-dhi-debian` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` | glibc 2.41 | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable |
+| `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` | musl | 20 MB | 0 |
+| `make image-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` | glibc 2.41 | 90 MB | 54 High matches (grype) / 43 (trivy), none fixable |
 
-A third build, `make image-alpine`, uses `rust:1.99.1-alpine3.24` → `alpine:3.24.3` (musl on both sides, `bash`
-added with apk, ~20 MB). It is the recommended public option: 0 HIGH/CRITICAL CVEs at the last scan, versus 54 HIGH
-(all unfixable in Debian) for `trixie-slim`. Details in [SECURITY-CVE.md](SECURITY-CVE.md).
+The default is the dhi.io Alpine build. The dhi.io Debian `-dev` base ships apt, perl, util-linux and other packages
+with open CVEs that Debian marks as won't-fix. Details: [SECURITY-CVE.md](SECURITY-CVE.md). On Alpine runtimes the Dockerfile
+runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
+dynamically.
 
-`dhi.io` (Docker Hardened Images) needs a login (`docker login dhi.io` or `podman login dhi.io`
-with a Docker account); anonymous pulls return `authentication required`. The `-dev` runtime
-variant is used on purpose so `bash` and coreutils are available for wrapper scripts.
+`dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
+account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
+never enters a build layer. The `-dev` variants are used on purpose, so that a shell is available for wrapper
+scripts.
 
 The image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
@@ -246,7 +251,8 @@ The image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink
 base name).
 
 ```bash
-make image                 # dhi.io bases (after `podman login dhi.io`)
+make image                 # dhi.io Alpine bases, the default (after `podman login dhi.io`)
+make image-dhi-debian      # dhi.io Debian 13 bases (after the login)
 make image-public          # public Debian 13 bases, no login
 make image-alpine          # public Alpine/musl bases, no login, fewest CVEs
 make test-image            # --version, --help, bash present, non-root, symlink, CA bundle

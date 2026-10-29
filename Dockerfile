@@ -2,30 +2,34 @@
 #
 # elasticdump-rs container image.
 #
-#   builder: Docker Hardened Images Rust (-dev: shell, compiler, cargo), Debian 13
-#   runtime: Docker Hardened Images Debian 13 base, -dev variant (bash, coreutils)
+# Default (make image): Docker Hardened Images, Alpine/musl
+#   builder: dhi.io/rust:1.99.0-alpine3.23-dev   (cargo, gcc, musl-dev)
+#   runtime: dhi.io/alpine-base:3.24-alpine3.24-dev (-dev: shell + apk; bash and
+#            ca-certificates are added with apk, plus libgcc because Alpine-packaged
+#            rustc links libgcc_s dynamically; packages are upgraded at build time)
+# Both stages are musl (the 3.23 builder's musl is older than the runtime's, which
+# is the compatible direction). dhi.io needs `podman login dhi.io` / `docker login
+# dhi.io` (pull only; credentials never enter the image).
 #
-# Both stages are Debian 13 (glibc 2.41), so the dynamically linked binary
-# matches the runtime libc. dhi.io needs `docker login dhi.io` (a free Docker
-# account). Without it, build with public bases of the same Debian release:
-#
-#   podman build --build-arg BUILDER_IMAGE=docker.io/library/rust --build-arg BUILDER_TAG=1.99-trixie \
-#                --build-arg BASE_IMAGE=docker.io/library/debian --build-arg BASE_TAG=trixie-slim .
-#
-# A third option, `make image-alpine`, builds a musl binary on rust:*-alpine and
-# runs it on alpine (bash added with apk): libc matches (musl/musl) and it is the
-# lowest-CVE public base. See `make help` and README "Container image".
+# Other bases through the same ARGs (see Makefile):
+#   make image-dhi-debian  dhi.io/rust:1.99.1-debian13-dev -> dhi.io/debian-base:trixie-debian13-dev (glibc)
+#   make image-alpine      rust:1.99.1-alpine3.24 -> alpine:3.24.3 (public, musl)
+#   make image-public      rust:1.99-trixie -> debian:trixie-slim (public, glibc)
+# CVE comparison of these bases: SECURITY-CVE.md.
 ARG BUILDER_IMAGE=dhi.io/rust
-ARG BUILDER_TAG=1.99.1-debian13-dev
-ARG BASE_IMAGE=dhi.io/debian-base
-ARG BASE_TAG=trixie-debian13-dev
+ARG BUILDER_TAG=1.99.0-alpine3.23-dev
+ARG BASE_IMAGE=dhi.io/alpine-base
+ARG BASE_TAG=3.24-alpine3.24-dev
 
 # ----------------------------------------------------------------- builder
 FROM ${BUILDER_IMAGE}:${BUILDER_TAG} AS builder
 # Release profile = fat LTO + codegen-units=1: the link step is the memory
 # peak (~1.5-2 GB). Keep the job count low on small hosts.
 ARG CARGO_BUILD_JOBS=2
+# CARGO_HOME pinned so the registry cache mount below works for every builder
+# (official rust images already use it; Alpine-packaged cargo defaults to ~/.cargo).
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
+    CARGO_HOME=/usr/local/cargo \
     CARGO_TERM_COLOR=never
 WORKDIR /src
 # Alpine builders (musl fallback, see Makefile image-alpine) need libc headers
@@ -64,7 +68,9 @@ COPY --from=builder /out/elasticdump-rs /usr/local/bin/elasticdump-rs
 # - CA bundle only when the base image has none
 # - /data: writable working directory for dumps (mount a volume here)
 RUN --mount=type=bind,from=builder,source=/out/ca-certificates.crt,target=/tmp/ca.crt \
-    if command -v apk >/dev/null 2>&1; then apk add --no-cache bash ca-certificates; fi \
+    if command -v apk >/dev/null 2>&1; then \
+      apk upgrade --no-cache && apk add --no-cache bash ca-certificates libgcc; \
+    fi \
  && ln -s elasticdump-rs /usr/local/bin/elasticdump \
  && if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then \
       mkdir -p /etc/ssl/certs && cp /tmp/ca.crt /etc/ssl/certs/ca-certificates.crt; \

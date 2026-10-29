@@ -74,13 +74,17 @@ Same run, commit `958e9d5`.
 
 ### Container image
 
-Commit `c620b80`, built and tested with podman 5 (buildah 1.39.3).
+Built and tested with podman 5 (buildah 1.39.3) on 2026-10-29. The dhi.io pulls used podman's stored login.
 
-| Build | Builder image | Runtime image | Result |
-|---|---|---|---|
-| `make image` (default) | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` | **not built**: `dhi.io` pulls fail with `authentication required` (no login here) |
-| `make image-public` | `docker.io/library/rust:1.99-trixie` (`sha256:09027f873d45…`) | `docker.io/library/debian:trixie-slim` (`sha256:f6b08b09a057…`) | `make test-image` ok (`--version`, `--help`, bash 5.2.37, uid 65532, `elasticdump` symlink, CA bundle). Dump of mapping, data and index, then restore through the `elasticdump` entrypoint, against OpenSearch 2.19.7: 500/500 docs and the mapping identical. |
-| `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` (`sha256:b1d5dd5a22a0…`) | `docker.io/library/alpine:3.24.3` (`sha256:be2656061b53…`) | `make test-image` ok (bash 5.3.9, uid 65532, musl). Image size ~20 MB. |
+| Build | Builder image (digest) | Runtime image (digest) | Size | Result |
+|---|---|---|---|---|
+| `make image` (**default**) | `dhi.io/rust:1.99.0-alpine3.23-dev` (`sha256:8fd18196a3c578cb13f86d85f27c2bee8358b847dae57301bd7a01dce970b353`) | `dhi.io/alpine-base:3.24-alpine3.24-dev` (`sha256:a6349b553099dd6a1a4ca17aea9f8b3a8476dccea1234ad20e45d545df3bd025`) | 20.3 MB | Pulls ok. `make test-image` ok: `--version` prints `elasticdump-rs 0.1.0`, `--help`, bash 5.3.9, uid/gid 65532 (`nonroot`), `elasticdump -> elasticdump-rs` symlink, CA bundle at `/etc/ssl/certs/ca-certificates.crt` with `SSL_CERT_FILE` set, musl 1.2.6-r3. Dump of index, mapping and data, then restore through the `elasticdump` entrypoint, against OpenSearch 2.19.7: **500/500 docs, `_source` identical, mapping identical**. grype 0, trivy 0 (all severities). |
+| `make image-dhi-debian` (the previous default) | `dhi.io/rust:1.99.1-debian13-dev` (`sha256:e2dbe6c0d027b42522964dd97047f051afe5be75ce185137eb86f52ab15bdb40`) | `dhi.io/debian-base:trixie-debian13-dev` (`sha256:09943fbda2242d48da7d9ebe54a2112f43c37231bfc3e742daafee1846dee8f9`) | 90.3 MB | Pulls ok. The same checks pass (bash 5.2.37, uid 65532, glibc 2.41), as does the same dump and restore: 500/500 docs and the mapping identical. Fails `make scan`: 15 High CVEs (grype) / 9 HIGH (trivy), none fixable. |
+| `make image-public` | `docker.io/library/rust:1.99-trixie` (`sha256:09027f873d45…`) | `docker.io/library/debian:trixie-slim` (`sha256:f6b08b09a057…`) | 89.8 MB | `make test-image` ok (bash 5.2.37). Dump and restore against OpenSearch 2.19.7: 500/500 docs by count; the restored mapping was checked by eye. Fails `make scan`. |
+| `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` (`sha256:b1d5dd5a22a0…`) | `docker.io/library/alpine:3.24.3` (`sha256:be2656061b53…`) | 20 MB | `make test-image` ok (bash 5.3.9). trivy 0; grype 3 Medium (busybox CVE-2025-60876, not-affected). |
+
+The integration matrix above tests the host build of the binary (glibc, `target/it`). The container's musl build of the
+same source was verified only by the checks in this table.
 
 ## 2. Untested or untestable differences per version
 
@@ -103,7 +107,7 @@ These are behaviours the suite cannot exercise, or that differ between versions 
 | Cluster → cluster across engines | Needs two nodes at once. Only **ES 9.1.2 ↔ OpenSearch `OS_TAG` (2.19.7)** runs, because the memory rules allow one pair. | – | 7.10, 7.17, 8.6, 8.19, OS 1.3 and OS 3 are covered **file-wise** (export → restore across engines); they are not covered cluster to cluster. |
 | ILM features that need an Enterprise licence or tiers: `searchable_snapshot`, `frozen`, `downsample` (8.5+), `wait_for_snapshot` | Cannot be created on a basic-licence cluster. | Conversion refuses them, or drops them with `--lenientPolicyConversion`. | Unit tests, plus an IT refusal on a policy file. Not tested against a real Enterprise cluster. |
 | Data streams | Backing indices restore as plain indices (`data_stream` dropped, with a warning). | – | Unit test only. Data stream round-trips (`_data_stream`) are not a supported `--type`. |
-| dhi.io images (`make image`, the default) | `dhi.io` needs a Docker login, which this environment does not have. | – | **Not built or scanned here.** The same Dockerfile was built and tested with the public Debian 13 bases (same glibc) and with Alpine/musl. |
+| Container builds | The integration suites run the host build of the binary. The musl binary in the default image does not go through the 16 profiles. | – | Image checks: `make test-image`, a dump/restore against OpenSearch 2.19.7, and grype/trivy scans (section 1, Container image). |
 | Node elasticdump comparisons | Some tests run the Node tool when it is installed. | – | Ran here, because Node is installed. Elsewhere they SKIP ("node elasticdump not installed"). The tests that use Node's committed fixtures (`tests/fixtures/node/`) always run. |
 
 ## 3. Data modifications by direction
