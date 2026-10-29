@@ -59,17 +59,6 @@ pub struct IndexRenamer {
     cache: Mutex<HashMap<String, String>>,
 }
 
-impl Clone for IndexRenamer {
-    fn clone(&self) -> Self {
-        Self {
-            rules: self.rules.clone(),
-            prefix: self.prefix.clone(),
-            suffix: self.suffix.clone(),
-            cache: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
 impl IndexRenamer {
     pub fn new(
         prefixes: &[String],
@@ -104,10 +93,6 @@ impl IndexRenamer {
             suffix: suffix.to_string(),
             cache: Mutex::new(HashMap::new()),
         })
-    }
-
-    pub fn has_rules(&self) -> bool {
-        !self.rules.is_empty()
     }
 
     /// Apply the first matching rule (no prefix/suffix, no validation).

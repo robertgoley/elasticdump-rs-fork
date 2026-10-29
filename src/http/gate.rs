@@ -98,10 +98,6 @@ impl RequestGate {
         }
     }
 
-    pub fn is_noop(&self) -> bool {
-        self.sockets.is_none() && self.interval.is_none()
-    }
-
     pub async fn acquire(&self) -> GatePermit {
         let socket = match &self.sockets {
             Some(s) => Some(

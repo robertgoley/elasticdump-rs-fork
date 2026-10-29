@@ -72,17 +72,6 @@ impl Sink {
         }
     }
 
-    pub fn report(&self) -> WriteReport {
-        match self {
-            Sink::File(f) => WriteReport {
-                written: f.written,
-                failed: 0,
-                ..Default::default()
-            },
-            Sink::Bulk(b) => b.report,
-        }
-    }
-
     pub async fn finalize(self) -> Result<WriteReport> {
         match self {
             Sink::File(f) => {

@@ -1,7 +1,7 @@
 # Test tiers (TST-INF-001). Every test belongs to exactly one tier:
 #   unit      T0  lib/bin unit tests (all workspace crates)          no network
 #   contract  T1  CLI contract, injection, secrets and tool tests    mock servers only
-#   it        T2  live single-engine suites (tests/it, integration_test)   needs scripts/it/up.sh
+#   it        T2  live single-engine suites (tests/it; integration_test is plain-profile only)   needs scripts/it/up.sh
 #   load      T3  long live-cluster tests (feature `load`)           needs a cluster
 #   chaos     T5  fault-injection suites (feature `chaos`; none yet)
 # Run one tier with `cargo nextest run --profile <tier> [--features ...]`.

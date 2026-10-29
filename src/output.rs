@@ -60,11 +60,6 @@ impl OutputTarget {
         Ok(())
     }
 
-    /// Returns `true` when this target writes to stdout rather than a file.
-    pub fn is_stdout(&self) -> bool {
-        matches!(self.mode, OutputMode::Stdout)
-    }
-
     pub async fn finalize(self) -> Result<()> {
         match self.seal().await? {
             Some(sealed) => sealed.commit().await,

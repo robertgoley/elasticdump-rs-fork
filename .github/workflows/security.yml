@@ -109,3 +109,22 @@ jobs:
         with: { toolchain: nightly }
       - run: cargo +nightly install --locked --version 0.1.61 cargo-udeps
       - run: cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load
+
+  # L-205 / SUP-008: coverage (T0+T1 here; T2 via scripts/sup/coverage.sh locally) and the
+  # never-executed function list reviewed into docs/UNCOVERED-FUNCTIONS.md each release.
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly (installs the tools)
+        with: { toolchain: nightly }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1, components: llvm-tools-preview }
+      - run: cargo +nightly install --locked --version 0.9.1 cargo-llvm-cov
+      - run: cargo +nightly install --locked --version 0.9.150 cargo-nextest
+      - run: cargo +nightly install --locked --version 0.2.1 rustfilt
+      - run: cargo llvm-cov --no-report nextest -p elasticdump-rs --features load --profile unit
+      - run: cargo llvm-cov --no-report nextest -p elasticdump-rs --features load --profile contract
+      - run: cargo llvm-cov report -p elasticdump-rs --json --output-path cov.json
+      - run: scripts/sup/uncovered.py cov.json --root "$PWD" >> "$GITHUB_STEP_SUMMARY"

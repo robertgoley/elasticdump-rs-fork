@@ -316,10 +316,6 @@ impl EsClient {
         })))
     }
 
-    pub fn base(&self) -> &Url {
-        &self.0.base
-    }
-
     pub fn compress_requests(&self) -> bool {
         self.0.compress
     }
@@ -431,12 +427,6 @@ impl EsClient {
                 Ok(info)
             })
             .await
-    }
-
-    /// Pre-seed the cached cluster info (tests).
-    #[cfg(test)]
-    pub fn set_info(&self, info: ClusterInfo) {
-        let _ = self.0.info.set(info);
     }
 }
 
