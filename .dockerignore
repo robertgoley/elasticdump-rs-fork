@@ -1,0 +1,22 @@
+# Only Cargo.toml, Cargo.lock, src/ and tests/ are needed to build.
+target/
+**/target/
+.git/
+.github/
+.worktrees/
+.agent/
+docs/
+bench/
+scripts/
+oom
+*.json
+!tests/**/*.json
+*.jsonl
+!tests/**/*.jsonl
+*.zst
+*.gz
+*.md
+Dockerfile
+Makefile
+.dockerignore
+docker-compose.yaml

@@ -221,6 +221,44 @@ elasticdump-rs --input idx.json  --output http://os:9200 --type index --renamePr
 elasticdump-rs --input data.json --output http://os:9200 --renamePrefix logstash-:logstash-srctag-
 ```
 
+## Container image
+
+`Dockerfile` is a two-stage build: a Rust builder (release profile, `CARGO_BUILD_JOBS=2` by
+default because the fat-LTO link peaks at ~1.5-2 GB) and a Debian 13 runtime. Both stages are
+Debian 13 (glibc 2.41), so the dynamically linked binary matches the runtime libc.
+
+| Build arg | Default | Public fallback (`make image-public`) |
+|---|---|---|
+| `BUILDER_IMAGE` / `BUILDER_TAG` | `dhi.io/rust` / `1.99.1-debian13-dev` | `docker.io/library/rust` / `1.99-trixie` |
+| `BASE_IMAGE` / `BASE_TAG` | `dhi.io/debian-base` / `trixie-debian13-dev` | `docker.io/library/debian` / `trixie-slim` |
+
+`dhi.io` (Docker Hardened Images) needs a login (`docker login dhi.io` or `podman login dhi.io`
+with a Docker account); anonymous pulls return `authentication required`. The `-dev` runtime
+variant is used on purpose so `bash` and coreutils are available for wrapper scripts.
+
+The image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
+65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
+`/data` as its writable working directory, and carries OCI labels (version, revision, created,
+base name).
+
+```bash
+make image                 # dhi.io bases (after `podman login dhi.io`)
+make image-public          # public Debian 13 bases, no login
+make test-image            # --version, --help, bash present, non-root, symlink, CA bundle
+make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL)
+make image REGISTRY=registry.example.com/team IMAGE_NAME=elasticdump-rs IMAGE_TAG=0.1.0
+
+# podman
+podman run --rm -v "$PWD/dumps:/data:Z" localhost/elasticdump-rs:0.1.0 \
+  --input=http://es:9200/my_index --output=/data/my_index.json --type=data
+# docker (same image, Node-style entrypoint name)
+docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/elasticdump-rs:0.1.0 \
+  --input=/data/my_index.json --output=http://es:9200/my_index --type=data
+```
+
+Nothing in the Makefile pushes; tag and push yourself if you want the image in a registry.
+Mounted host directories must be writable by uid 65532 (or use `--user`).
+
 ## Reliability
 
 * Partial search results (`timed_out`, failed shards) are errors, not silently written.
