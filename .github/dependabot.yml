@@ -1,0 +1,7 @@
+# Keep SHA-pinned actions current (F-02). Cargo updates stay manual
+# (reviewed against cargo-deny/cargo-vet).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

@@ -4,6 +4,9 @@ name: release-build
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   musl:
     runs-on: ubuntu-24.04
@@ -12,22 +15,26 @@ jobs:
       matrix:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.1
-        with: { targets: "${{ matrix.target }}" }
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1, targets: "${{ matrix.target }}" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "${{ matrix.target }}" }
       # zig provides the C cross-compiler for zstd-sys / ring.
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
         with: { version: 0.13.0 }
-      - run: cargo install cargo-zigbuild --locked
-      - run: cargo zigbuild --release --target ${{ matrix.target }}
-      - run: |
-          f=target/${{ matrix.target }}/release/elasticdump-rs
+      # pinned: 0.21.8 is the newest release whose MSRV (1.85) matches the toolchain
+      - run: cargo install cargo-zigbuild --locked --version 0.21.8
+      - run: cargo zigbuild --release --target "$TARGET"
+        env: { TARGET: "${{ matrix.target }}" }
+      - env: { TARGET: "${{ matrix.target }}" }
+        run: |
+          f="target/$TARGET/release/elasticdump-rs"
           file "$f"
-          tar czf elasticdump-rs-${{ matrix.target }}.tar.gz -C "$(dirname "$f")" elasticdump-rs
-          sha256sum elasticdump-rs-${{ matrix.target }}.tar.gz > elasticdump-rs-${{ matrix.target }}.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
+          tar czf "elasticdump-rs-$TARGET.tar.gz" -C "$(dirname "$f")" elasticdump-rs
+          sha256sum "elasticdump-rs-$TARGET.tar.gz" > "elasticdump-rs-$TARGET.tar.gz.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: elasticdump-rs-${{ matrix.target }}
           path: elasticdump-rs-${{ matrix.target }}.tar.gz*

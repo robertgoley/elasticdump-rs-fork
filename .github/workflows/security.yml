@@ -9,6 +9,8 @@ on:
     inputs:
       base:
         description: "Image bases: dhi (default; dhi.io Alpine), dhi-debian, alpine (public), debian (public)"
+        type: choice
+        options: [dhi, dhi-debian, alpine, debian]
         default: dhi
   schedule:
     - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
@@ -20,33 +22,50 @@ jobs:
   dependencies:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.1
-      - uses: taiki-e/install-action@v2
-        with: { tool: "cargo-audit,cargo-deny,cargo-cyclonedx" }
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with: { tool: "cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-cyclonedx@0.5.9" }
       # any vulnerability, or an unmaintained/unsound/yanked warning, fails the job
       - run: cargo audit --deny warnings
       - run: cargo deny check advisories bans licenses sources
       - run: cargo cyclonedx --format json --override-filename sbom-cargo.cdx
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: sbom-cargo, path: "sbom-cargo.cdx.json" }
 
   image:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install scanners
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      # F-01: pinned scanner releases, SHA-256 checked (no `curl | sh`).
+      - name: Install scanners (pinned, checksum-verified)
+        env:
+          GRYPE_URL: https://github.com/anchore/grype/releases/download/v0.121.0/grype_0.121.0_linux_amd64.tar.gz
+          GRYPE_SHA256: 64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519
+          SYFT_URL: https://github.com/anchore/syft/releases/download/v1.55.0/syft_1.55.0_linux_amd64.tar.gz
+          SYFT_SHA256: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
+          TRIVY_URL: https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
+          TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          set -euo pipefail
+          fetch() {
+            curl -fsSL -o "/tmp/$1.tgz" "$2"
+            echo "$3  /tmp/$1.tgz" | sha256sum -c -
+            sudo tar -C /usr/local/bin -xzf "/tmp/$1.tgz" "$1"
+          }
+          fetch grype "$GRYPE_URL" "$GRYPE_SHA256"
+          fetch syft "$SYFT_URL" "$SYFT_SHA256"
+          fetch trivy "$TRIVY_URL" "$TRIVY_SHA256"
       # The default target is the dhi.io image (`make image`). Docker Hardened
       # Images need a pull login: add repository secrets DHI_USERNAME (Docker
       # ID) and DHI_TOKEN (a read-only/pull access token). No values live in
       # this repo; the login is pull-only and never reaches an image layer.
       # Without the secrets, run manually with base=alpine (public bases).
       - name: Log in to dhi.io (pull only)
-        if: startsWith(github.event.inputs.base || 'dhi', 'dhi')
+        if: startsWith(inputs.base || 'dhi', 'dhi')
         env:
           DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
           DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
@@ -56,13 +75,18 @@ jobs:
             exit 1
           fi
           printf '%s' "$DHI_TOKEN" | podman login dhi.io -u "$DHI_USERNAME" --password-stdin
+      # F-09: the dispatch input reaches the shell only through env and an
+      # allow-list.
       - name: Build image (local only)
+        env:
+          BASE: ${{ inputs.base || 'dhi' }}
         run: |
-          case "${{ github.event.inputs.base || 'dhi' }}" in
+          case "$BASE" in
             dhi) make image CONTAINER=podman ;;
             dhi-debian) make image-dhi-debian CONTAINER=podman ;;
             debian) make image-public CONTAINER=podman ;;
-            *) make image-alpine CONTAINER=podman ;;
+            alpine) make image-alpine CONTAINER=podman ;;
+            *) echo "::error::unknown base '$BASE' (allowed: dhi, dhi-debian, alpine, debian)"; exit 1 ;;
           esac
       - run: make test-image CONTAINER=podman
       - name: SBOM (CycloneDX + SPDX)
@@ -70,7 +94,7 @@ jobs:
       - name: grype + trivy (fail on HIGH/CRITICAL)
         run: make scan CONTAINER=podman
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: sbom-image, path: "sbom-image.*.json" }
       - if: always()
         run: podman logout dhi.io || true

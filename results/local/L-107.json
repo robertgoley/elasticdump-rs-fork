@@ -1,0 +1,13 @@
+{
+  "task": "L-107",
+  "requirements": ["F-01", "F-02", "F-03", "F-09", "F-10", "SUP-013"],
+  "status": "done (static); runtime verification needs a CI runner (local fork, no push)",
+  "changes": {
+    "F-01": "security.yml installs grype 0.121.0, syft 1.55.0, trivy 0.76.1 from release tarballs with SHA-256 from the projects' checksum files; no curl|sh",
+    "F-02": "every action pinned to a full commit SHA with a version comment (checkout v4.3.1, upload-artifact v4.6.2, rust-cache v2.9.3, install-action v2.88.0, setup-zig v1.2.2, rust-toolchain 1.85.1 branch head with explicit toolchain input); .github/dependabot.yml for github-actions",
+    "F-03": "permissions: contents: read in ci.yml, release.yml, security.yml; persist-credentials: false on every checkout",
+    "F-09": "dispatch input is type: choice and reaches the shell only via env BASE with an allow-list case; matrix.profile/matrix.target also via env",
+    "F-10": "cargo install cargo-zigbuild --locked --version 0.21.8 (newest with MSRV 1.85); Zig 0.13.0 via SHA-pinned setup-zig (which verifies minisign signatures); install-action tools pinned (cargo-audit@0.22.2, cargo-deny@0.20.2, cargo-cyclonedx@0.5.9)"
+  },
+  "lint": "scripts/lint-workflows.sh: actionlint 1.7.12 clean; zizmor 1.31.1 --min-severity low: no findings (pedantic: 3 concurrency-limits help items only)"
+}
