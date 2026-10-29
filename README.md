@@ -232,6 +232,10 @@ Debian 13 (glibc 2.41), so the dynamically linked binary matches the runtime lib
 | `BUILDER_IMAGE` / `BUILDER_TAG` | `dhi.io/rust` / `1.99.1-debian13-dev` | `docker.io/library/rust` / `1.99-trixie` |
 | `BASE_IMAGE` / `BASE_TAG` | `dhi.io/debian-base` / `trixie-debian13-dev` | `docker.io/library/debian` / `trixie-slim` |
 
+A third build, `make image-alpine`, uses `rust:1.99.1-alpine3.24` → `alpine:3.24.3` (musl on both sides, `bash`
+added with apk, ~20 MB). It is the recommended public option: 0 HIGH/CRITICAL CVEs at the last scan, versus 54 HIGH
+(all unfixable in Debian) for `trixie-slim`. Details in [SECURITY-CVE.md](SECURITY-CVE.md).
+
 `dhi.io` (Docker Hardened Images) needs a login (`docker login dhi.io` or `podman login dhi.io`
 with a Docker account); anonymous pulls return `authentication required`. The `-dev` runtime
 variant is used on purpose so `bash` and coreutils are available for wrapper scripts.
@@ -244,6 +248,7 @@ base name).
 ```bash
 make image                 # dhi.io bases (after `podman login dhi.io`)
 make image-public          # public Debian 13 bases, no login
+make image-alpine          # public Alpine/musl bases, no login, fewest CVEs
 make test-image            # --version, --help, bash present, non-root, symlink, CA bundle
 make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL)
 make image REGISTRY=registry.example.com/team IMAGE_NAME=elasticdump-rs IMAGE_TAG=0.1.0

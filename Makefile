@@ -69,9 +69,9 @@ test-image:
 save:
 	$(CONTAINER) save -o image.tar $(IMAGE)
 
-sbom:
-	syft $(IMAGE) -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
+sbom: save
+	syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
 
-scan:
-	grype $(IMAGE) --fail-on high
-	trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed=false $(IMAGE)
+scan: save
+	grype docker-archive:image.tar --fail-on high
+	trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1

@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Image bases: public (docker.io Debian 13) or dhi (needs DHI_USERNAME/DHI_TOKEN secrets)"
-        default: public
+        description: "Image bases: alpine (public, musl), debian (public Debian 13), dhi (needs DHI_USERNAME/DHI_TOKEN secrets)"
+        default: alpine
   schedule:
     - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
 
@@ -44,15 +44,17 @@ jobs:
         if: github.event.inputs.base == 'dhi'
         run: echo "${{ secrets.DHI_TOKEN }}" | podman login dhi.io -u "${{ secrets.DHI_USERNAME }}" --password-stdin
       - name: Build image (local only)
-        run: make ${{ github.event.inputs.base == 'dhi' && 'image' || 'image-public' }} CONTAINER=podman
+        run: |
+          case "${{ github.event.inputs.base || 'alpine' }}" in
+            dhi) make image CONTAINER=podman ;;
+            debian) make image-public CONTAINER=podman ;;
+            *) make image-alpine CONTAINER=podman ;;
+          esac
       - run: make test-image CONTAINER=podman
-      - run: make save CONTAINER=podman
-      - name: SBOM
-        run: syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
-      - name: grype (fail on HIGH/CRITICAL)
-        run: grype docker-archive:image.tar --fail-on high
-      - name: trivy (fail on HIGH/CRITICAL)
-        run: trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1
+      - name: SBOM (CycloneDX + SPDX)
+        run: make sbom CONTAINER=podman
+      - name: grype + trivy (fail on HIGH/CRITICAL)
+        run: make scan CONTAINER=podman
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: sbom-image, path: "sbom-image.*.json" }
