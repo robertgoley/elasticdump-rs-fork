@@ -19,7 +19,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 | 2026-10-29 | c620b80 | trivy | `make image-alpine` | **0** (all severities) |
 | 2026-10-29 | ae2531f | grype | `make image-public` (rust:1.99-trixie → debian:trixie-slim) | 54 High, 47 Medium, 10 Low, 46 Negligible (157 matches, 0 fixable) |
 | 2026-10-29 | ae2531f | trivy | `make image-public` | 43 HIGH, 58 MEDIUM, 60 LOW, 1 UNKNOWN (162) |
-| 2026-10-29 | 9b-dhi (this commit) | grype DB v6.1.10 + trivy | `make image` (**default**: dhi.io/rust:1.99.0-alpine3.23-dev → dhi.io/alpine-base:3.24-alpine3.24-dev) | **0 at every severity** in both scanners |
+| 2026-10-29 | d36b906 | grype DB v6.1.10 + trivy | `make image` (**default**: dhi.io/rust:1.99.0-alpine3.23-dev → dhi.io/alpine-base:3.24-alpine3.24-dev) | **0 at every severity** in both scanners |
 | 2026-10-29 | fb46cea | grype | `make image-dhi-debian` (dhi.io/rust:1.99.1-debian13-dev → dhi.io/debian-base:trixie-debian13-dev), the default before this change, scanned before any fix | 284 raw matches. grype reports every package twice, from `/var/lib/dpkg/status` and from DHI's `status.d`; deduplicated: 44 High, 46 Medium, 10 Low, 42 Negligible (142 package matches). Distinct CVEs: 15 High, 24 Medium, 6 Low, 25 Negligible. 0 fixable |
 | 2026-10-29 | fb46cea | trivy | `make image-dhi-debian` | 33 HIGH, 56 MEDIUM, 54 LOW, 1 UNKNOWN (144). Distinct CVEs: 9 HIGH, 30 MEDIUM, 32 LOW, 1 UNKNOWN. 0 fixable |
 
