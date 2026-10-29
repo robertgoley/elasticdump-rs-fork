@@ -92,3 +92,28 @@ Every non-default feature enabled in `Cargo.toml` is listed below with its reaso
 | flate2 | `zlib-rs` (no default) | pure-Rust deflate; no `libz-sys` (banned) |
 | zstd | no default features | no legacy/zdict builder; the `zstd-sys` C code is on the native allow-list |
 | regex | `std`, `unicode-perl`, `unicode-case` (no default) | template/rename patterns with `\w`/`\d` and `(?i)`; the rest of the Unicode tables and the perf features are off |
+
+## Build-time code (SUP-009, L-206)
+
+### Inventory
+
+`supply-chain/build-inventory.json` lists every package that runs code at build time: build scripts and proc macros.
+
+- **All of Cargo.lock:** 45 build scripts and 18 proc macros.
+- **Shipped graph:** normal and build dependencies of `elasticdump-rs` on x86_64/aarch64 Linux, 32 build scripts and 14 proc macros. This is an over-approximation: `cargo metadata` unifies features across the workspace.
+
+Each entry is pinned as `name@version` and carries a review note.
+
+### Gate
+
+`scripts/sup/build-inventory.py` runs on every PR. It fails when a build script or proc macro is new to the shipped graph, or when such a package changes version. After review, refresh the baseline with `--update`.
+
+### Network-less build
+
+`scripts/sup/offline-build.sh` builds without network access:
+
+1. It vendors the dependencies on the host. This is the only step that downloads anything.
+2. It runs `cargo build --offline --locked --release` in `podman run --network none`, with the sources and the vendor directory mounted read-only.
+3. Before building, a probe inside the sandbox checks that DNS and TCP really fail.
+
+Verified locally on 2026-10-29 with `rust:1.99-trixie`: the probe showed the network unreachable, and the build succeeded in 2m01s. No build script needs the network.

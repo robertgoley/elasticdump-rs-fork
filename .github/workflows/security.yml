@@ -3,6 +3,7 @@ name: security
 # Nothing is published: no registry login for pushing, no `push`, only
 # workflow artifacts (SBOMs and scan reports).
 on:
+  pull_request:
   push:
     branches: [main, rewrite]
   workflow_dispatch:
@@ -128,3 +129,14 @@ jobs:
       - run: cargo llvm-cov --no-report nextest -p elasticdump-rs --features load --profile contract
       - run: cargo llvm-cov report -p elasticdump-rs --json --output-path cov.json
       - run: scripts/sup/uncovered.py cov.json --root "$PWD" >> "$GITHUB_STEP_SUMMARY"
+
+  # L-206 / SUP-009: build-time code inventory gate + release build with --network none.
+  offline-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - run: scripts/sup/build-inventory.py
+      - run: scripts/sup/offline-build.sh

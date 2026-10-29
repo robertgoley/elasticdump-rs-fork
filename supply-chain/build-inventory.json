@@ -1,0 +1,384 @@
+{
+ "all": {
+  "ahash@0.8.12": [
+   "build.rs"
+  ],
+  "anyhow@1.0.104": [
+   "build.rs"
+  ],
+  "clap_derive@4.6.7": [
+   "proc-macro"
+  ],
+  "const-random-macro@0.1.16": [
+   "proc-macro"
+  ],
+  "crc32fast@1.5.3": [
+   "build.rs"
+  ],
+  "crunchy@0.2.4": [
+   "build.rs"
+  ],
+  "defmt-macros@1.2.0": [
+   "build.rs",
+   "proc-macro"
+  ],
+  "defmt@1.2.0": [
+   "build.rs"
+  ],
+  "displaydoc@0.2.7": [
+   "proc-macro"
+  ],
+  "generic-array@0.14.7": [
+   "build.rs"
+  ],
+  "getrandom@0.3.4": [
+   "build.rs"
+  ],
+  "getrandom@0.4.3": [
+   "build.rs"
+  ],
+  "httparse@1.10.1": [
+   "build.rs"
+  ],
+  "icu_normalizer_data@2.1.1": [
+   "build.rs"
+  ],
+  "icu_properties_data@2.1.2": [
+   "build.rs"
+  ],
+  "jiff-static@0.2.38": [
+   "proc-macro"
+  ],
+  "libc@0.2.191": [
+   "build.rs"
+  ],
+  "munge_macro@0.4.7": [
+   "proc-macro"
+  ],
+  "parking_lot_core@0.9.12": [
+   "build.rs"
+  ],
+  "portable-atomic-util@0.2.8": [
+   "build.rs"
+  ],
+  "portable-atomic@1.15.0": [
+   "build.rs"
+  ],
+  "proc-macro2@1.0.107": [
+   "build.rs"
+  ],
+  "ptr_meta_derive@0.3.2": [
+   "proc-macro"
+  ],
+  "quinn-udp@0.5.16": [
+   "build.rs"
+  ],
+  "quinn@0.11.12": [
+   "build.rs"
+  ],
+  "quote@1.0.47": [
+   "build.rs"
+  ],
+  "ref-cast-impl@1.0.27": [
+   "proc-macro"
+  ],
+  "ref-cast@1.0.27": [
+   "build.rs"
+  ],
+  "ring@0.17.14": [
+   "build.rs"
+  ],
+  "rkyv_derive@0.8.18": [
+   "proc-macro"
+  ],
+  "rustix@1.1.6": [
+   "build.rs"
+  ],
+  "rustls@0.23.46": [
+   "build.rs"
+  ],
+  "rustversion@1.0.23": [
+   "build.rs",
+   "proc-macro"
+  ],
+  "serde@1.0.229": [
+   "build.rs"
+  ],
+  "serde_core@1.0.229": [
+   "build.rs"
+  ],
+  "serde_derive@1.0.229": [
+   "proc-macro"
+  ],
+  "serde_json@1.0.154": [
+   "build.rs"
+  ],
+  "thiserror-impl@2.0.21": [
+   "proc-macro"
+  ],
+  "thiserror@2.0.21": [
+   "build.rs"
+  ],
+  "tiny-keccak@2.0.2": [
+   "build.rs"
+  ],
+  "tokio-macros@2.7.2": [
+   "proc-macro"
+  ],
+  "wasm-bindgen-macro@0.2.129": [
+   "proc-macro"
+  ],
+  "wasm-bindgen-shared@0.2.129": [
+   "build.rs"
+  ],
+  "wasm-bindgen@0.2.129": [
+   "build.rs"
+  ],
+  "windows_aarch64_gnullvm@0.52.6": [
+   "build.rs"
+  ],
+  "windows_aarch64_msvc@0.52.6": [
+   "build.rs"
+  ],
+  "windows_i686_gnu@0.52.6": [
+   "build.rs"
+  ],
+  "windows_i686_gnullvm@0.52.6": [
+   "build.rs"
+  ],
+  "windows_i686_msvc@0.52.6": [
+   "build.rs"
+  ],
+  "windows_x86_64_gnu@0.52.6": [
+   "build.rs"
+  ],
+  "windows_x86_64_gnullvm@0.52.6": [
+   "build.rs"
+  ],
+  "windows_x86_64_msvc@0.52.6": [
+   "build.rs"
+  ],
+  "wit-bindgen@0.46.0": [
+   "build.rs"
+  ],
+  "yoke-derive@0.8.4": [
+   "proc-macro"
+  ],
+  "zerocopy-derive@0.8.63": [
+   "proc-macro"
+  ],
+  "zerocopy@0.8.63": [
+   "build.rs"
+  ],
+  "zerofrom-derive@0.1.8": [
+   "proc-macro"
+  ],
+  "zerovec-derive@0.11.7": [
+   "proc-macro"
+  ],
+  "zmij@1.0.23": [
+   "build.rs"
+  ],
+  "zstd-safe@8.2.0": [
+   "build.rs"
+  ],
+  "zstd-sys@2.1.2+zstd.1.5.7": [
+   "build.rs"
+  ]
+ },
+ "counts": {
+  "all": {
+   "build.rs": 45,
+   "proc-macro": 18
+  },
+  "linux": {
+   "build.rs": 32,
+   "proc-macro": 14
+  }
+ },
+ "linux": {
+  "ahash@0.8.12": [
+   "build.rs"
+  ],
+  "anyhow@1.0.104": [
+   "build.rs"
+  ],
+  "clap_derive@4.6.7": [
+   "proc-macro"
+  ],
+  "const-random-macro@0.1.16": [
+   "proc-macro"
+  ],
+  "crc32fast@1.5.3": [
+   "build.rs"
+  ],
+  "crunchy@0.2.4": [
+   "build.rs"
+  ],
+  "defmt-macros@1.2.0": [
+   "build.rs",
+   "proc-macro"
+  ],
+  "defmt@1.2.0": [
+   "build.rs"
+  ],
+  "displaydoc@0.2.7": [
+   "proc-macro"
+  ],
+  "generic-array@0.14.7": [
+   "build.rs"
+  ],
+  "getrandom@0.3.4": [
+   "build.rs"
+  ],
+  "getrandom@0.4.3": [
+   "build.rs"
+  ],
+  "httparse@1.10.1": [
+   "build.rs"
+  ],
+  "icu_normalizer_data@2.1.1": [
+   "build.rs"
+  ],
+  "icu_properties_data@2.1.2": [
+   "build.rs"
+  ],
+  "libc@0.2.191": [
+   "build.rs"
+  ],
+  "munge_macro@0.4.7": [
+   "proc-macro"
+  ],
+  "parking_lot_core@0.9.12": [
+   "build.rs"
+  ],
+  "portable-atomic@1.15.0": [
+   "build.rs"
+  ],
+  "proc-macro2@1.0.107": [
+   "build.rs"
+  ],
+  "ptr_meta_derive@0.3.2": [
+   "proc-macro"
+  ],
+  "quinn-udp@0.5.16": [
+   "build.rs"
+  ],
+  "quinn@0.11.12": [
+   "build.rs"
+  ],
+  "quote@1.0.47": [
+   "build.rs"
+  ],
+  "ref-cast-impl@1.0.27": [
+   "proc-macro"
+  ],
+  "ref-cast@1.0.27": [
+   "build.rs"
+  ],
+  "ring@0.17.14": [
+   "build.rs"
+  ],
+  "rkyv_derive@0.8.18": [
+   "proc-macro"
+  ],
+  "rustix@1.1.6": [
+   "build.rs"
+  ],
+  "rustls@0.23.46": [
+   "build.rs"
+  ],
+  "serde@1.0.229": [
+   "build.rs"
+  ],
+  "serde_core@1.0.229": [
+   "build.rs"
+  ],
+  "serde_derive@1.0.229": [
+   "proc-macro"
+  ],
+  "serde_json@1.0.154": [
+   "build.rs"
+  ],
+  "thiserror-impl@2.0.21": [
+   "proc-macro"
+  ],
+  "thiserror@2.0.21": [
+   "build.rs"
+  ],
+  "tiny-keccak@2.0.2": [
+   "build.rs"
+  ],
+  "tokio-macros@2.7.2": [
+   "proc-macro"
+  ],
+  "yoke-derive@0.8.4": [
+   "proc-macro"
+  ],
+  "zerocopy@0.8.63": [
+   "build.rs"
+  ],
+  "zerofrom-derive@0.1.8": [
+   "proc-macro"
+  ],
+  "zerovec-derive@0.11.7": [
+   "proc-macro"
+  ],
+  "zmij@1.0.23": [
+   "build.rs"
+  ],
+  "zstd-safe@8.2.0": [
+   "build.rs"
+  ],
+  "zstd-sys@2.1.2+zstd.1.5.7": [
+   "build.rs"
+  ]
+ },
+ "reviewed": {
+  "ahash@0.8.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "anyhow@1.0.104": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "clap_derive@4.6.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "const-random-macro@0.1.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "crc32fast@1.5.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "crunchy@0.2.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "defmt-macros@1.2.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "defmt@1.2.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "displaydoc@0.2.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "generic-array@0.14.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "getrandom@0.3.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "getrandom@0.4.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "httparse@1.10.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "icu_normalizer_data@2.1.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "icu_properties_data@2.1.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "libc@0.2.191": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "munge_macro@0.4.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "parking_lot_core@0.9.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "portable-atomic@1.15.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "proc-macro2@1.0.107": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "ptr_meta_derive@0.3.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "quinn-udp@0.5.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "quinn@0.11.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "quote@1.0.47": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "ref-cast-impl@1.0.27": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "ref-cast@1.0.27": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "ring@0.17.14": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "rkyv_derive@0.8.18": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "rustix@1.1.6": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "rustls@0.23.46": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "serde@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "serde_core@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "serde_derive@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "serde_json@1.0.154": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "thiserror-impl@2.0.21": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "thiserror@2.0.21": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "tiny-keccak@2.0.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "tokio-macros@2.7.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "yoke-derive@0.8.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zerocopy@0.8.63": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zerofrom-derive@0.1.8": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zerovec-derive@0.11.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zmij@1.0.23": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zstd-safe@8.2.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "zstd-sys@2.1.2+zstd.1.5.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)"
+ }
+}
