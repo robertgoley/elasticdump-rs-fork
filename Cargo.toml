@@ -49,6 +49,7 @@ tokio-util = "0.7"
 percent-encoding = "2"
 
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 serde_json = "1.0"
 lipsum = "0.9"
@@ -57,8 +58,25 @@ tempfile = "3"
 [features]
 large_scale_test = []
 manual_test = []
+# Podman-backed integration suite (tests/it); see scripts/it/run.sh.
+it = []
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+required-features = ["it"]
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = "symbols"
+
+# Lighter optimized profile for integration runs and CI: no LTO, parallel
+# codegen. Keeps peak build memory low enough to run next to OpenSearch.
+[profile.it]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = "none"
+debug = false
+incremental = true

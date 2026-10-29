@@ -1,0 +1,130 @@
+## 3. Parity matrix
+
+Legend:
+* **Status** (elasticdump-rs today): ✅ done · 🟡 partial · ❌ missing · ➖ N/A or out of scope.
+* **Ms**: the milestone that delivers it.
+* "Default" is elasticdump's default.
+
+### 3.1 Core, endpoints and types
+
+| elasticdump option | Default | Status | Planned Rust implementation | Ms |
+|---|---|---|---|---|
+| `--input` | required | 🟡 ES URL only | `Endpoint::parse` → `Es{…}` (http/https), `Stdio` (`$`), `File(path)`. Host-only URL = all indices (`/_search`, `/_mapping`, `/_settings`) | M1 |
+| `--output` | required | 🟡 file/stdout | Same enum. ES output via `BulkSink` / `MappingSink` / `SettingsSink` | M1–M3 |
+| `--input-index` / `--output-index` | from URL | ❌ | `index[/type]` override; `type` used only for ES < 7 | M1 |
+| `--type data` | data | ✅ | keep | – |
+| `--type mapping` | – | ❌ | `MappingSource`/`MappingSink` (§6.4) | M3 |
+| `--type settings` | – | ❌ | `SettingsSource`/`SettingsSink` (§6.5) | M3 |
+| `--type index` | – | ❌ | *Stretch*: `GET /{idx}` → `PUT /{idx}` (settings+mappings+aliases), reusing the settings code | M6 (opt) |
+| `--overwrite` | false | ✅ | Keep the staged atomic writer. Also applies to split parts | – |
+| `--prefix` / `--suffix` | '' | ❌ | Applied to the output index name only | M2 |
+| `--help` / `--version` | – | ✅ (clap) | Also add elasticdump-style long help text | M1 |
+| `--debug` | false | ✅ | Also log each ES request line (method, redacted URL), like Node | M1 |
+| `--quiet` | false | ✅ | keep | – |
+| `--toLog` | true (false for `$`) | ❌ | Logs always go to stderr, so stdout output is never polluted. Accept the flag; `false` suppresses info logs | M1 |
+| `--format human` | '' | ❌ | Pretty-print each doc. Low priority | M5 |
+
+### 3.2 Data retrieval (ES input)
+
+| Option | Default | Status | Planned | Ms |
+|---|---|---|---|---|
+| `--limit` | 100 | 🟡 default 10000 | Default 100. Page size for ES, batch size for file reads, bulk size for writes | M1 |
+| `--size` | -1 | ❌ (rejected today) | Total cap. Shrink the final page's `size`, then stop and clear the scroll/PIT. With slices: a shared atomic budget, truncating the last batch | M2 |
+| `--offset` | 0 | ❌ | Client-side skip of the first N docs. **Never** send `from=` with scroll (breaks ES 7+/OS). File input: skip N values | M2 |
+| `--searchBody` (+`@file`) | match_all + `stored_fields:["*"]` + `_source:true` | 🟡 no default `stored_fields` | Keep JSON and `@file`. Apply Node's default body when none is given. `@` resolves relative to the CWD. `size` is overridden with `limit` (or with `--size` when smaller) | M1 |
+| `--searchWithTemplate` | false | ❌ | `POST /_render/template {id,params}` → use `template_output` as the search body | M5 |
+| `--searchBodyTemplate` | – | ➖ | Out of scope (JS code). Error | – |
+| `--scrollTime` | 10m | ✅ | keep | – |
+| `--scrollId` | null | ❌ | Resume: skip the initial search and start with `POST /_search/scroll`. Incompatible with slices | M2 |
+| `--scroll-with-post` | false | 🟡 (always POST) | Accepted. Requests stay POST either way (GET with a body breaks some proxies) | M1 |
+| `scrollRetryDelay` (undocumented) | 15000 | ➖ | Accepted and ignored. Partial pages are a hard error in Rust | M1 |
+| `--searchAfter` | false | 🟡 (PIT only) | Without PIT: `search_after` on `{index}/_search`. **Requires a user `sort` with a unique tiebreaker** (error if missing) | M2 |
+| `--pit` | false | 🟡 (`--searchType pit`) | With `--searchAfter` (or `--searchType pit`): flavor-aware PIT (§6.3), reusing the existing shared-PIT slice coordinator | M2 |
+| `--pitKeepAlive` | 5m | 🟡 default 10m | Default 5m | M1 |
+| `--esCompress` (responses) | false | ✅ | keep (`Accept-Encoding: gzip`, transparent decode) | – |
+| `--support-big-int`, `--big-int-fields` | false | ✅ by design | Raw passthrough is lossless in both directions (§6.2). Accepted as no-ops | M1 |
+| `--parseExtraFields` | '' | ❌ | Extra meta fields copied into the bulk action (§6.6) | M2 |
+| `--sourceOnly` | false | ❌ | Write only the raw `_source` bytes | M2 |
+| rs-only `--slices`, `--workers`, `--bufferSize`, `--searchType`, `--requestTimeout`, `--username/--password`, `--caFile`, `--insecure` | – | ✅ | Keep as documented extensions. `--caFile` becomes an alias of `--input-ca` | – |
+
+### 3.3 Data writing (ES output)
+
+| Option | Default | Status | Planned | Ms |
+|---|---|---|---|---|
+| bulk write | – | ❌ | `BulkSink`: NDJSON builder from raw docs, `PUT {index or host}/_bulk` | M2 |
+| `--bulkAction` | index | ❌ | `index` / `create` / `update` (`{"doc":…}`) / `delete` (no body line). Value validated | M2 |
+| `--handleVersion` / `--versionType` | false / null | ❌ | Copy `_version` (or `version`) → `version`; pass `version_type` through | M2 |
+| `--noRefresh` | false | ❌ | Default: `POST {index}/_refresh` after each bulk call (parity). `--noRefresh` skips it | M2 |
+| `--ignore-es-write-errors` | **true** | ❌ | Failed items are logged to stderr as JSON lines and counted. `false` → fail on the first failed item | M2 |
+| `--ignore-errors` | false | ❌ | Batch-level errors (an HTTP failure after retries) are logged and skipped, and the loop continues | M2 |
+| `--skip-existing` | false | ➖ (Node uses it for analyzer only) | Extension: settings/mapping sinks treat `resource_already_exists_exception` as success | M3 |
+| `--esCompress` (requests) | false | ❌ | gzip the bulk body, `Content-Encoding: gzip` | M2 |
+| `--params`, `--input-params`, `--output-params` | null | ❌ | JSON object → query string. Input params go on search/scroll, output params on bulk. `params` is the fallback for both and is also used on `_mapping` GET/PUT | M1 |
+| `--headers`, `--input-headers`, `--output-headers` | `{"User-Agent":"elasticdump"}` | ❌ | Merge order: defaults → `headers` → direction headers. Applied to every request in that direction | M1 |
+
+### 3.4 Files and compression
+
+| Option | Default | Status | Planned | Ms |
+|---|---|---|---|---|
+| file / stdin input (`$`) | – | ❌ | `FileSource`: streaming reader of top-level JSON values (NDJSON fast path, concatenated-JSON fallback), batches of `limit` | M1 |
+| file / stdout output | – | ✅ | Keep the staged writer, generalised behind `Sink` | – |
+| `--fsCompress` | false | ❌ | Write through gzip. Read through gunzip, plus auto-detect the gzip magic `1f 8b` even without the flag (extension; logs a notice) | M4 |
+| `--compressionLevel` | -1 (zlib default 6) | ❌ | 0–9; −1 maps to 6 | M4 |
+| `--fileSize` | -1 | ❌ | `Splitter` sized in uncompressed **bytes** (Node counts UTF-16 units; documented divergence). Same grammar as the `bytes` module (`b,kb,mb,gb,tb,pb`, base 1024, decimals) | M4 |
+| `--maxRows` | -1 | ❌ | `Splitter` by line count | M4 |
+| split naming | `{base}.split-{n}{ext}[.gz]` | ❌ | Identical naming. Each part staged and committed atomically | M4 |
+| reading split sets | n/a in Node | ❌ | Extension: if `--input` is a directory or glob, read the parts in numeric `split-N` order | M4 (opt) |
+
+### 3.5 Auth and TLS
+
+| Option | Default | Status | Planned | Ms |
+|---|---|---|---|---|
+| URL basic auth | – | ✅ | keep (percent-decoding, redacted logs) | – |
+| `ELASTICDUMP_INPUT_USERNAME/PASSWORD`, `ELASTICDUMP_OUTPUT_…` | – | ❌ | Used when the URL has no credentials | M1 |
+| `--httpAuthFile` | null | ❌ | INI `user=`/`password=`. Applies to both endpoints when the URL lacks credentials. Error `Malformed Auth File` | M1 |
+| `--tlsAuth` | false | ❌ | Accepted. Rust **always** honours `--ca/--cert/--key` when given; Node silently ignores them without `--tlsAuth` (divergence). Warn when cert flags are set without `--tlsAuth` | M1 |
+| `--ca`, `--input-ca`, `--output-ca` | null | 🟡 (`--caFile`, input only) | PEM bundle per direction. The shared `--ca` wins over the direction flag when both are set (Node assignment order) | M1 |
+| `--cert` / `--key` (+ input/output) | null | ❌ | PEM client cert chain and key (PKCS#8 / PKCS#1 / SEC1) → rustls client auth | M1 |
+| `--pass` (+ input/output) | null | ❌ | Decrypt an encrypted PKCS#8 key (`pkcs8` crate, `encryption` + `pem`). Legacy `Proc-Type: 4,ENCRYPTED` keys are unsupported: clear error with an `openssl pkcs8 -topk8` hint [uncertain whether users rely on them] | M1 |
+| insecure | via `NODE_TLS_REJECT_UNAUTHORIZED=0` | ✅ (`--insecure`) | Keep `--insecure`, add `--input-insecure`/`--output-insecure`. Also honour `NODE_TLS_REJECT_UNAUTHORIZED=0`, with a loud warning | M1 |
+| AWS SigV4, socks proxy | – | ➖ | Out of scope. Error | – |
+
+### 3.6 Concurrency, throttling, timeouts, retries
+
+| Option | Default | Status | Planned | Ms |
+|---|---|---|---|---|
+| `--concurrency` | 1 | ❌ | Max in-flight **write** batches. File sinks are forced to 1 to keep order | M5 |
+| `--throttleInterval` | 1 ms | ❌ | Sleep after each batch is enqueued for writing | M5 |
+| `--intervalCap` | 5 (dead in Node ≥ 6.119) | ❌ | Rate limiter: at most `intervalCap` request starts per `concurrencyInterval` window (p-queue semantics). **Off unless set explicitly** (Q3) | M5 |
+| `--concurrencyInterval` | 5000 ms (dead) | ❌ | Window length for `intervalCap` | M5 |
+| `--carryoverConcurrencyCount` | true (dead) | ❌ | If true, requests still in flight at a window boundary count against the next window | M5 |
+| `--maxSockets` | ∞ | ❌ | Connection-pool cap plus a global semaphore on in-flight HTTP requests | M5 |
+| `--timeout` | null (ms) | 🟡 (`--requestTimeout`, seconds) | `--timeout` in **ms** (parity). `--requestTimeout` kept as an alias in seconds. `--timeout` wins if both are set | M1 |
+| `--retryAttempts` | 0 | 🟡 | See §6.8 | M5 |
+| `--retryDelay` | 5000 | 🟡 | See §6.8 | M5 |
+| `--retryDelayBase`, `--customBackoff` | – | ➖ (S3 only) | Accepted and ignored | – |
+
+### 3.7 Explicitly out of scope
+
+The following are accepted with a warning, or rejected, according to the policy below:
+
+* the `analyzer`, `alias`, `template`, `component_template`, `index_template`, `policy` and `script` types;
+* CSV (`csv://`, `--csv*`);
+* S3/MinIO (`s3://`, `--s3*`);
+* AWS (`--aws*`, `--sessionToken`);
+* `--transform`, `--searchBodyTemplate`, `--inputTransport`/`--outputTransport`;
+* `multielasticdump`;
+* `--inputSocksProxy/Port` and `--outputSocksProxy/Port`;
+* `--filterSystemTemplates`, `--templateRegex`;
+* `--heapSnapshot`;
+* `--openSearchServerless` and `--force-os-version` (serverless offset/limit mode);
+* `--delete` and `--delete-with-routing` (deferred; see §9);
+* `--jsonLines` (dead in Node: it exists only in the defaults table).
+
+**Policy:**
+* A `--type` outside `data|mapping|settings[|index]` → **error** (exit 2) naming the unsupported type.
+* A flag that only tunes an out-of-scope feature (e.g. `--s3Region`, `--csvDelimiter`, `--templateRegex`) → warning, then ignored, so existing wrapper scripts still run.
+* A flag that would change the data if silently ignored (`--transform`, `--searchBodyTemplate`, `--inputTransport`, `--outputTransport`, `--delete`, s3/csv URLs, AWS signing, socks proxy) → **error**.
+
+---
+

@@ -21,7 +21,14 @@ use url::Url;
 mod support;
 use support::mock_es::{CannedResponse, MockEs};
 
-const ES_URL: &str = "http://localhost:9200";
+/// Target cluster for the live integration suite. Defaults to the historical
+/// `http://localhost:9200`; the podman harness exports `IT_ES_URL`.
+fn es_url() -> &'static str {
+    static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    URL.get_or_init(|| {
+        std::env::var("IT_ES_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
+    })
+}
 const TEST_INDEX_PREFIX: &str = "elasticdump_rs_test";
 
 // Static counter to ensure unique index names for parallel test execution
@@ -50,7 +57,7 @@ fn unique_output_path(label: &str) -> std::path::PathBuf {
 
 // Helper function to wait for Elasticsearch to be available
 async fn wait_for_elasticsearch() -> Result<()> {
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -180,7 +187,7 @@ async fn setup_test_data(test_index: &str) -> Result<()> {
     // Wait for Elasticsearch to be available
     wait_for_elasticsearch().await?;
 
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -325,7 +332,7 @@ fn run_elasticdump_command_capture(args: &[&str]) -> Result<std::process::Output
 
 // Cleanup test data
 async fn cleanup(test_index: &str, output_file: &str) -> Result<()> {
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -355,7 +362,7 @@ async fn test_basic_dump() -> Result<()> {
     // Run the elasticdump-rs command
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--quiet", // Suppress progress bar in tests
@@ -415,7 +422,7 @@ async fn test_filtered_dump() -> Result<()> {
     // Run the elasticdump-rs command with a filter query using --searchBody
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchBody", // Use the new flag name
@@ -466,7 +473,7 @@ async fn test_stdout_output() -> Result<()> {
     let output = binary_command()
         .args([
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             "$",
             "--quiet", // Suppress progress bar in tests
@@ -523,7 +530,7 @@ async fn test_pagination_and_complex_query() -> Result<()> {
     // Run the elasticdump-rs command with a smaller batch size and complex query
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--limit",
@@ -588,7 +595,7 @@ async fn test_scroll_dump_preserves_full_hit_documents() -> Result<()> {
 
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--type",
@@ -634,7 +641,7 @@ async fn test_search_body_from_file() -> Result<()> {
     // Run the elasticdump-rs command using --searchBody=@file
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchBody",
@@ -691,7 +698,7 @@ async fn test_overwrite_flag() -> Result<()> {
     let status = binary_command()
         .args([
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             &output_file,
             "--quiet",
@@ -705,7 +712,7 @@ async fn test_overwrite_flag() -> Result<()> {
     // Run dump with --overwrite
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--overwrite", // Add the overwrite flag
@@ -764,7 +771,7 @@ async fn test_overwrite_preserves_existing_file_on_invalid_search_body() -> Resu
 async fn test_reports_index_not_found_error_for_scroll() -> Result<()> {
     let output = run_elasticdump_command_capture(&[
         "--input",
-        &format!("{}/{}", ES_URL, "definitely_missing_index_review_probe"),
+        &format!("{}/{}", es_url(), "definitely_missing_index_review_probe"),
         "--output",
         "$",
         "--quiet",
@@ -794,7 +801,7 @@ async fn test_reports_index_not_found_error_for_scroll() -> Result<()> {
 async fn test_reports_index_not_found_error_for_pit() -> Result<()> {
     let output = run_elasticdump_command_capture(&[
         "--input",
-        &format!("{}/{}", ES_URL, "definitely_missing_index_review_probe"),
+        &format!("{}/{}", es_url(), "definitely_missing_index_review_probe"),
         "--output",
         "$",
         "--searchType",
@@ -835,7 +842,7 @@ async fn test_performance_benchmark() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Add more documents to test performance with a larger dataset
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -857,7 +864,7 @@ async fn test_performance_benchmark() -> Result<()> {
     // Run with a larger batch size for better performance
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--limit",
@@ -909,7 +916,7 @@ async fn test_large_scale_performance() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Add more documents to test performance with a larger dataset
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -931,7 +938,7 @@ async fn test_large_scale_performance() -> Result<()> {
     // Run with a larger batch size for better performance
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--limit",
@@ -983,7 +990,7 @@ async fn test_sliced_scroll() -> Result<()> {
     // Run elasticdump-rs with slices=4
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--slices",
@@ -1053,7 +1060,7 @@ async fn test_sliced_scroll_with_query() -> Result<()> {
     // Run elasticdump-rs with slices=3 and a query to get only even-tagged documents
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--slices",
@@ -1109,7 +1116,7 @@ async fn test_slices_performance_comparison() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Then add more documents for a total of 10000
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -1131,7 +1138,7 @@ async fn test_slices_performance_comparison() -> Result<()> {
 
     for &slices in &slice_configs {
         let output_file = format!("{}_{}_slices.jsonl", output_file_base, slices);
-        let formatted_url = format!("{}/{}", ES_URL, test_index);
+        let formatted_url = format!("{}/{}", es_url(), test_index);
         println!(
             "Running performance test with {} slices...",
             if slices == 0 {
@@ -1230,7 +1237,7 @@ async fn test_basic_pit() -> Result<()> {
     // Run the elasticdump-rs command with PIT
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchType",
@@ -1291,7 +1298,7 @@ async fn test_basic_pit_still_dumps_all_documents_with_streaming_extractor() -> 
 
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchType",
@@ -1336,7 +1343,7 @@ async fn test_pit_with_query() -> Result<()> {
     // Run the elasticdump-rs command with PIT and a query
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchType",
@@ -1391,7 +1398,7 @@ async fn test_sliced_pit() -> Result<()> {
     // Run the elasticdump-rs command with PIT and slices
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchType",
@@ -1456,7 +1463,7 @@ async fn test_compare_scroll_vs_pit() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Add more documents
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -1478,7 +1485,7 @@ async fn test_compare_scroll_vs_pit() -> Result<()> {
 
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &scroll_output,
         "--searchType",
@@ -1499,7 +1506,7 @@ async fn test_compare_scroll_vs_pit() -> Result<()> {
 
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &pit_output,
         "--searchType",
@@ -1559,7 +1566,7 @@ async fn test_sliced_pit_large_dataset() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Add more documents
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -1578,7 +1585,7 @@ async fn test_sliced_pit_large_dataset() -> Result<()> {
     // Run the elasticdump-rs command with PIT and slices
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--searchType",
@@ -1647,7 +1654,7 @@ async fn test_create_data_for_manual_testing() -> Result<()> {
     setup_test_data(&test_index).await?;
 
     // Add more documents to have a more realistic test dataset
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -1669,7 +1676,7 @@ async fn test_create_data_for_manual_testing() -> Result<()> {
     println!("Run elasticdump-rs with:");
     println!(
         "cargo run -- --input {}/{} --output <your_output_file>",
-        ES_URL, test_index
+        es_url(), test_index
     );
     println!("=============================================\n");
 
@@ -1689,7 +1696,7 @@ async fn test_dump_correctness() -> Result<()> {
     // Run the elasticdump-rs command for a basic dump
     run_elasticdump_command(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         &output_file,
         "--quiet", // Suppress progress bar in tests
@@ -1748,7 +1755,7 @@ async fn test_dump_correctness() -> Result<()> {
     println!("Verified {} unique documents in output file.", line_count);
 
     // 3. Connect to Elasticsearch and verify each document's content
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url.clone());
     let transport = TransportBuilder::new(conn_pool).build()?;
     let client = Elasticsearch::new(transport);
@@ -1812,7 +1819,7 @@ async fn test_dump_correctness() -> Result<()> {
 
 /// A bare Elasticsearch client against the live test node.
 async fn es_client() -> Result<Elasticsearch> {
-    let url = Url::parse(ES_URL)?;
+    let url = Url::parse(es_url())?;
     let conn_pool = SingleNodeConnectionPool::new(url);
     let transport = TransportBuilder::new(conn_pool).build()?;
     Ok(Elasticsearch::new(transport))
@@ -1949,7 +1956,7 @@ async fn test_slices_one_runs_unsliced() -> Result<()> {
 
         let output = run_elasticdump_command_capture(&[
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             output_file,
             "--searchType",
@@ -1989,7 +1996,7 @@ async fn test_failed_dump_preserves_existing_output() -> Result<()> {
     let missing_index = format!("elasticdump_rs_missing_{}", std::process::id());
     let output = run_elasticdump_command_capture(&[
         "--input",
-        &format!("{}/{}", ES_URL, missing_index),
+        &format!("{}/{}", es_url(), missing_index),
         "--output",
         dest.to_str().unwrap(),
         "--overwrite",
@@ -2027,7 +2034,7 @@ async fn test_empty_index_dump() -> Result<()> {
 
         let output = run_elasticdump_command_capture(&[
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             output_file,
             "--searchType",
@@ -2068,7 +2075,7 @@ async fn test_backpressure_matrix() -> Result<()> {
 
         let output = run_elasticdump_command_capture(&[
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             output_file,
             "--searchType",
@@ -2110,7 +2117,7 @@ async fn test_stdout_is_pure_jsonl_with_progress_enabled() -> Result<()> {
     // Deliberately omit --quiet so progress bars are active.
     let output = run_elasticdump_command_capture(&[
         "--input",
-        &format!("{}/{}", ES_URL, test_index),
+        &format!("{}/{}", es_url(), test_index),
         "--output",
         "$",
     ])?;
@@ -2155,7 +2162,7 @@ async fn test_stdout_broken_pipe_exits_zero() -> Result<()> {
     let mut child = binary_command()
         .args([
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             "$",
             "--quiet",
@@ -2287,7 +2294,7 @@ async fn test_adversarial_documents_roundtrip() -> Result<()> {
 
         let output = run_elasticdump_command_capture(&[
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             output_file,
             "--searchType",
@@ -2346,7 +2353,7 @@ async fn test_sigint_cleans_up_staging() -> Result<()> {
     let mut child = binary_command()
         .args([
             "--input",
-            &format!("{}/{}", ES_URL, test_index),
+            &format!("{}/{}", es_url(), test_index),
             "--output",
             &dest_str,
             "--limit",

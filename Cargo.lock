@@ -361,6 +361,7 @@ dependencies = [
  "lipsum",
  "log",
  "percent-encoding",
+ "reqwest",
  "serde_json",
  "sonic-rs",
  "tempfile",

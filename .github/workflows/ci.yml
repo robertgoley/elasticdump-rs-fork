@@ -1,0 +1,38 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main, rewrite]
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --lib --bins
+      - run: cargo test --test cli_contract
+
+  it:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os_tag: ["2", "3"]
+        profile: [opensearch-plain, opensearch-secure]
+    env:
+      OS_TAG: ${{ matrix.os_tag }}
+      IT_DIR: /tmp/edrs-it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+      - uses: Swatinem/rust-cache@v2
+      - run: podman --version
+      - run: scripts/it/run.sh ${{ matrix.profile }}
+      - if: failure()
+        run: podman ps -a; for c in $(podman ps -aq); do podman logs --tail 200 $c; done
