@@ -1,0 +1,4 @@
+test inj_f2_alias_wildcard_is_rejected ... FAILED
+test inj_f2_bad_names_from_files_send_nothing ... FAILED
+test inj_f2_analyzer_wildcard_never_closes_indices ... FAILED
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.03s

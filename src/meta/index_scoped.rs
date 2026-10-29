@@ -465,6 +465,10 @@ pub(crate) async fn close_put_open(
     settings: &Value,
     opts: &MetaOptions,
 ) -> Result<()> {
+    // Only ever close ONE concrete index: never `*`, `_all` or `a,b`
+    // (INJ-F2, TST-INJ-016).
+    crate::rename::validate_index_name(target)
+        .map_err(|e| anyhow::anyhow!("refusing to close '{target}': {e}"))?;
     send_json(
         client,
         opts.retry,

@@ -40,7 +40,7 @@ impl RetrievalContext {
         &self,
         scroll_ttl: &str,
         body: Body,
-    ) -> Result<reqwest::Response, reqwest::Error> {
+    ) -> Result<reqwest::Response, crate::http::SendError> {
         let segments: Vec<&str> = match self.index.as_deref() {
             Some(index) => vec![index, "_search"],
             None => vec!["_search"],
@@ -63,7 +63,7 @@ impl RetrievalContext {
     pub(crate) async fn plain_search(
         &self,
         body: Body,
-    ) -> Result<reqwest::Response, reqwest::Error> {
+    ) -> Result<reqwest::Response, crate::http::SendError> {
         let segments: Vec<&str> = match self.index.as_deref() {
             Some(index) => vec![index, "_search"],
             None => vec!["_search"],
@@ -83,14 +83,17 @@ impl RetrievalContext {
     pub(crate) async fn scroll_continue(
         &self,
         body: Body,
-    ) -> Result<reqwest::Response, reqwest::Error> {
+    ) -> Result<reqwest::Response, crate::http::SendError> {
         self.client
             .send(Method::POST, &["_search", "scroll"], &[], false, body)
             .await
     }
 
     /// `POST /_search?allow_partial_search_results=false` with a `pit` body.
-    pub(crate) async fn pit_search(&self, body: Body) -> Result<reqwest::Response, reqwest::Error> {
+    pub(crate) async fn pit_search(
+        &self,
+        body: Body,
+    ) -> Result<reqwest::Response, crate::http::SendError> {
         self.client
             .send(
                 Method::POST,

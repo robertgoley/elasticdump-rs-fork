@@ -121,10 +121,12 @@ impl MetaTarget {
     /// renamed source name; then prefix/suffix.
     pub fn target_index(&self, src: &str) -> Result<String> {
         match &self.index {
-            Some(i) => Ok(format!(
-                "{}{}{}",
-                self.renamer.prefix, i, self.renamer.suffix
-            )),
+            Some(i) => {
+                let out = format!("{}{}{}", self.renamer.prefix, i, self.renamer.suffix);
+                crate::rename::validate_index_name(&out)
+                    .map_err(|e| anyhow::anyhow!("invalid output index '{out}': {e}"))?;
+                Ok(out)
+            }
             None => self.renamer.index(src),
         }
     }

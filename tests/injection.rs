@@ -235,3 +235,144 @@ async fn inj_f1_file_size_parts_hold_whole_records() {
     assert!(parts > 1, "expected several parts");
     assert_eq!(records, 20);
 }
+
+// ------------------------------------------------------------ INJ-F2
+
+const BAD_NAMES: &[&str] = &[
+    "*", "?", "a*", "a,b", ",", "_all", "", ".", "..", "-a", "_a", "+a", "Upper",
+];
+
+fn long_name() -> String {
+    "a".repeat(256)
+}
+
+fn bad_names() -> Vec<String> {
+    let mut v: Vec<String> = BAD_NAMES.iter().map(|s| s.to_string()).collect();
+    v.push(long_name());
+    v
+}
+
+/// Run a restore of `content` (one file) into a fresh mock and return the
+/// output and every request line the mock saw.
+async fn restore(content: &str, kind: &str, extra: &[&str]) -> (Output, Vec<String>) {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("in.json");
+    std::fs::write(&f, content).unwrap();
+    // Plenty of OK answers: anything past the version probe is a violation.
+    let mock = MockEs::serve(
+        std::iter::once(CannedResponse::ok(ES7))
+            .chain((0..8).map(|_| CannedResponse::ok(r#"{"acknowledged":true}"#)))
+            .collect(),
+    )
+    .await;
+    let mut args = vec![
+        "--input".to_string(),
+        f.to_str().unwrap().into(),
+        "--output".into(),
+        mock.input_url("").trim_end_matches('/').to_string(),
+        "--type".into(),
+        kind.into(),
+        "--noImplicitRetry".into(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    let o = run(args).await;
+    let lines = mock
+        .requests()
+        .iter()
+        .map(|r| r.lines().next().unwrap_or("").to_string())
+        .collect();
+    (o, lines)
+}
+
+fn only_probe(reqs: &[String]) -> bool {
+    reqs.iter().all(|r| r.starts_with("GET / "))
+}
+
+/// TST-INJ-006: the §8.1 analyzer PoC never sends `POST /*/_close`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f2_analyzer_wildcard_never_closes_indices() {
+    let (o, reqs) = restore(
+        r#"{"*":{"settings":{"index":{"analysis":{"analyzer":{"evil":{"type":"standard"}}}}}}}"#,
+        "analyzer",
+        &["--closeIndex"],
+    )
+    .await;
+    assert!(!o.status.success(), "{}", stderr(&o));
+    assert!(only_probe(&reqs), "{reqs:#?}");
+    assert!(reqs.iter().all(|r| !r.contains("_close")), "{reqs:#?}");
+    assert!(stderr(&o).contains("invalid index name"), "{}", stderr(&o));
+}
+
+/// TST-INJ-006: `{"*":{"aliases":...}}` never adds an alias to every index.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f2_alias_wildcard_is_rejected() {
+    let (o, reqs) = restore(r#"{"*":{"aliases":{"logs-read":{}}}}"#, "alias", &[]).await;
+    assert!(!o.status.success(), "{}", stderr(&o));
+    assert!(only_probe(&reqs), "{reqs:#?}");
+}
+
+/// TST-INJ-006: every bad name in every meta type and in data `_index`, with
+/// and without a rename, is refused before any request is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f2_bad_names_from_files_send_nothing() {
+    for name in bad_names() {
+        let key = serde_json::to_string(&name).unwrap();
+        let cases: Vec<(String, &str)> = vec![
+            (
+                format!(r#"{{{key}:{{"settings":{{"index":{{"number_of_replicas":"0"}}}}}}}}"#),
+                "settings",
+            ),
+            (
+                format!(
+                    r#"{{{key}:{{"mappings":{{"properties":{{"a":{{"type":"keyword"}}}}}}}}}}"#
+                ),
+                "mapping",
+            ),
+            (
+                format!(
+                    r#"{{{key}:{{"settings":{{"index":{{"analysis":{{}}}}}},"mappings":{{}}}}}}"#
+                ),
+                "index",
+            ),
+            (
+                format!(
+                    r#"{{{key}:{{"settings":{{"index":{{"analysis":{{"analyzer":{{"x":{{"type":"standard"}}}}}}}}}}}}}}"#
+                ),
+                "analyzer",
+            ),
+            (format!(r#"{{{key}:{{"aliases":{{"al":{{}}}}}}}}"#), "alias"),
+            (
+                format!(r#"{{"_index":{key},"_id":"1","_source":{{"a":1}}}}"#),
+                "data",
+            ),
+        ];
+        for (content, kind) in cases {
+            for extra in [&[][..], &["--suffix=-x"][..]] {
+                // With a suffix "." and ".." become ".-x"/"..-x", which are
+                // valid names; every other bad name stays bad.
+                if !extra.is_empty() && (name == "." || name == "..") {
+                    continue;
+                }
+                let (o, reqs) = restore(&content, kind, extra).await;
+                assert!(
+                    !stderr(&o).contains("unexpected argument"),
+                    "{}",
+                    stderr(&o)
+                );
+                let bulk_or_write = reqs
+                    .iter()
+                    .any(|r| !r.starts_with("GET / ") && !r.starts_with("HEAD "));
+                assert!(
+                    !bulk_or_write,
+                    "name {name:?} kind {kind} extra {extra:?}: {reqs:#?}\n{}",
+                    stderr(&o)
+                );
+                assert!(
+                    !o.status.success(),
+                    "name {name:?} kind {kind} extra {extra:?} must fail\n{}",
+                    stderr(&o)
+                );
+            }
+        }
+    }
+}

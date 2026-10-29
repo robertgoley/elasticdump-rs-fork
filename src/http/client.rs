@@ -91,6 +91,32 @@ struct Inner {
     debug: bool,
 }
 
+/// Error from [`EsClient::send`]: a transport error, or a request that was
+/// refused before anything was sent because its path was unsafe.
+#[derive(Debug)]
+pub enum SendError {
+    Http(reqwest::Error),
+    InvalidPath(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::Http(e) => e.fmt(f),
+            SendError::InvalidPath(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for SendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SendError::Http(e) => Some(e),
+            SendError::InvalidPath(_) => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EsClient(Arc<Inner>);
 
@@ -185,7 +211,25 @@ impl EsClient {
 
     /// Build the URL for path `segments` below the base (each segment is
     /// percent-encoded individually) plus query pairs.
-    pub fn url(&self, segments: &[&str], query: &[(&str, &str)], with_params: bool) -> Url {
+    ///
+    /// A `.`, `..` or empty segment is an error: the `url` crate would drop
+    /// it silently, so `PUT /{..}/_settings` would become `PUT /_settings`
+    /// (INJ-F2, TST-INJ-007).
+    pub fn url(
+        &self,
+        segments: &[&str],
+        query: &[(&str, &str)],
+        with_params: bool,
+    ) -> std::result::Result<Url, SendError> {
+        if let Some(bad) = segments
+            .iter()
+            .find(|s| s.is_empty() || **s == "." || **s == "..")
+        {
+            return Err(SendError::InvalidPath(format!(
+                "refusing to send a request with the path segment {bad:?} in /{}",
+                segments.join("/")
+            )));
+        }
         let mut url = self.0.base.clone();
         {
             let mut segs = url.path_segments_mut().expect("http(s) base URL");
@@ -208,7 +252,7 @@ impl EsClient {
         if url.query() == Some("") {
             url.set_query(None);
         }
-        url
+        Ok(url)
     }
 
     /// Send one request. `segments` are path segments below the base URL;
@@ -220,8 +264,8 @@ impl EsClient {
         query: &[(&str, &str)],
         with_params: bool,
         body: Body,
-    ) -> std::result::Result<reqwest::Response, reqwest::Error> {
-        let url = self.url(segments, query, with_params);
+    ) -> std::result::Result<reqwest::Response, SendError> {
+        let url = self.url(segments, query, with_params)?;
         if self.0.debug {
             log::debug!("{} {}", method, url);
         }
@@ -236,7 +280,7 @@ impl EsClient {
                 .body(b),
         };
         let _permit = self.0.gate.acquire().await;
-        rb.send().await
+        rb.send().await.map_err(SendError::Http)
     }
 
     /// Cluster flavor and version (`GET /`), fetched once and cached.
@@ -296,6 +340,7 @@ mod tests {
         let c = client("https://h:9200/proxy", vec![]);
         assert_eq!(
             c.url(&["my index", "_search"], &[("scroll", "1m")], false)
+                .unwrap()
                 .as_str(),
             "https://h:9200/proxy/my%20index/_search?scroll=1m"
         );
@@ -303,11 +348,49 @@ mod tests {
             "http://h:9200/",
             vec![("preference".into(), "_local".into())],
         );
-        assert_eq!(c.url(&[], &[], false).as_str(), "http://h:9200/");
+        assert_eq!(c.url(&[], &[], false).unwrap().as_str(), "http://h:9200/");
         assert_eq!(
-            c.url(&["a,b*", "_bulk"], &[], true).as_str(),
+            c.url(&["a,b*", "_bulk"], &[], true).unwrap().as_str(),
             "http://h:9200/a,b*/_bulk?preference=_local"
         );
+    }
+
+    /// TST-INJ-007: segments never vanish; unsafe ones are an error.
+    #[test]
+    fn url_segments_never_vanish() {
+        let c = client("http://h:9200/base", vec![]);
+        for bad in [".", "..", ""] {
+            assert!(c.url(&[bad, "_settings"], &[], false).is_err(), "{bad:?}");
+            assert!(c.url(&["i", bad], &[], false).is_err(), "{bad:?}");
+        }
+        let samples = [
+            "a/b",
+            "a?b",
+            "a#b",
+            "a%b",
+            "a b",
+            "\u{e9}t\u{e9}",
+            "...",
+            ".a",
+            "a.",
+            "%2e",
+            "%2E%2E",
+            "+",
+            "\u{1F600}",
+        ];
+        for s in samples {
+            let u = c.url(&[s, "_doc", s], &[], false).unwrap();
+            let segs: Vec<&str> = u.path_segments().unwrap().collect();
+            assert_eq!(segs.len(), 4, "{s:?} -> {u}");
+            assert_eq!(segs[0], "base");
+            let decoded = percent_encoding::percent_decode_str(segs[1])
+                .decode_utf8()
+                .unwrap();
+            assert_eq!(decoded, s, "{s:?} -> {u}");
+            for ch in ['/', '?', '#', ' '] {
+                assert!(!segs[1].contains(ch), "{s:?} -> {u}");
+            }
+        }
     }
 
     #[test]

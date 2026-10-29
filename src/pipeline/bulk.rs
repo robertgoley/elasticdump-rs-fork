@@ -298,7 +298,14 @@ impl BulkSink {
                 return r.index(&base);
             }
         }
-        Ok(format!("{}{}{}", self.opts.prefix, base, self.opts.suffix))
+        let out = format!("{}{}{}", self.opts.prefix, base, self.opts.suffix);
+        if self.opts.index.is_none() {
+            // `_index` comes from the document: never let `*`, `_all`,
+            // `a,b`, `.` or `..` reach a bulk action (INJ-F2).
+            crate::rename::validate_index_name(&out)
+                .map_err(|e| anyhow!("invalid _index '{base}' in a document: {e}"))?;
+        }
+        Ok(out)
     }
 
     /// Append the action (and body) lines for one document.

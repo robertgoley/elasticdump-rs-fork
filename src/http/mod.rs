@@ -6,7 +6,7 @@ pub mod info;
 pub mod retry;
 pub mod tls;
 
-pub use client::{Body, ClientOptions, EsClient};
+pub use client::{Body, ClientOptions, EsClient, SendError};
 pub use info::{ClusterInfo, Flavor, PitApi};
 pub use retry::{
     Backoff, DumpCancelled, EsHttpError, RetryMode, RetryOn, RetryPolicy, is_cancelled,

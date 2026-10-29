@@ -128,7 +128,13 @@ impl IndexRenamer {
             None => (name.to_string(), None),
         };
         let out = format!("{}{}{}", self.prefix, base, self.suffix);
-        if out != name || rule.is_some() {
+        // Every name taken from a file or a server response is validated,
+        // renamed or not: `*`, `_all`, `a,b`, `.` or `..` must never reach a
+        // URL path or a bulk/alias action (INJ-F2).
+        if out == name && rule.is_none() {
+            validate_index_name(&out)
+                .map_err(|e| anyhow!("invalid index name '{name}' in the input: {e}"))?;
+        } else {
             validate_index_name(&out).map_err(|e| {
                 anyhow!(
                     "renaming index '{name}' to '{out}'{}: {e}",

@@ -15,6 +15,8 @@ use bytes::Bytes;
 use log::warn;
 use tokio_util::sync::CancellationToken;
 
+use super::client::SendError;
+
 /// Sentinel error marking a task that stopped because the pipeline was
 /// cancelled (Ctrl+C, closed stdout reader, size cap reached, or a failing
 /// sibling task) rather than because it failed itself.
@@ -264,7 +266,7 @@ pub async fn send_checked_with_retry<F, Fut>(
 ) -> Result<Bytes>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = std::result::Result<reqwest::Response, reqwest::Error>>,
+    Fut: Future<Output = std::result::Result<reqwest::Response, SendError>>,
 {
     send_inner(
         retry,
@@ -287,7 +289,7 @@ pub async fn send_with_retry<F, Fut>(
 ) -> Result<Bytes>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = std::result::Result<reqwest::Response, reqwest::Error>>,
+    Fut: Future<Output = std::result::Result<reqwest::Response, SendError>>,
 {
     send_inner(retry, cancel, mode, None, operation, build_and_send).await
 }
@@ -302,7 +304,7 @@ async fn send_inner<F, Fut>(
 ) -> Result<Bytes>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = std::result::Result<reqwest::Response, reqwest::Error>>,
+    Fut: Future<Output = std::result::Result<reqwest::Response, SendError>>,
 {
     let prefix = prefix_for(slice_id);
     let mut attempt: usize = 0;
@@ -330,7 +332,11 @@ where
                     ),
                 }
             }
-            Err(e) => (
+            // Refused before sending (unsafe path): never retried.
+            Err(SendError::InvalidPath(m)) => {
+                return Err(anyhow!("{prefix}{operation}: {m}"));
+            }
+            Err(SendError::Http(e)) => (
                 classify(&e),
                 anyhow!(
                     "{prefix}Elasticsearch {operation} request failed: {}",

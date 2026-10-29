@@ -1,0 +1,18 @@
+{
+  "task": "L-102",
+  "requirements": ["INJ-F2", "TST-INJ-006", "TST-INJ-007", "TST-INJ-016 (mock part)"],
+  "status": "done",
+  "fix": [
+    "rename.rs IndexRenamer::index validates every name, renamed or not",
+    "meta MetaTarget::target_index validates an explicit output index (+prefix/suffix) too",
+    "bulk.rs index_for validates a document's _index (+prefix/suffix) when no --output-index is given",
+    "http/client.rs url() returns Err for '.', '..' and empty segments; EsClient::send returns SendError (Http | InvalidPath); InvalidPath is never retried",
+    "index_scoped.rs close_put_open refuses anything but one concrete valid index name"
+  ],
+  "tests": {
+    "tests/injection.rs inj_f2_*": "3 tests: analyzer {'*':...} --closeIndex sends no _close; alias {'*':...} sends nothing; 14 bad names x 6 types (settings, mapping, index, analyzer, alias, data _index) x (no rename, --suffix=-x): only the version probe is sent and the run fails. 0/3 on old code, 3/3 on new",
+    "unit": "http::client::tests::url_segments_never_vanish (segment count preserved, / ? # % space Unicode percent-encoded, . .. empty rejected)",
+    "suite": "lib 153/0, cli_contract 22/0, injection 8/0, clippy -D warnings clean"
+  },
+  "decision": "Validation is on the FINAL name that reaches the wire (after rename/prefix/suffix). A source name like '.' renamed to '.-x' is allowed; '*' or '_all' can never be produced. Data restores of a document whose _index is invalid now fail the run instead of being sent."
+}
