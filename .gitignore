@@ -27,3 +27,8 @@ tmp/
 /.agent/
 image.tar
 sbom-*.json
+
+# Load/metrics run outputs (scripts/load); curated results go in results/local/
+/results/*.json
+/results/*.json.stderr
+/results/load/

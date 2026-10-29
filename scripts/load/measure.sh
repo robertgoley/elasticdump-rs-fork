@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Metrics wrapper (TST-INF-006). See measure.py.  measure.sh [opts] -- CMD...
+exec python3 "$(dirname "$0")/measure.py" "$@"
