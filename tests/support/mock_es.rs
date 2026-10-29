@@ -13,8 +13,8 @@
 //! accept loop handling one connection at a time preserves script order
 //! deterministically and lets `request_count()` be read without races.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -45,6 +45,7 @@ impl CannedResponse {
 pub struct MockEs {
     addr: String,
     counter: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<String>>>,
     handle: tokio::task::JoinHandle<()>,
 }
 
@@ -62,10 +63,12 @@ impl MockEs {
             .to_string();
         let counter = Arc::new(AtomicUsize::new(0));
         let script = Arc::new(script);
+        let requests = Arc::new(Mutex::new(Vec::new()));
 
         let handle = tokio::spawn({
             let counter = Arc::clone(&counter);
             let script = Arc::clone(&script);
+            let requests = Arc::clone(&requests);
             async move {
                 loop {
                     let mut socket = match listener.accept().await {
@@ -75,9 +78,10 @@ impl MockEs {
                     // A peer that connected but never sent a full request (e.g.
                     // a dropped connection) is ignored and must not consume a
                     // scripted response.
-                    if read_http_request(&mut socket).await.is_none() {
+                    let Some(head) = read_http_request(&mut socket).await else {
                         continue;
-                    }
+                    };
+                    requests.lock().unwrap().push(head);
                     let index = counter.fetch_add(1, Ordering::SeqCst);
                     let (status, body) = match script.get(index) {
                         Some(canned) => (canned.status, canned.body.as_str()),
@@ -97,6 +101,7 @@ impl MockEs {
         MockEs {
             addr,
             counter,
+            requests,
             handle,
         }
     }
@@ -104,6 +109,12 @@ impl MockEs {
     /// Number of HTTP requests received so far.
     pub fn request_count(&self) -> usize {
         self.counter.load(Ordering::SeqCst)
+    }
+
+    /// Request line and headers of every request received so far.
+    #[allow(dead_code)]
+    pub fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
     }
 
     /// `http://127.0.0.1:PORT/INDEX` input URL for the binary's `--input`.
@@ -121,7 +132,7 @@ impl Drop for MockEs {
 /// Read one HTTP/1.1 request: headers up to CRLFCRLF, then the
 /// `Content-Length` body. Returns `None` if the peer closed before a full
 /// header block arrived.
-async fn read_http_request(socket: &mut TcpStream) -> Option<()> {
+async fn read_http_request(socket: &mut TcpStream) -> Option<String> {
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];
 
@@ -145,7 +156,7 @@ async fn read_http_request(socket: &mut TcpStream) -> Option<()> {
         }
         body_read += n;
     }
-    Some(())
+    Some(String::from_utf8_lossy(&buffer[..header_end]).into_owned())
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {

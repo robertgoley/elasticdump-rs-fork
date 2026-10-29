@@ -6,26 +6,27 @@ mod pit_search;
 mod progress;
 mod retrieval_task;
 mod scroll;
-mod search_body;
+pub mod search_body;
 mod slice_state;
 mod worker;
 
 use anyhow::Result;
 use bytesize::ByteSize;
-use elasticsearch::Elasticsearch;
 use indicatif::{MultiProgress, ProgressDrawTarget};
 use log::{debug, info};
-use sonic_rs::{JsonValueMutTrait, json};
+use sonic_rs::{JsonValueMutTrait, Value, json};
 use std::future::Future;
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::cli::{Cli, SearchType};
+use crate::cli::SearchType;
+use crate::http::{EsClient, PitApi};
+use crate::pipeline::{DocWindow, Sink};
 
 use self::context::RetrievalContext;
 use self::messages::RetrievalMessage;
@@ -40,7 +41,27 @@ use self::slice_state::SliceState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CancelReason {
     Interrupt,
+    /// stdout reader went away, or `--size` documents were written.
     OutputClosed,
+}
+
+/// Everything the Elasticsearch/OpenSearch reader needs.
+pub struct EsSourceOptions {
+    pub client: EsClient,
+    pub index: Option<String>,
+    /// Prepared search body (query, sort, page size).
+    pub search_body: Value,
+    pub search_type: SearchType,
+    pub pit_api: PitApi,
+    /// Default PIT sort for this cluster flavor.
+    pub pit_sort: Value,
+    pub scroll_ttl: String,
+    pub pit_keep_alive: String,
+    pub slices: usize,
+    pub workers: usize,
+    pub buffer_size: usize,
+    pub quiet: bool,
+    pub retry: RetryPolicy,
 }
 
 /// Aborts the wrapped task when dropped, so the Ctrl+C listener dies with
@@ -125,35 +146,28 @@ fn select_root_cause(
 /// Close the shared PIT as best-effort cleanup. Failures are only warned
 /// about: the PIT expires on its own via its keep-alive, and a close failure
 /// must never override the pipeline outcome.
-async fn close_pit_best_effort(client: &Elasticsearch, shared_pit: &Option<SharedPitCoordinator>) {
+async fn close_pit_best_effort(
+    client: &EsClient,
+    api: PitApi,
+    shared_pit: &Option<SharedPitCoordinator>,
+) {
     let Some(shared_pit) = shared_pit else {
         return;
     };
-
-    let latest_id = shared_pit.latest_id();
-    let close_response = client
-        .close_point_in_time()
-        .body(sonic_rs::json!({ "id": latest_id }))
-        .send()
-        .await;
-
-    match close_response {
-        Ok(response) => {
-            if let Err(e) =
-                retrieval_task::read_checked_response_bytes(response, 0, "PIT close").await
-            {
-                log::warn!("Failed to close PIT (it will expire via keep-alive): {e}");
-            }
-        }
-        Err(e) => {
-            log::warn!("Failed to close PIT (it will expire via keep-alive): {e}");
-        }
+    if let Err(e) = SharedPitCoordinator::close(client, api, &shared_pit.latest_id()).await {
+        log::warn!("Failed to close PIT (it will expire via keep-alive): {e}");
     }
 }
 
-/// Main function to dump data from Elasticsearch
-pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result<()> {
-    debug!("Starting data dump operation for index: {}", index);
+/// Read documents from Elasticsearch/OpenSearch into `sink`, honouring
+/// `window` (`--offset`/`--size`). Returns the number of documents written.
+pub async fn dump_data(opts: EsSourceOptions, sink: Sink, window: DocWindow) -> Result<u64> {
+    let client = &opts.client;
+    let pit_api = opts.pit_api;
+    debug!(
+        "Starting data dump operation for index: {}",
+        opts.index.as_deref().unwrap_or("<all>")
+    );
     let start_time = Instant::now();
 
     // Pipeline-wide cancellation: fired by Ctrl+C, output failures, and
@@ -183,17 +197,27 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
     });
     let _signal_guard = AbortOnDrop(signal_task);
 
-    let retry = RetryPolicy {
-        attempts: args.retry_attempts,
-        base_delay: Duration::from_millis(args.retry_delay_ms),
+    let retry = opts.retry;
+    let search_body = opts.search_body.clone();
+    let pit_index = match (&opts.search_type, opts.index.as_deref()) {
+        (SearchType::PointInTime, None) => {
+            return Err(anyhow::anyhow!(
+                "Point-in-time search needs an index in --input (or --input-index)"
+            ));
+        }
+        (_, index) => index.unwrap_or("").to_string(),
     };
 
-    // Prepare search body from user input
-    let search_body = search_body::prepare_search_body(&args).await?;
-
     // Create channels for the pipeline
-    let buffer_size = args.buffer_size;
-    let slices = args.slices;
+    let buffer_size = opts.buffer_size;
+    let slices = if opts.slices == 1 {
+        log::warn!(
+            "--slices 1 is equivalent to an unsliced dump (Elasticsearch rejects slice.max=1); running unsliced"
+        );
+        0
+    } else {
+        opts.slices
+    };
 
     // Setup for sliced search
     let use_sliced_scroll = slices > 0;
@@ -203,11 +227,11 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
     // jobs, but each slice keeps at most one unreplied job in flight, so
     // concurrent extraction can never exceed num_slices; more workers add
     // threads without adding parallelism.
-    let workers = args.workers.min(num_slices);
-    if workers < args.workers {
+    let workers = opts.workers.min(num_slices);
+    if workers < opts.workers {
         info!(
             "Clamping worker count from {} to {} to match the {} search slice(s)",
-            args.workers, workers, num_slices
+            opts.workers, workers, num_slices
         );
     }
 
@@ -236,7 +260,7 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
     let retrieved_bytes = Arc::new(AtomicU64::new(0));
 
     // Setup progress bars if not in quiet mode
-    let (_multi_progress, input_bar, output_bar) = if !args.quiet {
+    let (_multi_progress, input_bar, output_bar) = if !opts.quiet {
         let mp = MultiProgress::with_draw_target(ProgressDrawTarget::stderr());
         let (ib, ob) = setup_progress_bars(&mp);
         (Some(mp), ib, ob)
@@ -258,14 +282,15 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
     )?;
 
     let (output_target, shared_pit) = match create_output_target_and_shared_pit(
-        &args.search_type,
-        || crate::output::create_output_target(&args),
-        |output_target| async move { output_target.abort().await },
+        &opts.search_type,
+        || async { Ok(sink) },
+        |output_target: Sink| async move { output_target.abort().await },
         || {
             SharedPitCoordinator::open(
                 client,
-                index,
-                &args.pit_keep_alive,
+                pit_api,
+                &pit_index,
+                &opts.pit_keep_alive,
                 num_slices,
                 retry,
                 cancel.clone(),
@@ -299,20 +324,36 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
         let cancel_reason = Arc::clone(&cancel_reason);
         async move {
             let mut output_target = output_target;
+            let mut window = window;
+            let mut written = 0u64;
+            if window.is_exhausted() {
+                let _ = cancel_reason.set(CancelReason::OutputClosed);
+                cancel.cancel();
+                while processed_rx.recv().await.is_some() {}
+            }
 
             // Process output as it comes in
             while let Some(processed) = processed_rx.recv().await {
-                // Write the entire buffer from the processed batch
-                if let Err(e) = output_target.write_all(&processed.buffer).await {
+                let docs = memchr::memchr_iter(b'\n', &processed.buffer).count() as u64;
+                let (slice, docs) = window.apply(&processed.buffer, docs);
+                written += docs;
+                if let Err(e) = output_target.write_all(slice).await {
                     if output_target.is_stdout() && crate::output::is_broken_pipe(&e) {
                         let _ = cancel_reason.set(CancelReason::OutputClosed);
                         cancel.cancel();
                         while processed_rx.recv().await.is_some() {}
-                        return Ok(output_target);
+                        return Ok((output_target, written));
                     }
                     cancel.cancel();
                     output_target.abort().await;
                     return Err(anyhow::anyhow!("Failed to write batch buffer: {}", e));
+                }
+                if window.is_exhausted() {
+                    // --size reached: stop retrieval; the cascade counts as success.
+                    let _ = cancel_reason.set(CancelReason::OutputClosed);
+                    cancel.cancel();
+                    while processed_rx.recv().await.is_some() {}
+                    break;
                 }
             }
 
@@ -320,20 +361,21 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
                 if output_target.is_stdout() && crate::output::is_broken_pipe(&e) {
                     let _ = cancel_reason.set(CancelReason::OutputClosed);
                     cancel.cancel();
-                    return Ok(output_target);
+                    return Ok((output_target, written));
                 }
                 cancel.cancel();
                 output_target.abort().await;
                 return Err(anyhow::anyhow!("Failed to flush writer: {}", e));
             }
-            Ok(output_target)
+            Ok((output_target, written))
         }
     });
 
     let total_hits_count = Arc::new(AtomicU64::new(0));
     let ctx = RetrievalContext {
         client: client.clone(),
-        index: Arc::<str>::from(index.to_owned()),
+        index: opts.index.as_deref().map(Arc::<str>::from),
+        pit_sort: opts.pit_sort.clone(),
         worker_txs: worker_txs.clone(),
         total_hits_count: Arc::clone(&total_hits_count),
         input_bar: input_bar.clone(),
@@ -371,9 +413,9 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
         let task = retrieval_task::spawn_retrieval_task(
             ctx.clone(),
             slice_state,
-            args.search_type.clone(),
-            args.scroll.clone(),
-            args.pit_keep_alive.clone(),
+            opts.search_type,
+            opts.scroll_ttl.clone(),
+            opts.pit_keep_alive.clone(),
             shared_pit.clone(),
         );
 
@@ -466,9 +508,11 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
 
     // Wait for output to finish
     let mut completed_output_target = None;
+    let mut written_docs = 0u64;
     let output_error = match output_task.await {
-        Ok(Ok(output_target)) => {
+        Ok(Ok((output_target, written))) => {
             completed_output_target = Some(output_target);
+            written_docs = written;
             None
         }
         Ok(Err(e)) => Some(anyhow::anyhow!("Output task failed: {}", e)),
@@ -504,7 +548,7 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
         if let Some(output_target) = completed_output_target {
             output_target.abort().await;
         }
-        close_pit_best_effort(client, &shared_pit).await;
+        close_pit_best_effort(client, pit_api, &shared_pit).await;
         return Err(error);
     }
 
@@ -512,12 +556,12 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
         if let Some(output_target) = completed_output_target {
             output_target.abort().await;
         }
-        close_pit_best_effort(client, &shared_pit).await;
+        close_pit_best_effort(client, pit_api, &shared_pit).await;
         return Err(error);
     }
 
     if matches!(cancel_reason.get(), Some(CancelReason::OutputClosed)) {
-        log::info!("stdout closed by reader; stopping dump early");
+        log::info!("Output closed or --size reached; stopped dump early");
     }
 
     let output_target = completed_output_target.ok_or_else(|| {
@@ -527,7 +571,7 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
     // Make the dump durable FIRST; PIT cleanup afterwards can no longer
     // destroy it and is best-effort only.
     output_target.finalize().await?;
-    close_pit_best_effort(client, &shared_pit).await;
+    close_pit_best_effort(client, pit_api, &shared_pit).await;
 
     let elapsed = start_time.elapsed();
     let count = processed_count.load(Ordering::Relaxed);
@@ -582,7 +626,7 @@ pub async fn dump_data(client: &Elasticsearch, index: &str, args: Cli) -> Result
         ByteSize(bytes_per_sec as u64)
     );
 
-    Ok(())
+    Ok(written_docs)
 }
 
 #[cfg(test)]

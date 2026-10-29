@@ -1,17 +1,13 @@
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use bytesize::ByteSize;
-use elasticsearch::{ClearScrollParts, Elasticsearch, http::response::Response};
-use http::StatusCode;
 use log::warn;
+use reqwest::Method;
 #[cfg(test)]
 use sonic_rs::JsonValueTrait;
-use sonic_rs::{JsonContainerTrait, JsonValueMutTrait, Value, json};
-use std::future::Future;
+use sonic_rs::{JsonContainerTrait, JsonValueMutTrait, Value};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
 
 use super::{
     context::RetrievalContext,
@@ -21,205 +17,21 @@ use super::{
     slice_state::SliceState,
 };
 use crate::cli::SearchType;
+use crate::http::{Body, EsClient};
 
 #[cfg(test)]
 pub(crate) fn latest_pit_id(response: &Value) -> Option<String> {
     response.get("pit_id").as_str().map(|id| id.to_string())
 }
 
-/// Sentinel error marking a task that stopped because the pipeline was
-/// cancelled (Ctrl+C, closed stdout reader, or a failing sibling slice) rather
-/// than because it failed itself.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct DumpCancelled;
+pub(crate) use crate::http::retry::{
+    DumpCancelled, RetryMode, RetryPolicy, is_cancelled, send_checked_with_retry,
+};
 
-impl std::fmt::Display for DumpCancelled {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("dump cancelled")
-    }
-}
-
-impl std::error::Error for DumpCancelled {}
-
-/// Returns `true` when `error` is (or wraps, via `context`) the
-/// [`DumpCancelled`] sentinel.
-pub(crate) fn is_cancelled(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<DumpCancelled>().is_some()
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct RetryPolicy {
-    /// Extra attempts after the first one; 0 disables retries.
-    pub attempts: usize,
-    /// First retry delay; doubles per attempt, capped at [`MAX_RETRY_DELAY`].
-    pub base_delay: Duration,
-}
-
-/// How a request may be retried. The distinction is a data-safety rule, not a
-/// tuning knob: scroll continuations advance the server-side cursor on every
-/// call, so retrying one after a transport/timeout failure (where the request
-/// may have reached the server) can silently skip a page of data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RetryMode {
-    /// Safe to repeat unconditionally: PIT open, PIT `search_after` pages,
-    /// scroll initial search.
-    Idempotent,
-    /// Scroll continuations: retry ONLY on HTTP 429, where the server
-    /// rejected the request without advancing the cursor.
-    RejectionOnly,
-}
-
-/// Classified failure of one send attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RetryOutcome {
-    /// The request or the response body transfer failed at the transport
-    /// level; the server may or may not have processed it.
-    TransportError,
-    /// The server answered with this non-2xx status.
-    Status(u16),
-}
-
-/// Retryable HTTP statuses for idempotent requests: request timeout, too many
-/// requests, and transient upstream/server unavailability.
-const IDEMPOTENT_RETRY_STATUSES: [u16; 5] = [408, 429, 502, 503, 504];
-
-pub(crate) const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-
-pub(crate) fn should_retry(mode: RetryMode, outcome: &RetryOutcome) -> bool {
-    match mode {
-        RetryMode::Idempotent => match outcome {
-            RetryOutcome::TransportError => true,
-            RetryOutcome::Status(status) => IDEMPOTENT_RETRY_STATUSES.contains(status),
-        },
-        // HTTP 429 is the only outcome that proves the server rejected the
-        // request without acting on it.
-        RetryMode::RejectionOnly => matches!(outcome, RetryOutcome::Status(429)),
-    }
-}
-
-/// Send a request built by `build_and_send`, validate the response, and retry
-/// per `mode` with exponential backoff. Non-retryable failures keep the same
-/// error shapes as the unretried path. Cancellation (checked before each
-/// attempt and while sleeping between attempts) yields [`DumpCancelled`].
-pub(crate) async fn send_checked_with_retry<F, Fut>(
-    retry: RetryPolicy,
-    cancel: &CancellationToken,
-    mode: RetryMode,
-    slice_id: usize,
-    operation: &str,
-    build_and_send: F,
-) -> Result<Bytes>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = std::result::Result<Response, elasticsearch::Error>>,
-{
-    let mut attempt: usize = 0;
-    loop {
-        if cancel.is_cancelled() {
-            return Err(anyhow::Error::new(DumpCancelled));
-        }
-
-        let (outcome, error) = match build_and_send().await {
-            Ok(response) => {
-                let status = response.status_code();
-                match response.bytes().await {
-                    Ok(bytes) if status.is_success() => return Ok(bytes),
-                    Ok(bytes) => {
-                        let error = validate_response_bytes(status, bytes, slice_id, operation)
-                            .expect_err("non-success status must produce an error");
-                        (RetryOutcome::Status(status.as_u16()), error)
-                    }
-                    // A body transfer failure means the server already
-                    // processed the request; classify as transport so
-                    // RejectionOnly (scroll continuation) never retries it.
-                    Err(e) => (
-                        RetryOutcome::TransportError,
-                        anyhow!(
-                            "Slice {}: Failed to read {} response bytes: {}",
-                            slice_id,
-                            operation,
-                            e
-                        ),
-                    ),
-                }
-            }
-            Err(e) => (
-                RetryOutcome::TransportError,
-                anyhow!(
-                    "Slice {}: Elasticsearch {} request failed: {}",
-                    slice_id,
-                    operation,
-                    e
-                ),
-            ),
-        };
-
-        if attempt >= retry.attempts || !should_retry(mode, &outcome) {
-            return Err(error);
-        }
-
-        let exponent = u32::try_from(attempt).unwrap_or(u32::MAX);
-        let delay = retry
-            .base_delay
-            .saturating_mul(2u32.saturating_pow(exponent))
-            .min(MAX_RETRY_DELAY);
-        warn!(
-            "Slice {}: {} failed (attempt {} of {}), retrying in {:?}: {:#}",
-            slice_id,
-            operation,
-            attempt + 1,
-            retry.attempts + 1,
-            delay,
-            error
-        );
-
-        tokio::select! {
-            _ = tokio::time::sleep(delay) => {}
-            _ = cancel.cancelled() => return Err(anyhow::Error::new(DumpCancelled)),
-        }
-        attempt += 1;
-    }
-}
-
-pub(crate) async fn read_checked_response_bytes(
-    response: Response,
-    slice_id: usize,
-    operation: &str,
-) -> Result<Bytes> {
-    let status = response.status_code();
-    let response_bytes = response.bytes().await.map_err(|e| {
-        anyhow!(
-            "Slice {}: Failed to read {} response bytes: {}",
-            slice_id,
-            operation,
-            e
-        )
-    })?;
-
-    validate_response_bytes(status, response_bytes, slice_id, operation)
-}
-
-pub(crate) fn validate_response_bytes(
-    status: StatusCode,
-    response_bytes: Bytes,
-    slice_id: usize,
-    operation: &str,
-) -> Result<Bytes> {
-    if !status.is_success() {
-        let response_body = String::from_utf8_lossy(response_bytes.as_ref());
-        return Err(anyhow!(
-            "Slice {}: Elasticsearch {} failed with HTTP {}: {}",
-            slice_id,
-            operation,
-            status.as_u16(),
-            response_body
-        ));
-    }
-
-    Ok(response_bytes)
-}
-
-pub(crate) fn ensure_pit_sort(search_body: &mut Value) {
+/// Default PIT sort when the user supplied none: `["_shard_doc"]` on
+/// Elasticsearch, `[{"_doc":"asc"},{"_id":"asc"}]` on OpenSearch (which
+/// rejects `_shard_doc` and loses documents with a `_doc`-only sort).
+pub(crate) fn ensure_pit_sort(search_body: &mut Value, default_sort: &Value) {
     let body = search_body
         .as_object_mut()
         .expect("PIT search body must be an object");
@@ -230,7 +42,7 @@ pub(crate) fn ensure_pit_sort(search_body: &mut Value) {
         Some(value) => value.as_array().map(|a| a.is_empty()).unwrap_or(false),
     };
     if missing {
-        body.insert(&"sort", json!(["_shard_doc"]));
+        body.insert(&"sort", default_sort.clone());
     }
 }
 
@@ -295,7 +107,7 @@ pub(crate) async fn process_response_batch(
     ctx.worker_txs[worker]
         .send(RetrievalMessage::Batch(BatchJob {
             response_bytes,
-            search_type: search_type.clone(),
+            search_type: *search_type,
             reply_tx,
         }))
         .await
@@ -369,21 +181,25 @@ fn recover_batch_processing_failure(
 }
 
 pub(crate) async fn cleanup_search_context(
-    client: &Elasticsearch,
+    client: &EsClient,
     search_type: &SearchType,
     id: &str,
     slice_id: usize,
 ) {
     match search_type {
         SearchType::Scroll => {
-            let clear_scroll_body = json!({ "scroll_id": [id] });
-            if let Err(e) = client
-                .clear_scroll(ClearScrollParts::None)
-                .body(clear_scroll_body)
-                .send()
+            let body = Body::json(&serde_json::json!({ "scroll_id": [id] }));
+            match client
+                .send(Method::DELETE, &["_search", "scroll"], &[], false, body)
                 .await
             {
-                warn!("Slice {}: Failed to clear scroll context: {}", slice_id, e);
+                Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {}
+                Ok(resp) => warn!(
+                    "Slice {}: Failed to clear scroll context: HTTP {}",
+                    slice_id,
+                    resp.status()
+                ),
+                Err(e) => warn!("Slice {}: Failed to clear scroll context: {}", slice_id, e),
             }
         }
         SearchType::PointInTime => {}
@@ -429,7 +245,6 @@ pub fn spawn_retrieval_task(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use http::StatusCode;
     use indicatif::{ProgressBar, ProgressDrawTarget};
     use sonic_rs::json;
     use std::{
@@ -448,19 +263,13 @@ mod tests {
 
     fn test_context(worker_txs: Vec<mpsc::Sender<RetrievalMessage>>) -> RetrievalContext {
         RetrievalContext {
-            client: crate::elasticsearch::create_client(
-                Url::parse("http://localhost:9200/").unwrap(),
-                None,
-                None,
-                &crate::elasticsearch::ClientOptions {
-                    compression: false,
-                    request_timeout_secs: 0,
-                    insecure: false,
-                    ca_file: None,
-                },
+            client: crate::http::EsClient::new(
+                &crate::http::ClientOptions::new(Url::parse("http://localhost:9200/").unwrap()),
+                crate::http::gate::RequestGate::default(),
             )
             .unwrap(),
-            index: Arc::<str>::from("test-index"),
+            index: Some(Arc::<str>::from("test-index")),
+            pit_sort: json!(["_shard_doc"]),
             worker_txs,
             total_hits_count: Arc::new(AtomicU64::new(0)),
             input_bar: None,
@@ -469,10 +278,7 @@ mod tests {
             retrieved_bytes: Arc::new(AtomicU64::new(0)),
             start_time: Instant::now(),
             cancel: tokio_util::sync::CancellationToken::new(),
-            retry: super::RetryPolicy {
-                attempts: 0,
-                base_delay: std::time::Duration::from_millis(1),
-            },
+            retry: super::RetryPolicy::none(),
         }
     }
 
@@ -498,7 +304,7 @@ mod tests {
             "pit": { "id": "pit-id", "keep_alive": "1m" }
         });
 
-        super::ensure_pit_sort(&mut body);
+        super::ensure_pit_sort(&mut body, &json!(["_shard_doc"]));
 
         assert_eq!(body["sort"], json!(["_shard_doc"]));
     }
@@ -511,65 +317,9 @@ mod tests {
             "sort": []
         });
 
-        super::ensure_pit_sort(&mut body);
+        super::ensure_pit_sort(&mut body, &json!(["_shard_doc"]));
 
         assert_eq!(body["sort"], json!(["_shard_doc"]));
-    }
-
-    #[test]
-    fn is_cancelled_detects_sentinel() {
-        let cancelled = anyhow::Error::new(super::DumpCancelled);
-        assert!(super::is_cancelled(&cancelled));
-
-        // mod.rs wraps slice errors with context; the sentinel must survive it.
-        let wrapped = cancelled.context("Retrieval task failed");
-        assert!(super::is_cancelled(&wrapped));
-
-        assert!(!super::is_cancelled(&anyhow::anyhow!("HTTP 500")));
-    }
-
-    #[test]
-    fn retry_policy_retries_idempotent_transport_failures() {
-        use super::{RetryMode, RetryOutcome, should_retry};
-
-        assert!(should_retry(
-            RetryMode::Idempotent,
-            &RetryOutcome::TransportError
-        ));
-        for status in [408, 429, 502, 503, 504] {
-            assert!(
-                should_retry(RetryMode::Idempotent, &RetryOutcome::Status(status)),
-                "HTTP {status} must be retried for idempotent requests"
-            );
-        }
-        for status in [200, 400, 401, 403, 404, 409, 500] {
-            assert!(
-                !should_retry(RetryMode::Idempotent, &RetryOutcome::Status(status)),
-                "HTTP {status} must not be retried"
-            );
-        }
-    }
-
-    #[test]
-    fn scroll_mode_retries_only_429() {
-        use super::{RetryMode, RetryOutcome, should_retry};
-
-        assert!(should_retry(
-            RetryMode::RejectionOnly,
-            &RetryOutcome::Status(429)
-        ));
-        // A transport failure may have reached the server and advanced the
-        // scroll cursor; retrying would silently skip a page of data.
-        assert!(!should_retry(
-            RetryMode::RejectionOnly,
-            &RetryOutcome::TransportError
-        ));
-        for status in [408, 500, 502, 503, 504] {
-            assert!(
-                !should_retry(RetryMode::RejectionOnly, &RetryOutcome::Status(status)),
-                "HTTP {status} must not be retried for scroll continuations"
-            );
-        }
     }
 
     #[test]
@@ -580,7 +330,7 @@ mod tests {
             "sort": [{ "created_at": "asc" }]
         });
 
-        super::ensure_pit_sort(&mut body);
+        super::ensure_pit_sort(&mut body, &json!(["_shard_doc"]));
 
         assert_eq!(body["sort"], json!([{ "created_at": "asc" }]));
     }
@@ -621,34 +371,6 @@ mod tests {
                 is_exact: true,
             }
         );
-    }
-
-    #[test]
-    fn validate_response_bytes_preserves_success_buffer() {
-        let body = Bytes::from_static(br#"{"hits":{"hits":[]}}"#);
-        let original_ptr = body.as_ptr();
-
-        let returned =
-            super::validate_response_bytes(StatusCode::OK, body, 0, "initial search").unwrap();
-
-        assert_eq!(returned.as_ptr(), original_ptr);
-        assert_eq!(returned, Bytes::from_static(br#"{"hits":{"hits":[]}}"#));
-    }
-
-    #[test]
-    fn validate_response_bytes_reports_http_error_body() {
-        let error = super::validate_response_bytes(
-            StatusCode::NOT_FOUND,
-            Bytes::from_static(br#"{"error":"missing"}"#),
-            3,
-            "continuation search",
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("Slice 3"));
-        assert!(error.contains("HTTP 404"));
-        assert!(error.contains(r#"{"error":"missing"}"#));
     }
 
     #[tokio::test]

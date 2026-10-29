@@ -8,8 +8,6 @@ use tokio::{
     io::{AsyncWriteExt, BufWriter as TokioBufWriter, stdout as tokio_stdout},
 };
 
-use crate::cli::Cli;
-
 /// Concrete, buffered sink writers. Keeping the file variant a concrete
 /// `tokio_fs::File` (rather than a boxed `dyn AsyncWrite`) is what lets
 /// `finalize` recover the underlying handle to `sync_all()` it before commit.
@@ -273,29 +271,31 @@ fn capture_prior_mode(_final_path: &Path, _overwrite: bool) -> Option<u32> {
     None
 }
 
-/// Create an output target based on CLI arguments
-pub async fn create_output_target(args: &Cli) -> Result<OutputTarget> {
+/// Create an output target: stdout when `path` is `None`, otherwise a staged
+/// file committed atomically by [`OutputTarget::finalize`].
+pub async fn create_output_target(path: Option<&Path>, overwrite: bool) -> Result<OutputTarget> {
     log::debug!("Setting up output writer");
 
-    if args.output == "$" {
+    let Some(path) = path else {
         log::debug!("Using stdout for output");
         let stdout = tokio_stdout();
-        Ok(OutputTarget {
+        return Ok(OutputTarget {
             writer: Some(SinkWriter::Stdout(TokioBufWriter::new(stdout))),
             mode: OutputMode::Stdout,
-        })
-    } else {
-        log::debug!("Using file for output: {}", args.output);
-        let final_path = PathBuf::from(&args.output);
+        });
+    };
+    {
+        log::debug!("Using file for output: {}", path.display());
+        let final_path = path.to_path_buf();
 
-        if !args.overwrite && final_path.exists() {
+        if !overwrite && final_path.exists() {
             return Err(anyhow!(
-                "Output file '{}' already exists. Use --overwrite to replace it.",
-                args.output
+                "File `{}` already exists, quitting (use --overwrite to replace it)",
+                path.display()
             ));
         }
 
-        let prior_mode = capture_prior_mode(&final_path, args.overwrite);
+        let prior_mode = capture_prior_mode(&final_path, overwrite);
 
         let staging_path = build_staging_path(&final_path)?;
         let mut open_options = tokio_fs::OpenOptions::new();
@@ -318,7 +318,7 @@ pub async fn create_output_target(args: &Cli) -> Result<OutputTarget> {
             mode: OutputMode::StagedFile {
                 final_path,
                 staging_path,
-                overwrite: args.overwrite,
+                overwrite,
                 prior_mode,
             },
         })
@@ -347,24 +347,8 @@ fn build_staging_path(final_path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{OutputTarget, create_output_target};
-    use crate::cli::Cli;
-    use clap::Parser;
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
-
-    fn file_cli(output: &Path, overwrite: bool) -> Cli {
-        let mut argv = vec![
-            "elasticdump-rs".to_string(),
-            "--input".to_string(),
-            "http://localhost:9200/test_index".to_string(),
-            "--output".to_string(),
-            output.to_string_lossy().into_owned(),
-        ];
-        if overwrite {
-            argv.push("--overwrite".to_string());
-        }
-        Cli::parse_from(argv)
-    }
 
     /// Collects any `.{name}.part-...` staging siblings left in `dir`.
     fn staging_siblings(dir: &Path, file_name: &str) -> Vec<PathBuf> {
@@ -390,9 +374,8 @@ mod tests {
     async fn finalize_commits_staged_file_and_removes_staging() {
         let dir = tempdir().unwrap();
         let dest = dir.path().join("out.jsonl");
-        let cli = file_cli(&dest, false);
 
-        let mut target = create_output_target(&cli).await.unwrap();
+        let mut target = create_output_target(Some(&dest), false).await.unwrap();
         write_line(&mut target, b"line-1\n").await;
         target.finalize().await.unwrap();
 
@@ -407,10 +390,9 @@ mod tests {
     async fn finalize_without_overwrite_fails_if_destination_appeared_meanwhile() {
         let dir = tempdir().unwrap();
         let dest = dir.path().join("out.jsonl");
-        let cli = file_cli(&dest, false);
 
         // Destination is absent when the target is created.
-        let mut target = create_output_target(&cli).await.unwrap();
+        let mut target = create_output_target(Some(&dest), false).await.unwrap();
         write_line(&mut target, b"fresh\n").await;
 
         // A racing writer creates the destination while the dump is running.
@@ -444,8 +426,7 @@ mod tests {
         std::fs::write(&dest, b"old\n").unwrap();
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-        let cli = file_cli(&dest, true);
-        let mut target = create_output_target(&cli).await.unwrap();
+        let mut target = create_output_target(Some(&dest), true).await.unwrap();
         write_line(&mut target, b"new\n").await;
         target.finalize().await.unwrap();
 
@@ -467,8 +448,7 @@ mod tests {
         let dest = dir.path().join("out.jsonl");
         std::fs::write(&dest, b"keep-me\n").unwrap();
 
-        let cli = file_cli(&dest, true);
-        let mut target = create_output_target(&cli).await.unwrap();
+        let mut target = create_output_target(Some(&dest), true).await.unwrap();
         write_line(&mut target, b"partial\n").await;
         target.abort().await;
 

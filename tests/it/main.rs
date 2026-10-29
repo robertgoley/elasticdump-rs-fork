@@ -4,3 +4,4 @@
 mod harness;
 
 mod smoke;
+mod tls_auth;

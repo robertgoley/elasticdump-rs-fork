@@ -1676,7 +1676,8 @@ async fn test_create_data_for_manual_testing() -> Result<()> {
     println!("Run elasticdump-rs with:");
     println!(
         "cargo run -- --input {}/{} --output <your_output_file>",
-        es_url(), test_index
+        es_url(),
+        test_index
     );
     println!("=============================================\n");
 
@@ -2535,7 +2536,7 @@ async fn test_retry_recovers_from_429() -> Result<()> {
     Ok(())
 }
 
-/// Mock ES: with --retryAttempts 0 the first 429 is fatal and no retry is made.
+/// Mock ES: with --retryAttempts 0 --noImplicitRetry the first 429 is fatal and no retry is made.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_retry_attempts_zero_disables_retry() -> Result<()> {
     let mock = MockEs::serve(vec![CannedResponse::new(
@@ -2551,6 +2552,7 @@ async fn test_retry_attempts_zero_disables_retry() -> Result<()> {
         "$".into(),
         "--retryAttempts".into(),
         "0".into(),
+        "--noImplicitRetry".into(),
         "--quiet".into(),
     ])
     .await;

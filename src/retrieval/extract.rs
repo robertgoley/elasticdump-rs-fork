@@ -61,7 +61,7 @@ fn metadata_tree() -> &'static PointerTree {
     })
 }
 
-fn require_hits_array<'a>(hits: Option<LazyValue<'a>>) -> Result<LazyValue<'a>> {
+fn require_hits_array(hits: Option<LazyValue<'_>>) -> Result<LazyValue<'_>> {
     let hits = hits.ok_or_else(|| anyhow!("Elasticsearch response is missing hits.hits"))?;
     if !hits.is_array() {
         return Err(anyhow!(
@@ -72,8 +72,8 @@ fn require_hits_array<'a>(hits: Option<LazyValue<'a>>) -> Result<LazyValue<'a>> 
     Ok(hits)
 }
 
-fn count_hits_and_last_sort_raw<'a>(
-    hits: LazyValue<'a>,
+fn count_hits_and_last_sort_raw(
+    hits: LazyValue<'_>,
     search_type: &SearchType,
 ) -> Result<(u64, Option<Vec<u8>>)> {
     let mut doc_count = 0u64;

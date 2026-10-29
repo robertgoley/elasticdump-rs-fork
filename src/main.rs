@@ -1,6 +1,7 @@
-use anyhow::Result;
-
 #[tokio::main]
-async fn main() -> Result<()> {
-    elasticdump_rs::run().await
+async fn main() {
+    if let Err(error) = elasticdump_rs::run().await {
+        eprintln!("Error: {error:#}");
+        std::process::exit(elasticdump_rs::exit_code(&error));
+    }
 }

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Shared helpers for the integration test target.
 //!
 //! This module lives in a `support/` subdirectory so cargo does not compile it

@@ -6,92 +6,107 @@ use sonic_rs::JsonValueTrait;
 use sonic_rs::{Value, json};
 use tokio::fs;
 
-use crate::cli::Cli;
+/// elasticdump's default search body for ES >= 5.
+pub fn default_search_body() -> Value {
+    json!({"query": {"match_all": {}}, "stored_fields": ["*"], "_source": true})
+}
 
-/// Prepare search body JSON from CLI arguments
-pub async fn prepare_search_body(args: &Cli) -> Result<Value> {
-    let search_body_json = if let Some(search_body_str) = &args.search_body {
-        if let Some(file_path) = search_body_str.strip_prefix('@') {
-            debug!("Loading search body from file: {}", file_path);
-            let content = fs::read_to_string(file_path)
-                .await
-                .with_context(|| format!("Failed to read search body from file: {}", file_path))?;
-            sonic_rs::from_str(&content).with_context(|| {
-                format!("Failed to parse search body JSON from file: {}", file_path)
-            })?
-        } else {
-            debug!("Parsing search body from command line parameter");
-            sonic_rs::from_str(search_body_str)
-                .context("Failed to parse search body JSON string")?
-        }
-    } else {
-        debug!("No search body provided, using empty query");
-        json!({})
+/// Load `--searchBody`: inline JSON or `@path` (relative to the CWD).
+pub async fn load_search_body(raw: Option<&str>) -> Result<Value> {
+    let Some(raw) = raw else {
+        debug!("No search body provided, using elasticdump's default match_all body");
+        return Ok(default_search_body());
     };
+    if let Some(file_path) = raw.strip_prefix('@') {
+        debug!("Loading search body from file: {}", file_path);
+        let content = fs::read_to_string(file_path)
+            .await
+            .with_context(|| format!("Failed to read search body from file: {}", file_path))?;
+        sonic_rs::from_str(&content)
+            .with_context(|| format!("Failed to parse search body JSON from file: {}", file_path))
+    } else {
+        sonic_rs::from_str(raw).context("Failed to parse search body JSON string")
+    }
+}
 
-    // Ensure we have a JSON object, wrap if necessary
-    let mut final_search_body = if search_body_json.get_type() != sonic_rs::JsonType::Object {
-        debug!("Search body is not an object, wrapping in a query object");
+/// Normalise a search body and set its page `size`: `--limit`, or `--size`
+/// when that is smaller (elasticdump's `min(size, limit)`).
+pub fn finalize_search_body(body: Value, limit: usize, size: Option<u64>) -> Value {
+    let mut final_search_body = if body.get_type() != sonic_rs::JsonType::Object {
         log::warn!(
             "searchBody is not a JSON object; using it as {{\"query\": {}}} — this is almost certainly not the intended query",
-            sonic_rs::to_string(&search_body_json).unwrap_or_default()
+            sonic_rs::to_string(&body).unwrap_or_default()
         );
-        json!({ "query": search_body_json })
+        json!({ "query": body })
     } else {
-        search_body_json
+        body
     };
 
-    // Add size parameter to search body
-    let scroll_size = args.limit;
-    let search_body_obj = final_search_body.as_object_mut().unwrap(); // Safe because we ensured it's an object
-    if let Some(user_size) = search_body_obj.get(&"size") {
-        if user_size.as_u64() != Some(scroll_size as u64) {
+    let page_size = match size {
+        Some(size) if size < limit as u64 => size.max(1),
+        _ => limit as u64,
+    };
+    let obj = final_search_body.as_object_mut().unwrap();
+    if let Some(user_size) = obj.get(&"size") {
+        if user_size.as_u64() != Some(page_size) {
             log::warn!(
                 "Overriding searchBody size {} with --limit {}",
                 sonic_rs::to_string(user_size).unwrap_or_default(),
-                scroll_size
+                page_size
             );
         }
     }
-    search_body_obj.insert(&"size", json!(scroll_size));
+    obj.insert(&"size", json!(page_size));
 
     debug!(
         "Final search body: {}",
-        sonic_rs::to_string(&search_body_obj).unwrap_or_default()
+        sonic_rs::to_string(&final_search_body).unwrap_or_default()
     );
+    final_search_body
+}
 
-    Ok(final_search_body)
+/// `--searchBody` (or the default) with its page size applied.
+pub async fn prepare_search_body(
+    raw: Option<&str>,
+    limit: usize,
+    size: Option<u64>,
+) -> Result<Value> {
+    Ok(finalize_search_body(
+        load_search_body(raw).await?,
+        limit,
+        size,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::prepare_search_body;
-    use crate::cli::Cli;
-    use clap::Parser;
     use sonic_rs::json;
 
-    fn cli_with_search_body(search_body: &str, limit: &str) -> Cli {
-        Cli::parse_from([
-            "elasticdump-rs",
-            "--input",
-            "http://localhost:9200/test_index",
-            "--output",
-            "$",
-            "--searchBody",
-            search_body,
-            "--limit",
-            limit,
-        ])
+    #[tokio::test]
+    async fn default_body_matches_elasticdump() {
+        let body = prepare_search_body(None, 100, None).await.unwrap();
+        assert_eq!(
+            body,
+            json!({"query": {"match_all": {}}, "stored_fields": ["*"], "_source": true, "size": 100})
+        );
     }
 
     #[tokio::test]
     async fn warns_but_overrides_user_size() {
-        let cli = cli_with_search_body(r#"{"query":{"match_all":{}},"size":5}"#, "100");
-
-        let body = prepare_search_body(&cli).await.unwrap();
-
+        let body = prepare_search_body(Some(r#"{"query":{"match_all":{}},"size":5}"#), 100, None)
+            .await
+            .unwrap();
         assert_eq!(body["size"], json!(100));
         assert_eq!(body["query"], json!({"match_all": {}}));
+    }
+
+    #[tokio::test]
+    async fn smaller_total_size_shrinks_the_page() {
+        let body = prepare_search_body(None, 100, Some(7)).await.unwrap();
+        assert_eq!(body["size"], json!(7));
+        let body = prepare_search_body(None, 100, Some(700)).await.unwrap();
+        assert_eq!(body["size"], json!(100));
     }
 
     #[tokio::test]
@@ -99,23 +114,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("body.json");
         std::fs::write(&path, "{not json").unwrap();
-
-        let cli = cli_with_search_body(&format!("@{}", path.display()), "100");
-
-        let error = prepare_search_body(&cli).await.unwrap_err();
+        let error = prepare_search_body(Some(&format!("@{}", path.display())), 100, None)
+            .await
+            .unwrap_err();
         let rendered = format!("{error:#}");
-        assert!(
-            rendered.contains(&path.display().to_string()),
-            "parse error must name the file: {rendered}"
-        );
+        assert!(rendered.contains(&path.display().to_string()), "{rendered}");
     }
 
     #[tokio::test]
     async fn wraps_non_object_search_body_in_query() {
-        let cli = cli_with_search_body(r#""bare-string""#, "10");
-
-        let body = prepare_search_body(&cli).await.unwrap();
-
+        let body = prepare_search_body(Some(r#""bare-string""#), 10, None)
+            .await
+            .unwrap();
         assert_eq!(body["query"], json!("bare-string"));
         assert_eq!(body["size"], json!(10));
     }

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use elasticsearch::SearchParts;
 use log::{debug, info};
 use sonic_rs::{JsonValueMutTrait, JsonValueTrait, Value, json};
 
 use crate::cli::SearchType;
+use crate::http::Body;
 
 use super::{
     context::RetrievalContext,
@@ -91,7 +91,7 @@ pub(crate) async fn run_pit_slice(
     // guard aborts the coordinator so siblings parked in wait_for_generation
     // are released instead of waiting forever.
     let abort_guard = PitAbortGuard::new(shared_pit.clone());
-    ensure_pit_sort(&mut state.search_body);
+    ensure_pit_sort(&mut state.search_body, &ctx.pit_sort);
     let batch_size = pit_batch_size(&state.search_body);
 
     if ctx.cancel.is_cancelled() {
@@ -110,19 +110,15 @@ pub(crate) async fn run_pit_slice(
 
     // PIT search_after requests are idempotent (the cursor lives in the
     // request, not on the server), so full retries are safe.
+    let body = Body::sonic(&request_body);
+    let body = &body;
     let response_bytes = match send_checked_with_retry(
         ctx.retry,
         &ctx.cancel,
         RetryMode::Idempotent,
         state.slice_id,
         "initial search",
-        || {
-            ctx.client
-                .search(SearchParts::None)
-                .allow_partial_search_results(false)
-                .body(&request_body)
-                .send()
-        },
+        move || ctx.pit_search(body.clone()),
     )
     .await
     {
@@ -224,19 +220,15 @@ pub(crate) async fn run_pit_slice(
             sonic_rs::to_string(&request_body).unwrap_or_default()
         );
 
+        let body = Body::sonic(&request_body);
+        let body = &body;
         let next_response_bytes = match send_checked_with_retry(
             ctx.retry,
             &ctx.cancel,
             RetryMode::Idempotent,
             state.slice_id,
             "continuation search",
-            || {
-                ctx.client
-                    .search(SearchParts::None)
-                    .allow_partial_search_results(false)
-                    .body(&request_body)
-                    .send()
-            },
+            move || ctx.pit_search(body.clone()),
         )
         .await
         {

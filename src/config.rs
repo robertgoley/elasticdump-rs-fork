@@ -1,0 +1,312 @@
+//! Turn parsed CLI flags into clients, policies and endpoint settings.
+
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use serde_json::Value as JsonValue;
+
+use crate::cli::{Cli, RetryBackoffArg};
+use crate::endpoint::{self, Direction, EsEndpoint};
+use crate::http::gate::{IntervalLimiter, RequestGate};
+use crate::http::tls::TlsOptions;
+use crate::http::{Backoff, ClientOptions, EsClient, RetryOn, RetryPolicy};
+
+/// Parse a JSON-object flag (`--headers`, `--params`, ...) into string pairs.
+/// Non-string values are rendered as JSON.
+pub fn parse_json_pairs(flag: &str, raw: &str) -> Result<Vec<(String, String)>> {
+    let v: JsonValue =
+        serde_json::from_str(raw).with_context(|| format!("--{flag} must be a JSON object"))?;
+    let JsonValue::Object(map) = v else {
+        bail!("--{flag} must be a JSON object");
+    };
+    Ok(map
+        .into_iter()
+        .filter(|(_, v)| !v.is_null())
+        .map(|(k, v)| {
+            let s = match v {
+                JsonValue::String(s) => s,
+                other => other.to_string(),
+            };
+            (k, s)
+        })
+        .collect())
+}
+
+fn direction_pick<'a>(
+    dir: Direction,
+    input: &'a Option<String>,
+    output: &'a Option<String>,
+) -> &'a Option<String> {
+    match dir {
+        Direction::Input => input,
+        Direction::Output => output,
+    }
+}
+
+/// Headers in precedence order: `--headers`, then `--{dir}-headers`.
+pub fn headers_for(cli: &Cli, dir: Direction) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    if let Some(h) = &cli.headers {
+        out.extend(parse_json_pairs("headers", h)?);
+    }
+    if let Some(h) = direction_pick(dir, &cli.input_headers, &cli.output_headers) {
+        out.extend(parse_json_pairs(&format!("{}-headers", dir.as_str()), h)?);
+    }
+    Ok(out)
+}
+
+/// `--{dir}-params`, falling back to `--params`.
+pub fn params_for(cli: &Cli, dir: Direction) -> Result<Vec<(String, String)>> {
+    if let Some(p) = direction_pick(dir, &cli.input_params, &cli.output_params) {
+        return parse_json_pairs(&format!("{}-params", dir.as_str()), p);
+    }
+    match &cli.params {
+        Some(p) => parse_json_pairs("params", p),
+        None => Ok(vec![]),
+    }
+}
+
+/// TLS settings. The shared `--ca/--cert/--key/--pass` win over the
+/// direction-specific flags (elasticdump assignment order).
+pub fn tls_for(cli: &Cli, dir: Direction, env: &dyn Fn(&str) -> Option<String>) -> TlsOptions {
+    let (ca, cert, key, pass, insecure) = match dir {
+        Direction::Input => (
+            cli.input_ca.clone().or_else(|| cli.ca_file.clone()),
+            &cli.input_cert,
+            &cli.input_key,
+            &cli.input_pass,
+            cli.input_insecure,
+        ),
+        Direction::Output => (
+            cli.output_ca.clone(),
+            &cli.output_cert,
+            &cli.output_key,
+            &cli.output_pass,
+            cli.output_insecure,
+        ),
+    };
+    let node_insecure = env("NODE_TLS_REJECT_UNAUTHORIZED").as_deref() == Some("0");
+    TlsOptions {
+        ca: cli.ca.clone().or(ca).map(Into::into),
+        cert: cli.cert.clone().or_else(|| cert.clone()).map(Into::into),
+        key: cli.key.clone().or_else(|| key.clone()).map(Into::into),
+        pass: cli.pass.clone().or_else(|| pass.clone()),
+        insecure: cli.insecure.unwrap_or(false) || insecure.unwrap_or(false) || node_insecure,
+    }
+}
+
+pub fn request_timeout(cli: &Cli) -> Option<Duration> {
+    match (cli.timeout, cli.request_timeout_secs) {
+        (Some(0), _) => None,
+        (Some(ms), _) => Some(Duration::from_millis(ms)),
+        (None, Some(0)) | (None, None) => None,
+        (None, Some(s)) => Some(Duration::from_secs(s)),
+    }
+}
+
+/// `--retryAttempts N` retries N times. With 0 (the default), requests are
+/// still retried 4 times (elasticdump's effective `maxAttempts: 5`) unless
+/// `--noImplicitRetry` is given.
+pub fn retry_policy(cli: &Cli) -> Result<RetryPolicy> {
+    let attempts = if cli.retry_attempts > 0 {
+        cli.retry_attempts
+    } else if cli.no_implicit_retry() {
+        0
+    } else {
+        4
+    };
+    let retry_on = match &cli.retry_on {
+        Some(spec) => RetryOn::parse(spec)?,
+        None => RetryOn::default(),
+    };
+    Ok(RetryPolicy {
+        attempts,
+        base_delay: Duration::from_millis(cli.retry_delay_ms),
+        backoff: match cli.retry_backoff {
+            RetryBackoffArg::Fixed => Backoff::Fixed,
+            RetryBackoffArg::Exponential => Backoff::Exponential,
+        },
+        retry_on,
+    })
+}
+
+/// One admission gate shared by every request of the run.
+pub fn request_gate(cli: &Cli) -> RequestGate {
+    let interval = if cli.interval_cap.is_some() || cli.concurrency_interval.is_some() {
+        Some(IntervalLimiter::new(
+            cli.interval_cap.unwrap_or(5),
+            Duration::from_millis(cli.concurrency_interval.unwrap_or(5000)),
+            cli.carryover_concurrency_count.unwrap_or(true),
+        ))
+    } else {
+        None
+    };
+    RequestGate::new(cli.max_sockets, interval)
+}
+
+/// Resolve credentials for an ES endpoint (URL → auth file → env → CLI).
+pub fn resolve_endpoint_auth(
+    cli: &Cli,
+    ep: &mut EsEndpoint,
+    dir: Direction,
+    auth_file: Option<&(String, String)>,
+) {
+    let env = |k: &str| std::env::var(k).ok();
+    let (u, p) = match dir {
+        Direction::Input => (cli.username.as_deref(), cli.password.as_deref()),
+        Direction::Output => (None, None),
+    };
+    endpoint::resolve_auth(ep, dir, auth_file, &env, u, p);
+}
+
+pub fn build_client(
+    cli: &Cli,
+    ep: &EsEndpoint,
+    dir: Direction,
+    gate: RequestGate,
+) -> Result<EsClient> {
+    let env = |k: &str| std::env::var(k).ok();
+    let tls = tls_for(cli, dir, &env);
+    if (tls.cert.is_some() || tls.key.is_some()) && cli.tls_auth != Some(true) {
+        log::warn!(
+            "Client certificate flags are applied without --tlsAuth (elasticdump ignores them unless --tlsAuth is set)"
+        );
+    }
+    if tls.cert.is_some() != tls.key.is_some() {
+        return Err(anyhow!(
+            "--{d}-cert and --{d}-key (or --cert/--key) must be given together",
+            d = dir.as_str()
+        ));
+    }
+    if std::env::var("NODE_TLS_REJECT_UNAUTHORIZED").as_deref() == Ok("0") {
+        log::warn!("NODE_TLS_REJECT_UNAUTHORIZED=0: TLS certificate verification is disabled");
+    }
+    let opts = ClientOptions {
+        base: ep.base.clone(),
+        username: ep.username.clone(),
+        password: ep.password.clone(),
+        headers: headers_for(cli, dir)?,
+        params: params_for(cli, dir)?,
+        tls,
+        timeout: request_timeout(cli),
+        compress: cli.es_compress(),
+        max_sockets: cli.max_sockets,
+        debug: cli.debug(),
+    };
+    EsClient::new(&opts, gate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn cli(extra: &[&str]) -> Cli {
+        let mut v = vec!["x", "--input", "http://h:9200/i", "--output", "$"];
+        v.extend_from_slice(extra);
+        Cli::parse_from(v)
+    }
+
+    #[test]
+    fn json_pairs() {
+        let p = parse_json_pairs("params", r#"{"a":"b","n":1,"t":true,"z":null}"#).unwrap();
+        assert_eq!(
+            p,
+            vec![
+                ("a".into(), "b".into()),
+                ("n".into(), "1".into()),
+                ("t".into(), "true".into())
+            ]
+        );
+        assert!(parse_json_pairs("params", "[1]").is_err());
+        assert!(parse_json_pairs("params", "nope").is_err());
+    }
+
+    #[test]
+    fn headers_merge_and_params_fallback() {
+        let c = cli(&[
+            "--headers",
+            r#"{"X-A":"1","X-B":"g"}"#,
+            "--input-headers",
+            r#"{"X-B":"in"}"#,
+            "--params",
+            r#"{"p":"all"}"#,
+            "--output-params",
+            r#"{"o":"out"}"#,
+        ]);
+        assert_eq!(
+            headers_for(&c, Direction::Input).unwrap(),
+            vec![
+                ("X-A".to_string(), "1".to_string()),
+                ("X-B".to_string(), "g".to_string()),
+                ("X-B".to_string(), "in".to_string())
+            ]
+        );
+        assert_eq!(headers_for(&c, Direction::Output).unwrap().len(), 2);
+        assert_eq!(
+            params_for(&c, Direction::Input).unwrap(),
+            vec![("p".into(), "all".into())]
+        );
+        assert_eq!(
+            params_for(&c, Direction::Output).unwrap(),
+            vec![("o".into(), "out".into())]
+        );
+    }
+
+    #[test]
+    fn tls_precedence() {
+        let none = |_: &str| None;
+        let c = cli(&[
+            "--ca",
+            "shared.pem",
+            "--input-ca",
+            "in.pem",
+            "--output-cert",
+            "o.crt",
+        ]);
+        let t = tls_for(&c, Direction::Input, &none);
+        assert_eq!(t.ca.unwrap().to_str(), Some("shared.pem"));
+        let t = tls_for(&c, Direction::Output, &none);
+        assert_eq!(t.cert.unwrap().to_str(), Some("o.crt"));
+
+        let c = cli(&["--caFile", "legacy.pem"]);
+        assert_eq!(
+            tls_for(&c, Direction::Input, &none).ca.unwrap().to_str(),
+            Some("legacy.pem")
+        );
+        assert!(tls_for(&c, Direction::Output, &none).ca.is_none());
+
+        let c = cli(&["--output-insecure"]);
+        assert!(!tls_for(&c, Direction::Input, &none).insecure);
+        assert!(tls_for(&c, Direction::Output, &none).insecure);
+        let node = |k: &str| (k == "NODE_TLS_REJECT_UNAUTHORIZED").then(|| "0".to_string());
+        assert!(tls_for(&cli(&[]), Direction::Input, &node).insecure);
+    }
+
+    #[test]
+    fn retry_defaults_and_overrides() {
+        let p = retry_policy(&cli(&[])).unwrap();
+        assert_eq!(p.attempts, 4);
+        assert_eq!(p.base_delay, Duration::from_millis(5000));
+        assert_eq!(
+            retry_policy(&cli(&["--noImplicitRetry"])).unwrap().attempts,
+            0
+        );
+        let p = retry_policy(&cli(&["--retryAttempts", "2", "--retryDelay", "10"])).unwrap();
+        assert_eq!((p.attempts, p.base_delay), (2, Duration::from_millis(10)));
+        assert!(retry_policy(&cli(&["--retryOn", "bogus"])).is_err());
+    }
+
+    #[test]
+    fn timeout_ms_wins_over_seconds() {
+        assert_eq!(request_timeout(&cli(&[])), None);
+        assert_eq!(
+            request_timeout(&cli(&["--timeout", "1500", "--requestTimeout", "9"])),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(
+            request_timeout(&cli(&["--requestTimeout", "9"])),
+            Some(Duration::from_secs(9))
+        );
+    }
+}

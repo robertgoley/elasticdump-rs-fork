@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
-use elasticsearch::{ScrollParts, SearchParts};
 use log::{debug, info};
 use sonic_rs::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::cli::SearchType;
+use crate::http::Body;
 
 use super::{
     context::RetrievalContext,
@@ -49,27 +49,24 @@ pub(crate) async fn run_scroll_slice(
     // context instead of advancing an existing cursor, so full retries are
     // safe. A retry after a lost response can strand the previous attempt's
     // scroll context until its TTL expires; the closure logs that case.
-    let index_refs = [ctx.index.as_ref()];
-    let initial_attempted = AtomicBool::new(false);
+    let body = Body::sonic(&state.search_body);
+    let body = &body;
+    let initial_attempted = &AtomicBool::new(false);
+    let slice_id = state.slice_id;
     let response_bytes = send_checked_with_retry(
         ctx.retry,
         &ctx.cancel,
         RetryMode::Idempotent,
         state.slice_id,
         "initial search",
-        || {
+        move || {
             if initial_attempted.swap(true, Ordering::Relaxed) {
                 debug!(
                     "Slice {}: retrying initial search; a previous attempt whose response was lost may strand a scroll context until its TTL expires",
-                    state.slice_id
+                    slice_id
                 );
             }
-            ctx.client
-                .search(SearchParts::Index(&index_refs))
-                .scroll(scroll_ttl)
-                .allow_partial_search_results(false)
-                .body(&state.search_body)
-                .send()
+            ctx.scroll_search(scroll_ttl, body.clone())
         },
     )
     .await?;
@@ -134,6 +131,8 @@ pub(crate) async fn run_scroll_slice(
             })?,
         );
 
+        let body = Body::sonic(&request_body);
+        let body = &body;
         // NOT idempotent: every continuation call advances the server-side
         // cursor, so RejectionOnly retries this request only on HTTP 429,
         // where the server rejected it without moving the cursor.
@@ -143,12 +142,7 @@ pub(crate) async fn run_scroll_slice(
             RetryMode::RejectionOnly,
             state.slice_id,
             "continuation search",
-            || {
-                ctx.client
-                    .scroll(ScrollParts::None)
-                    .body(&request_body)
-                    .send()
-            },
+            move || ctx.scroll_continue(body.clone()),
         )
         .await
         {

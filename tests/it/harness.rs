@@ -58,7 +58,8 @@ impl Cluster {
 
     /// URL with admin basic-auth credentials embedded (for the CLI under test).
     pub fn url_with_auth(&self, path: &str) -> String {
-        let mut u = url::Url::parse(&format!("{}/{}", self.url, path.trim_start_matches('/'))).unwrap();
+        let mut u =
+            url::Url::parse(&format!("{}/{}", self.url, path.trim_start_matches('/'))).unwrap();
         if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
             u.set_username(user).unwrap();
             u.set_password(Some(pass)).unwrap();
@@ -139,10 +140,17 @@ impl Cluster {
 
     /// All docs of an index as (id -> (routing, _source)) using a PIT-free
     /// scroll sorted by _doc; independent of the code under test.
-    pub async fn docs(&self, index: &str) -> std::collections::BTreeMap<String, (Option<String>, Value)> {
+    pub async fn docs(
+        &self,
+        index: &str,
+    ) -> std::collections::BTreeMap<String, (Option<String>, Value)> {
         let mut out = std::collections::BTreeMap::new();
         let mut v = self
-            .ok("POST", &format!("{index}/_search?scroll=1m"), Some(json!({"size": 1000, "sort": ["_doc"]})))
+            .ok(
+                "POST",
+                &format!("{index}/_search?scroll=1m"),
+                Some(json!({"size": 1000, "sort": ["_doc"]})),
+            )
             .await;
         loop {
             let hits = v["hits"]["hits"].as_array().cloned().unwrap_or_default();
@@ -152,12 +160,19 @@ impl Cluster {
             for h in hits {
                 out.insert(
                     h["_id"].as_str().unwrap().to_string(),
-                    (h["_routing"].as_str().map(str::to_string), h["_source"].clone()),
+                    (
+                        h["_routing"].as_str().map(str::to_string),
+                        h["_source"].clone(),
+                    ),
                 );
             }
             let sid = v["_scroll_id"].as_str().unwrap().to_string();
             v = self
-                .ok("POST", "_search/scroll", Some(json!({"scroll": "1m", "scroll_id": sid})))
+                .ok(
+                    "POST",
+                    "_search/scroll",
+                    Some(json!({"scroll": "1m", "scroll_id": sid})),
+                )
                 .await;
         }
         out
@@ -280,10 +295,9 @@ pub fn raw_sources_by_id(path: &Path) -> std::collections::BTreeMap<String, Stri
     for l in lines(path) {
         let v: Value = serde_json::from_str(&l).unwrap();
         let id = v["_id"].as_str().unwrap().to_string();
-        // locate raw _source via a sonic-free scan: re-serialisation would lose
-        // big integers, so slice the text after `"_source":`.
-        let start = l.find("\"_source\":").map(|p| p + 10).unwrap();
-        m.insert(id, l[start..l.len() - 1].trim().to_string());
+        // Slice the raw bytes: re-serialisation would lose big integers.
+        let raw = sonic_rs::get(l.as_bytes(), ["_source"]).unwrap();
+        m.insert(id, raw.as_raw_str().to_string());
     }
     m
 }

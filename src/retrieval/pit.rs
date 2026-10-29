@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow};
-use elasticsearch::{Elasticsearch, OpenPointInTimeParts};
+use reqwest::Method;
+
+use crate::http::{Body, EsClient, PitApi};
 use sonic_rs::JsonValueTrait;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
@@ -11,6 +13,7 @@ fn parse_pit_open_id(body: &[u8]) -> Result<String> {
     let json: sonic_rs::Value = sonic_rs::from_slice(body)?;
     json["id"]
         .as_str()
+        .or_else(|| json["pit_id"].as_str())
         .map(ToOwned::to_owned)
         .ok_or_else(|| anyhow!("No PIT ID found in response"))
 }
@@ -42,25 +45,57 @@ pub struct SharedPitCoordinator {
 
 impl SharedPitCoordinator {
     pub async fn open(
-        client: &Elasticsearch,
+        client: &EsClient,
+        api: PitApi,
         index: &str,
         keep_alive: &str,
         active_slices: usize,
         retry: RetryPolicy,
         cancel: CancellationToken,
     ) -> Result<Self> {
-        let indices = [index];
-        let body =
-            send_checked_with_retry(retry, &cancel, RetryMode::Idempotent, 0, "PIT open", || {
-                client
-                    .open_point_in_time(OpenPointInTimeParts::Index(&indices))
-                    .keep_alive(keep_alive)
-                    .send()
-            })
-            .await?;
+        let segments: [&str; 3] = match api {
+            PitApi::Elastic => [index, "_pit", ""],
+            PitApi::OpenSearch => [index, "_search", "point_in_time"],
+        };
+        let segments: &[&str] = match api {
+            PitApi::Elastic => &segments[..2],
+            PitApi::OpenSearch => &segments[..],
+        };
+        let query = [("keep_alive", keep_alive)];
+        let query = &query;
+        let body = send_checked_with_retry(
+            retry,
+            &cancel,
+            RetryMode::Idempotent,
+            0,
+            "PIT open",
+            move || client.send(Method::POST, segments, query, false, Body::Empty),
+        )
+        .await?;
         let id = parse_pit_open_id(&body)?;
 
         Ok(Self::new_for_test(id, active_slices, cancel))
+    }
+
+    /// Best-effort PIT close (`DELETE /_pit` or `DELETE /_search/point_in_time`).
+    pub async fn close(client: &EsClient, api: PitApi, id: &str) -> Result<()> {
+        let (segments, body): (&[&str], Body) = match api {
+            PitApi::Elastic => (&["_pit"], Body::json(&serde_json::json!({ "id": id }))),
+            PitApi::OpenSearch => (
+                &["_search", "point_in_time"],
+                Body::json(&serde_json::json!({ "pit_id": [id] })),
+            ),
+        };
+        let resp = client
+            .send(Method::DELETE, segments, &[], false, body)
+            .await
+            .map_err(|e| anyhow!("PIT close request failed: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() && status.as_u16() != 404 {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("PIT close failed with HTTP {status}: {text}"));
+        }
+        Ok(())
     }
 
     pub fn new_for_test(
