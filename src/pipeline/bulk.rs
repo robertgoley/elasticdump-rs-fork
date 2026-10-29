@@ -130,6 +130,18 @@ impl<'a> Top<'a> {
         Ok(Self { members })
     }
 
+    /// The first top-level key that appears more than once. Rust would use
+    /// the first value and Node's `JSON.parse` the last, so such a document
+    /// is ambiguous and rejected (H-INJ-1, TST-INJ-008; Q13 default).
+    fn duplicate_key(&self) -> Option<&str> {
+        self.members.iter().enumerate().find_map(|(i, (k, _))| {
+            self.members[..i]
+                .iter()
+                .any(|(p, _)| p == k)
+                .then_some(k.as_ref())
+        })
+    }
+
     fn get(&self, key: &str) -> Option<&LazyValue<'a>> {
         self.members.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
@@ -343,7 +355,19 @@ impl BulkSink {
     pub fn encode_doc(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<()> {
         let action = self.opts.action;
         let top = Top::parse(line)?;
+        if let Some(k) = top.duplicate_key() {
+            bail!("duplicate key {k:?} in the document (ambiguous; rejected)");
+        }
         let source = top.get("_source");
+        if let Some(src) = source {
+            // Exactly one JSON object (TST-INJ-009).
+            if !src.is_object() {
+                bail!(
+                    "_source must be a JSON object, got {}",
+                    short(src.as_raw_str())
+                );
+            }
+        }
         let is_hit = source.is_some() || top.get("_id").is_some();
 
         out.extend_from_slice(b"{\"");
@@ -879,5 +903,22 @@ mod inj_f1_tests {
             );
         }
         assert!(Top::parse(br#"{"_index":"victim","_id":"admin","_source":"#).is_err());
+    }
+
+    /// TST-INJ-009: raw control bytes inside strings are not valid JSON.
+    #[test]
+    fn raw_control_bytes_are_rejected() {
+        assert!(check_doc_line(b"{\"a\":\"x\x01y\"}").is_err());
+        assert!(check_doc_line(b"{\"a\":\"x\x00y\"}").is_err());
+        assert!(check_doc_line(b"{\"a\":\"x\\u0001y\"}").is_ok());
+    }
+
+    /// TST-INJ-008: duplicate top-level keys are found.
+    #[test]
+    fn duplicate_keys_are_detected() {
+        let t = Top::parse(br#"{"_index":"a","_id":"1","_index":"victim"}"#).unwrap();
+        assert_eq!(t.duplicate_key(), Some("_index"));
+        let t = Top::parse(br#"{"_index":"a","_id":"1"}"#).unwrap();
+        assert_eq!(t.duplicate_key(), None);
     }
 }

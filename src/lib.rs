@@ -35,7 +35,6 @@ fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(UsageError(msg.into()))
 }
 
-/// Exit status for an error returned by [`run`].
 /// `--parseExtraFields a,_b`: names (leading `_` dropped) must match
 /// `^[a-z][a-z0-9_]*$` so they can never inject keys into the bulk action
 /// line (INJ-F4). Duplicates are dropped.
@@ -60,6 +59,7 @@ fn parse_extra_fields(raw: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Exit status for an error returned by [`run`].
 pub fn exit_code(error: &anyhow::Error) -> i32 {
     if error.downcast_ref::<UsageError>().is_some() {
         2
@@ -84,6 +84,11 @@ fn init_logging(cli: &Cli) {
 fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
     if let Some(extra) = &cli.parse_extra_fields {
         parse_extra_fields(extra)?;
+    }
+    // Header names/values with CR, LF, NUL or other invisible bytes are a
+    // usage error before anything is sent (TST-INJ-011).
+    for dir in [endpoint::Direction::Input, endpoint::Direction::Output] {
+        config::headers_for(cli, dir)?;
     }
     if cli.file_size.is_some() && cli.max_rows.is_some() {
         return Err(usage("--fileSize and --maxRows cannot be combined"));

@@ -52,7 +52,29 @@ pub fn headers_for(cli: &Cli, dir: Direction) -> Result<Vec<(String, String)>> {
     if let Some(h) = direction_pick(dir, &cli.input_headers, &cli.output_headers) {
         out.extend(parse_json_pairs(&format!("{}-headers", dir.as_str()), h)?);
     }
+    for (name, value) in &out {
+        check_header(name, value)?;
+    }
     Ok(out)
+}
+
+/// Header names must be RFC 7230 tokens; values visible ASCII, space or tab.
+/// CR/LF/NUL would allow header injection (TST-INJ-011). The value is never
+/// echoed, since it may be a secret.
+fn check_header(name: &str, value: &str) -> Result<()> {
+    let token = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if name.is_empty() || !name.chars().all(token) {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "invalid header name {:?}: only letters, digits and !#$%&'*+-.^_`|~ are allowed",
+            name.escape_debug().to_string()
+        ))));
+    }
+    if !value.chars().all(|c| c == '\t' || (' '..='~').contains(&c)) {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "invalid value for header '{name}': control characters (CR, LF, NUL, ...) and non-ASCII are not allowed"
+        ))));
+    }
+    Ok(())
 }
 
 /// `--{dir}-params`, falling back to `--params`.

@@ -393,6 +393,31 @@ mod tests {
         }
     }
 
+    /// TST-INJ-012: query values with & = # % + and Unicode are encoded so
+    /// the server decodes them unchanged (golden URLs).
+    #[test]
+    fn query_values_are_encoded_exactly() {
+        let c = client(
+            "http://h:9200/",
+            vec![("q".into(), "a&b=c#d%e+f \u{e9}".into())],
+        );
+        let u = c
+            .url(&["i", "_search"], &[("scroll_id", "AbC==/+x")], true)
+            .unwrap();
+        assert_eq!(
+            u.as_str(),
+            "http://h:9200/i/_search?scroll_id=AbC%3D%3D%2F%2Bx&q=a%26b%3Dc%23d%25e%2Bf+%C3%A9"
+        );
+        let pairs: Vec<(String, String)> = u.query_pairs().into_owned().collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("scroll_id".to_string(), "AbC==/+x".to_string()),
+                ("q".to_string(), "a&b=c#d%e+f \u{e9}".to_string())
+            ]
+        );
+    }
+
     #[test]
     fn password_without_user_is_rejected() {
         let mut o = ClientOptions::new(Url::parse("http://h:9200/").unwrap());

@@ -521,3 +521,78 @@ async fn inj_f4_extra_fields_are_deduplicated() {
         r#"{"index":{"_index":"i","_id":"1","routing":"r","pipeline":"p"}}"#
     );
 }
+
+// ------------------------------------------------------------ L-105 guards
+
+/// TST-INJ-008 / TST-INJ-009: duplicate top-level keys and a non-object
+/// `_source` are rejected per document; the valid one is still written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guards_duplicate_keys_and_non_object_source() {
+    let docs = [
+        r#"{"_index":"i","_id":"a","_index":"victim","_source":{}}"#,
+        r#"{"_index":"i","_id":"b","_id":"admin","_source":{}}"#,
+        r#"{"_index":"i","_id":"c","_source":{"x":1},"_source":{"role":"superuser"}}"#,
+        r#"{"_index":"i","_id":"d","_routing":"r","_routing":"s","_source":{}}"#,
+        r#"{"_index":"i","_id":"e","_source":[1,2]}"#,
+        r#"{"_index":"i","_id":"f","_source":"x"}"#,
+        r#"{"_index":"i","_id":"ok","_source":{"n":1}}"#,
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("in.json");
+    std::fs::write(&f, docs.join("\n") + "\n").unwrap();
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(ES7),
+        bulk_ok("index", 1),
+        CannedResponse::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#),
+    ])
+    .await;
+    let o = run(vec![
+        "--input".into(),
+        f.to_str().unwrap().into(),
+        "--output".into(),
+        mock.input_url("").trim_end_matches('/').to_string(),
+        "--noImplicitRetry".into(),
+    ])
+    .await;
+    let lines = ndjson(&bulk_body(&mock));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["index"]["_id"], "ok");
+    assert!(!o.status.success());
+    let err = stderr(&o);
+    assert!(err.contains("6 document line(s) were rejected"), "{err}");
+    assert!(err.contains("duplicate key"), "{err}");
+    assert!(err.contains("_source must be a JSON object"), "{err}");
+}
+
+/// TST-INJ-011: CR/LF/NUL or invisible bytes in --headers are a usage error,
+/// nothing is sent, and the value (maybe a secret) is not echoed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guards_header_injection_is_a_usage_error() {
+    let mock = MockEs::serve(scroll(&[])).await;
+    for (flag, h) in [
+        ("--headers", r#"{"X-A":"s3cret\r\nX-Evil: 1"}"#),
+        ("--headers", r#"{"X-A":"s3cret\n"}"#),
+        ("--headers", r#"{"X-A":"s3cret\u0000"}"#),
+        ("--input-headers", r#"{"X-A":"s3cret\u0007"}"#),
+        ("--output-headers", r#"{"X-A\r\nX-Evil":"s3cret"}"#),
+        ("--headers", r#"{"X A":"s3cret"}"#),
+        ("--headers", r#"{"X-A":"s3cr\u00e9t"}"#),
+    ] {
+        let o = run(vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+            flag.into(),
+            h.into(),
+        ])
+        .await;
+        assert_eq!(o.status.code(), Some(2), "{h}: {}", stderr(&o));
+        assert!(
+            !stderr(&o).contains("s3cr"),
+            "secret echoed: {}",
+            stderr(&o)
+        );
+    }
+    assert_eq!(mock.request_count(), 0, "{:#?}", mock.requests());
+}

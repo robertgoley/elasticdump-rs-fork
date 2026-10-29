@@ -1,0 +1,20 @@
+{
+  "task": "L-105",
+  "requirements": ["TST-INJ-008", "TST-INJ-009", "TST-INJ-011", "TST-INJ-012", "H-INJ-1", "H-INJ-2"],
+  "status": "done",
+  "decision_Q13_pending": "Duplicate top-level keys in a document line are REJECTED (safest). Node elasticdump uses last-wins (JSON.parse), the old Rust code used first-wins; rejecting removes the Rust/Node divergence an attacker could exploit. Owner to confirm (Q13).",
+  "fix": [
+    "bulk.rs Top::duplicate_key + encode_doc: any duplicate top-level key -> document rejected",
+    "encode_doc: _source must be a JSON object",
+    "raw control bytes in strings: already rejected by sonic in check_doc_line (unit test added)",
+    "config.rs check_header: header names must be RFC 7230 tokens, values visible ASCII/space/tab; usage error (exit 2) checked in validate() before any request; the value is never echoed"
+  ],
+  "tests": {
+    "injection.rs guards_duplicate_keys_and_non_object_source": "6 bad docs rejected, 1 written, exit 1",
+    "injection.rs guards_header_injection_is_a_usage_error": "7 header cases -> exit 2, 0 requests, secret not in stderr",
+    "unit": "client::query_values_are_encoded_exactly (golden URL), bulk::raw_control_bytes_are_rejected, bulk::duplicate_keys_are_detected",
+    "old_code": "0/2 e2e on old code",
+    "suite": "lib 156/0, cli_contract 22/0, injection 14/0, clippy clean"
+  },
+  "not_done": "Node interop comparison for duplicate keys (TST-INJ-008 Node part) -> A4 interop harness"
+}
