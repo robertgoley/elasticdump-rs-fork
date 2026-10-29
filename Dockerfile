@@ -39,6 +39,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # Cargo.toml declares the test targets; their sources must exist to load it.
 COPY tests ./tests
+# Workspace members (test-only tools; not built into the image).
+COPY tools ./tools
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=edrs-registry \
     --mount=type=cache,target=/src/target,id=edrs-target \
     cargo build --locked --release --bin elasticdump-rs \

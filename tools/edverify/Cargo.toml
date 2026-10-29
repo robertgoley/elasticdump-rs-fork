@@ -1,0 +1,25 @@
+[package]
+name = "edverify"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Test-only document-set verifier for elasticdump-rs (TST-INF-005)"
+license = "MIT"
+publish = false
+
+# Independent of the code under test: no dependency on elasticdump-rs.
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.4", features = ["derive"] }
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+sha2 = "0.10"
+sonic-rs = "0.5.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+zstd = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+zstd = { version = "0.14", default-features = false }

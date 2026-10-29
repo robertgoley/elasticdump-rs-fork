@@ -8,6 +8,12 @@ authors = ["TenYears <opensource@tenyears.tech>"]
 license = "MIT"
 repository = "https://github.com/tenyears-tech/elasticdump-rs"
 
+# Test-only tools (TST-INF-005/009) share the lock file; `cargo build`/`test`
+# at the root still builds only elasticdump-rs.
+[workspace]
+members = [".", "tools/edverify"]
+default-members = ["."]
+
 [lib]
 name = "elasticdump_rs"
 path = "src/lib.rs"

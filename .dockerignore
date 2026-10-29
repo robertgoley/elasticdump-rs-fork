@@ -1,4 +1,4 @@
-# Only Cargo.toml, Cargo.lock, src/ and tests/ are needed to build.
+# Only Cargo.toml, Cargo.lock, src/, tests/ and tools/ (workspace members) are needed to build.
 target/
 **/target/
 .git/

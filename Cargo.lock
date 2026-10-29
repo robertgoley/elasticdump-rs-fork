@@ -470,6 +470,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "edverify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "reqwest",
+ "serde_json",
+ "sha2",
+ "sonic-rs",
+ "tempfile",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "elasticdump-rs"
 version = "0.1.0"
 dependencies = [
