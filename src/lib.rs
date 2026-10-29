@@ -36,6 +36,30 @@ fn usage(msg: impl Into<String>) -> anyhow::Error {
 }
 
 /// Exit status for an error returned by [`run`].
+/// `--parseExtraFields a,_b`: names (leading `_` dropped) must match
+/// `^[a-z][a-z0-9_]*$` so they can never inject keys into the bulk action
+/// line (INJ-F4). Duplicates are dropped.
+fn parse_extra_fields(raw: &str) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for f in raw.split(',').map(|f| f.trim().trim_start_matches('_')) {
+        if f.is_empty() {
+            continue;
+        }
+        let mut chars = f.chars();
+        let ok = chars.next().is_some_and(|c| c.is_ascii_lowercase())
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !ok {
+            return Err(usage(format!(
+                "--parseExtraFields: invalid field name {f:?} (allowed: a-z, 0-9 and _, starting with a letter)"
+            )));
+        }
+        if !out.iter().any(|o| o == f) {
+            out.push(f.to_string());
+        }
+    }
+    Ok(out)
+}
+
 pub fn exit_code(error: &anyhow::Error) -> i32 {
     if error.downcast_ref::<UsageError>().is_some() {
         2
@@ -58,6 +82,9 @@ fn init_logging(cli: &Cli) {
 }
 
 fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
+    if let Some(extra) = &cli.parse_extra_fields {
+        parse_extra_fields(extra)?;
+    }
     if cli.file_size.is_some() && cli.max_rows.is_some() {
         return Err(usage("--fileSize and --maxRows cannot be combined"));
     }
@@ -219,12 +246,11 @@ async fn build_sink(
                 .map(String::from)
                 .to_vec();
             if let Some(extra) = &cli.parse_extra_fields {
-                meta_fields.extend(
-                    extra
-                        .split(',')
-                        .map(|f| f.trim().trim_start_matches('_').to_string())
-                        .filter(|f| !f.is_empty()),
-                );
+                for f in parse_extra_fields(extra)? {
+                    if !meta_fields.contains(&f) {
+                        meta_fields.push(f);
+                    }
+                }
             }
             let max_bulk_bytes = match &cli.max_bulk_bytes {
                 Some(raw) => raw

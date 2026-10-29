@@ -1,0 +1,7 @@
+{
+  "task": "L-104",
+  "requirements": ["INJ-F4"],
+  "status": "done",
+  "fix": "lib.rs parse_extra_fields: names (leading _ dropped) must match ^[a-z][a-z0-9_]*$ else usage error (exit 2) before any request; de-duplicated against the defaults (routing, parent, timestamp, ttl) and each other; bulk.rs writes meta field names with push_json_str",
+  "tests": "inj_f4_extra_field_names_are_validated (7 bad names -> exit 2), inj_f4_extra_fields_are_deduplicated (routing,_pipeline,pipeline -> one routing, one pipeline): 0/2 on old code, 2/2 on new"
+}

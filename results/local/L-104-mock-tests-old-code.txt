@@ -1,0 +1,3 @@
+test inj_f4_extra_fields_are_deduplicated ... FAILED
+test inj_f4_extra_field_names_are_validated ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 10 filtered out; finished in 20.03s

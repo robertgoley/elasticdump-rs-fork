@@ -378,9 +378,9 @@ impl BulkSink {
                     continue;
                 }
                 if let Some(v) = meta(&top, name) {
-                    out.extend_from_slice(b",\"");
-                    out.extend_from_slice(name.as_bytes());
-                    out.extend_from_slice(b"\":");
+                    out.push(b',');
+                    push_json_str(out, name);
+                    out.push(b':');
                     if matches!(name.as_str(), "routing" | "parent") {
                         push_id_like_raw(out, name, &v)?;
                     } else {

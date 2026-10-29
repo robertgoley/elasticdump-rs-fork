@@ -456,3 +456,68 @@ async fn inj_f3_strict_mode_sends_nothing() {
         mock.requests()
     );
 }
+
+// ------------------------------------------------------------ INJ-F4
+
+/// `--parseExtraFields` names are restricted to `^[a-z][a-z0-9_]*$`.
+#[test]
+fn inj_f4_extra_field_names_are_validated() {
+    for bad in [
+        r#"x":1,"_index":"other"#,
+        "Pipeline",
+        "a-b",
+        "a.b",
+        "9x",
+        "a b",
+        "\u{e9}",
+    ] {
+        let o = bin()
+            .args([
+                "--input",
+                "/dev/null",
+                "--output",
+                "http://127.0.0.1:1/i",
+                "--parseExtraFields",
+                bad,
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(2), "{bad:?}: {}", stderr(&o));
+        assert!(stderr(&o).contains("--parseExtraFields"), "{}", stderr(&o));
+    }
+}
+
+/// Valid names are de-duplicated against the defaults and each other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f4_extra_fields_are_deduplicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("in.json");
+    std::fs::write(
+        &f,
+        "{\"_index\":\"i\",\"_id\":\"1\",\"_routing\":\"r\",\"_pipeline\":\"p\",\"_source\":{}}\n",
+    )
+    .unwrap();
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(ES7),
+        bulk_ok("index", 1),
+        CannedResponse::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#),
+    ])
+    .await;
+    let o = run(vec![
+        "--input".into(),
+        f.to_str().unwrap().into(),
+        "--output".into(),
+        mock.input_url("").trim_end_matches('/').to_string(),
+        "--parseExtraFields".into(),
+        "routing,_pipeline,pipeline".into(),
+        "--noImplicitRetry".into(),
+    ])
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let body = bulk_body(&mock);
+    let action = body.lines().next().unwrap();
+    assert_eq!(
+        action,
+        r#"{"index":{"_index":"i","_id":"1","routing":"r","pipeline":"p"}}"#
+    );
+}
