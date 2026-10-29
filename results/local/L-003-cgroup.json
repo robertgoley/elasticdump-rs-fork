@@ -1,0 +1,15 @@
+{
+ "task": "L-003 (sudo un-deferred)",
+ "date": "2026-10-29",
+ "mode": "cgroup v2 child /sys/fs/cgroup/edrs-test/run-<pid> (memory.max, memory.swap.max=0, pids.max), sudo only for cgroup create/limits/move/remove",
+ "selftest": [
+  "PASS python 200 MiB under 64M OOM-killed",
+  "PASS no stray cgroup",
+  "PASS elasticdump-rs under 48M OOM-killed",
+  "PASS no final output after OOM kill (atomic commit)",
+  "INFO stale staging files left by SIGKILL: 1",
+  "PASS under 400M completes, output identical (memory.peak=394145792)",
+  "PASS no stray cgroup at end"
+ ],
+ "finding": "SIGKILL (OOM) leaves a hidden staging file .<name>.part-<pid>-<n> next to the output; nothing sweeps stale ones on the next run (decision for owner: add a sweep of staging files whose pid is dead)"
+}
