@@ -22,6 +22,19 @@ jobs:
       - run: cargo test --lib --bins
       - run: cargo test --test cli_contract
 
+  # SUP-* supply-chain gates (TEST-REQUIREMENTS §7.3, TASKS-LOCAL A2).
+  supply-chain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install --locked --version 0.10.3 cargo-vet
+      # L-201 / SUP-004: every crate audited (imported audits) or exempted.
+      - run: cargo vet --locked
+
   it:
     runs-on: ubuntu-24.04
     strategy:

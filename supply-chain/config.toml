@@ -1,0 +1,1058 @@
+
+# cargo-vet config file
+
+[cargo-vet]
+version = "0.10"
+
+[imports.bytecode-alliance]
+url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+[imports.embark-studios]
+url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
+
+[imports.google]
+url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+
+[imports.isrg]
+url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/audits.toml"
+
+[imports.mozilla]
+url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[imports.zcash]
+url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
+
+[[exemptions.aes]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ahash]]
+version = "0.8.12"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.aho-corasick]]
+version = "1.1.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anstream]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anstyle]]
+version = "1.0.14"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anstyle-parse]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anstyle-query]]
+version = "1.1.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anstyle-wincon]]
+version = "3.0.11"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.anyhow]]
+version = "1.0.104"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.async-compression]]
+version = "0.4.51"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.base64]]
+version = "0.23.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.base64ct]]
+version = "1.8.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.bitflags]]
+version = "2.13.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.block-padding]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.bytes]]
+version = "1.12.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.bytesize]]
+version = "2.7.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.cbc]]
+version = "0.1.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.cc]]
+version = "1.10.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.cfg-if]]
+version = "1.0.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.clap]]
+version = "4.6.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.clap_builder]]
+version = "4.6.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.clap_derive]]
+version = "4.6.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.clap_lex]]
+version = "1.1.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.colorchoice]]
+version = "1.0.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.compression-codecs]]
+version = "0.4.46"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.compression-core]]
+version = "0.4.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.console]]
+version = "0.16.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.const-oid]]
+version = "0.9.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.const-random]]
+version = "0.1.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.const-random-macro]]
+version = "0.1.16"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.core-foundation]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.cpufeatures]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.crc32fast]]
+version = "1.5.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.crypto-common]]
+version = "0.1.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.defmt]]
+version = "1.2.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.defmt-macros]]
+version = "1.2.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.defmt-parser]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.digest]]
+version = "0.10.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.displaydoc]]
+version = "0.2.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.dlv-list]]
+version = "0.5.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.encode_unicode]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.env_filter]]
+version = "2.0.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.env_logger]]
+version = "0.11.11"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.equivalent]]
+version = "1.0.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.fastrand]]
+version = "2.5.0"
+criteria = "safe-to-run"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.faststr]]
+version = "0.2.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.find-msvc-tools]]
+version = "0.1.15"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.flate2]]
+version = "1.1.10"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.futures-channel]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.futures-sink]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.futures-task]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.futures-util]]
+version = "0.3.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.generic-array]]
+version = "0.14.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.getrandom]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.getrandom]]
+version = "0.3.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.h2]]
+version = "0.4.20"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.hashbrown]]
+version = "0.14.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.http]]
+version = "1.5.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.http-body]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.http-body-util]]
+version = "0.1.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.httparse]]
+version = "1.10.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.hyper]]
+version = "1.12.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.hyper-rustls]]
+version = "0.27.10"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.hyper-util]]
+version = "0.1.21"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.indexmap]]
+version = "2.14.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.indicatif]]
+version = "0.18.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ipnet]]
+version = "2.12.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.is_terminal_polyfill]]
+version = "1.70.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.itoa]]
+version = "1.0.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.jiff]]
+version = "0.2.38"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.jiff-core]]
+version = "0.1.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.jiff-static]]
+version = "0.2.38"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.jobserver]]
+version = "0.1.35"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.js-sys]]
+version = "0.3.106"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.libc]]
+version = "0.2.191"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.linux-raw-sys]]
+version = "0.12.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.lipsum]]
+version = "0.9.1"
+criteria = "safe-to-run"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.litemap]]
+version = "0.8.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.lock_api]]
+version = "0.4.14"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.log]]
+version = "0.4.34"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.memchr]]
+version = "2.8.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.miniz_oxide]]
+version = "0.9.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.mio]]
+version = "1.2.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.munge]]
+version = "0.4.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.munge_macro]]
+version = "0.4.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.once_cell]]
+version = "1.21.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.once_cell_polyfill]]
+version = "1.70.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.openssl-probe]]
+version = "0.2.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ordered-multimap]]
+version = "0.7.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.parking_lot]]
+version = "0.12.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.parking_lot_core]]
+version = "0.9.12"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.pbkdf2]]
+version = "0.12.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.pin-project-lite]]
+version = "0.2.17"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.pkcs5]]
+version = "0.7.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.pkcs8]]
+version = "0.10.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.portable-atomic]]
+version = "1.15.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.portable-atomic-util]]
+version = "0.2.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.potential_utf]]
+version = "0.1.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.proc-macro2]]
+version = "1.0.107"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ptr_meta]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ptr_meta_derive]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.quinn]]
+version = "0.11.12"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.quinn-proto]]
+version = "0.11.19"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.r-efi]]
+version = "5.3.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.r-efi]]
+version = "6.0.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rancor]]
+version = "0.1.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rand]]
+version = "0.8.8"
+criteria = "safe-to-run"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.redox_syscall]]
+version = "0.5.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ref-cast]]
+version = "1.0.27"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ref-cast-impl]]
+version = "1.0.27"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.regex]]
+version = "1.13.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.regex-automata]]
+version = "0.4.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.regex-syntax]]
+version = "0.8.11"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rend]]
+version = "0.5.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.reqwest]]
+version = "0.12.28"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ring]]
+version = "0.17.14"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rkyv]]
+version = "0.8.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rkyv_derive]]
+version = "0.8.18"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rust-ini]]
+version = "0.21.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustc-hash]]
+version = "2.1.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustix]]
+version = "1.1.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustls]]
+version = "0.23.46"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustls-native-certs]]
+version = "0.8.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustls-pki-types]]
+version = "1.15.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustls-webpki]]
+version = "0.103.16"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rustversion]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.ryu]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.salsa20]]
+version = "0.10.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.schannel]]
+version = "0.1.30"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.scopeguard]]
+version = "1.2.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.scrypt]]
+version = "0.11.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.security-framework]]
+version = "3.7.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.security-framework-sys]]
+version = "2.17.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.serde]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.serde_core]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.serde_derive]]
+version = "1.0.229"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.serde_json]]
+version = "1.0.154"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.serde_urlencoded]]
+version = "0.7.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.signal-hook-registry]]
+version = "1.4.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.simd-adler32]]
+version = "0.3.10"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.slab]]
+version = "0.4.12"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.smallvec]]
+version = "1.16.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.socket2]]
+version = "0.6.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.sonic-number]]
+version = "0.1.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.sonic-rs]]
+version = "0.5.10"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.sonic-simd]]
+version = "0.1.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.spki]]
+version = "0.7.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.stable_deref_trait]]
+version = "1.2.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.syn]]
+version = "2.0.119"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.syn]]
+version = "3.0.9"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.synstructure]]
+version = "0.14.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.terminal_size]]
+version = "0.4.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.thiserror]]
+version = "2.0.21"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.thiserror-impl]]
+version = "2.0.21"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tiny-keccak]]
+version = "2.0.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tinystr]]
+version = "0.8.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tokio]]
+version = "1.54.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tokio-macros]]
+version = "2.7.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tokio-rustls]]
+version = "0.26.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tokio-util]]
+version = "0.7.20"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tower]]
+version = "0.5.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tower-http]]
+version = "0.6.11"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tower-layer]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tower-service]]
+version = "0.3.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tracing]]
+version = "0.1.44"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.typenum]]
+version = "1.20.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.unicode-ident]]
+version = "1.0.27"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.unicode-width]]
+version = "0.2.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.unit-prefix]]
+version = "0.5.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.url]]
+version = "2.5.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.uuid]]
+version = "1.26.1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.version_check]]
+version = "0.9.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.want]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasi]]
+version = "0.11.1+wasi-snapshot-preview1"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasm-bindgen]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasm-bindgen-futures]]
+version = "0.4.79"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasm-bindgen-macro]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasm-bindgen-macro-support]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.wasm-bindgen-shared]]
+version = "0.2.129"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.web-sys]]
+version = "0.3.106"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.webpki-roots]]
+version = "1.0.11"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows-sys]]
+version = "0.52.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows-sys]]
+version = "0.61.2"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows-targets]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_aarch64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_aarch64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_i686_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_i686_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_i686_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_x86_64_gnu]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_x86_64_gnullvm]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.windows_x86_64_msvc]]
+version = "0.52.6"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.writeable]]
+version = "0.6.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.yoke]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.yoke-derive]]
+version = "0.8.4"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerocopy]]
+version = "0.8.63"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerocopy-derive]]
+version = "0.8.63"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerofrom]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerofrom-derive]]
+version = "0.1.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerotrie]]
+version = "0.2.5"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerovec]]
+version = "0.11.9"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zerovec-derive]]
+version = "0.11.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zlib-rs]]
+version = "0.6.8"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zmij]]
+version = "1.0.23"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zstd]]
+version = "0.14.3"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zstd-safe]]
+version = "8.2.0"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.zstd-sys]]
+version = "2.1.2+zstd.1.5.7"
+criteria = "safe-to-deploy"
+notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
