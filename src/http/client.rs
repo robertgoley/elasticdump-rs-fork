@@ -45,7 +45,7 @@ impl Body {
 }
 
 /// Everything needed to build a client for one endpoint.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClientOptions {
     /// Base URL ending in `/` (may include a proxy base path).
     pub base: Url,
@@ -62,6 +62,30 @@ pub struct ClientOptions {
     pub compress: bool,
     pub max_sockets: Option<usize>,
     pub debug: bool,
+    /// `--noProxy`: ignore HTTP(S)_PROXY / ALL_PROXY from the environment.
+    pub no_proxy: bool,
+}
+
+/// Manual `Debug` that never prints the password, header values or query
+/// parameter values (F-08).
+impl std::fmt::Debug for ClientOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names =
+            |v: &Vec<(String, String)>| v.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
+        f.debug_struct("ClientOptions")
+            .field("base", &crate::endpoint::redacted_url(&self.base))
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("header_names", &names(&self.headers))
+            .field("param_names", &names(&self.params))
+            .field("tls", &self.tls)
+            .field("timeout", &self.timeout)
+            .field("compress", &self.compress)
+            .field("max_sockets", &self.max_sockets)
+            .field("debug", &self.debug)
+            .field("no_proxy", &self.no_proxy)
+            .finish()
+    }
 }
 
 impl ClientOptions {
@@ -77,6 +101,7 @@ impl ClientOptions {
             compress: false,
             max_sockets: None,
             debug: false,
+            no_proxy: false,
         }
     }
 }
@@ -89,6 +114,85 @@ struct Inner {
     gate: RequestGate,
     info: OnceCell<ClusterInfo>,
     debug: bool,
+}
+
+/// Query parameters whose values are safe to log; every other value (for
+/// example an `api_key` passed with `--params`) is masked (F-05).
+const LOGGABLE_PARAMS: &[&str] = &[
+    "scroll",
+    "keep_alive",
+    "size",
+    "from",
+    "refresh",
+    "wait_for_status",
+    "timeout",
+    "ignore_unavailable",
+    "allow_no_indices",
+    "expand_wildcards",
+    "pretty",
+    "format",
+    "include_type_name",
+    "master_timeout",
+    "cluster_manager_timeout",
+    "seq_no_primary_term",
+    "version",
+    "slices",
+    "flat_settings",
+    "include_defaults",
+    "local",
+];
+
+/// A request URL for the debug log: password and non-allow-listed query
+/// values masked.
+pub fn redacted_request_url(url: &Url) -> String {
+    let mut out = url.clone();
+    if url.password().is_some() {
+        let _ = out.set_password(Some("***"));
+    }
+    if url.query().is_some() {
+        let pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .map(|(k, v)| {
+                let v = if LOGGABLE_PARAMS.contains(&k.as_ref()) {
+                    v.into_owned()
+                } else {
+                    "***".to_string()
+                };
+                (k.into_owned(), v)
+            })
+            .collect();
+        out.query_pairs_mut().clear().extend_pairs(pairs);
+    }
+    out.to_string()
+}
+
+/// The proxy reqwest would use for `base` from the environment, if any:
+/// `(variable, proxy URL)`. `NO_PROXY` entries (`*`, exact host or
+/// `.suffix`/`suffix`) disable it.
+fn env_proxy_for(base: &Url) -> Option<(String, String)> {
+    let get = |k: &str| {
+        std::env::var(k)
+            .ok()
+            .or_else(|| std::env::var(k.to_ascii_lowercase()).ok())
+            .filter(|v| !v.trim().is_empty())
+    };
+    let host = base.host_str().unwrap_or("").to_ascii_lowercase();
+    if let Some(np) = get("NO_PROXY") {
+        for entry in np.split(',').map(|e| e.trim().to_ascii_lowercase()) {
+            let e = entry.trim_start_matches('.');
+            if entry == "*" || (!e.is_empty() && (host == e || host.ends_with(&format!(".{e}")))) {
+                return None;
+            }
+        }
+    }
+    let scheme_var = if base.scheme() == "https" {
+        "HTTPS_PROXY"
+    } else {
+        "HTTP_PROXY"
+    };
+    [scheme_var, "ALL_PROXY"]
+        .into_iter()
+        .find_map(|k| get(k).map(|v| (k.to_string(), v)))
 }
 
 /// Error from [`EsClient::send`]: a transport error, or a request that was
@@ -182,6 +286,17 @@ impl EsClient {
         if let Some(n) = opts.max_sockets {
             builder = builder.pool_max_idle_per_host(n);
         }
+        if opts.no_proxy {
+            builder = builder.no_proxy();
+        } else if let Some((var, proxy)) = env_proxy_for(&opts.base) {
+            // reqwest honours the proxy environment like Node's `request`;
+            // make the extra hop visible (F-07).
+            log::warn!(
+                "Requests to {} go through proxy {} (from {var}); use --noProxy to connect directly",
+                crate::endpoint::redacted_url(&opts.base),
+                crate::endpoint::redacted_endpoint(&proxy)
+            );
+        }
         let http = builder.build().context("Failed to build HTTP client")?;
 
         let mut base = opts.base.clone();
@@ -267,7 +382,7 @@ impl EsClient {
     ) -> std::result::Result<reqwest::Response, SendError> {
         let url = self.url(segments, query, with_params)?;
         if self.0.debug {
-            log::debug!("{} {}", method, url);
+            log::debug!("{} {}", method, redacted_request_url(&url));
         }
         let mut rb = self.0.http.request(method, url);
         rb = match body {
@@ -416,6 +531,34 @@ mod tests {
                 ("q".to_string(), "a&b=c#d%e+f \u{e9}".to_string())
             ]
         );
+    }
+
+    /// F-05: --debug never logs secret query values or passwords.
+    #[test]
+    fn debug_url_masks_params_and_password() {
+        let u =
+            Url::parse("http://u:pw@h:9200/i/_search?scroll=1m&api_key=SECRET&size=10").unwrap();
+        let r = redacted_request_url(&u);
+        assert_eq!(
+            r,
+            "http://u:***@h:9200/i/_search?scroll=1m&api_key=***&size=10"
+        );
+        assert!(!r.contains("SECRET") && !r.contains(":pw@"));
+    }
+
+    /// F-08: Debug output never contains secrets.
+    #[test]
+    fn client_options_debug_is_redacted() {
+        let mut o = ClientOptions::new(Url::parse("http://h:9200/").unwrap());
+        o.password = Some("PW-SECRET".into());
+        o.headers = vec![("Authorization".into(), "ApiKey HDR-SECRET".into())];
+        o.params = vec![("api_key".into(), "Q-SECRET".into())];
+        o.tls.pass = Some("TLS-SECRET".into());
+        let d = format!("{o:?}");
+        for s in ["PW-SECRET", "HDR-SECRET", "Q-SECRET", "TLS-SECRET"] {
+            assert!(!d.contains(s), "{d}");
+        }
+        assert!(d.contains("Authorization"), "{d}");
     }
 
     #[test]

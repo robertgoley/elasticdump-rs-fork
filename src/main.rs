@@ -1,7 +1,9 @@
 #[tokio::main]
 async fn main() {
     if let Err(error) = elasticdump_rs::run().await {
-        eprintln!("Error: {error:#}");
+        let args: Vec<String> = std::env::args().collect();
+        let msg = elasticdump_rs::endpoint::scrub_args(&format!("{error:#}"), &args);
+        eprintln!("Error: {msg}");
         std::process::exit(elasticdump_rs::exit_code(&error));
     }
 }

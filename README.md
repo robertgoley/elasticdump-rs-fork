@@ -87,7 +87,15 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices`, `--workers`, `--bufferSize`,
 `--searchType scroll|pit`, `--skip-existing`, `--excludeSettings`, `--maxBulkBytes`, `--retryOn`,
 `--retryBackoff`, `--noImplicitRetry`, `--insecure`/`--input-insecure`/`--output-insecure`, `--username`/`--password`
-(input), `--caFile`, `--requestTimeout`.
+(input), `--caFile`, `--requestTimeout`, `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
+environment proxy is used, a warning names it).
+
+Input safety: every hit is written as exactly one NDJSON line (pretty-printed `_source` is flattened),
+a bulk input line that is not exactly one JSON object, has duplicate top-level keys, a non-object
+`_source`, a non-string `_id`/`routing`/`parent`, a non-integer `version` or an invalid index name
+(`*`, `?`, `,`, `_all`, `.`, `..`, leading `-_+`, upper case, > 255 bytes) is rejected on its own and
+makes the run exit 1. `--headers` with CR/LF/NUL is a usage error. `--debug` masks query values
+except a small allow-list (`scroll`, `size`, ...).
 
 Metadata types: `index`, `analyzer`, `alias`, `template`, `component_template`, `index_template`, `policy`
 and `script` (see [Types](#types)). Index renaming: `--renamePrefix`, `--renameIndex`, `--renameAliases`,

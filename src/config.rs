@@ -214,6 +214,7 @@ pub fn build_client(
         compress: cli.es_compress(),
         max_sockets: cli.max_sockets,
         debug: cli.debug(),
+        no_proxy: cli.no_proxy(),
     };
     EsClient::new(&opts, gate)
 }

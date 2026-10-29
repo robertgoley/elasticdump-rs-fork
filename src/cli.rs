@@ -92,7 +92,7 @@ fn parse_type(value: &str) -> Result<DumpType, String> {
     DumpType::parse(value)
 }
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Clone)]
 #[command(
     name = "elasticdump-rs",
     author,
@@ -413,6 +413,10 @@ pub struct Cli {
     #[arg(long = "noImplicitRetry", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub no_implicit_retry: Option<bool>,
 
+    /// Extension: ignore HTTP_PROXY/HTTPS_PROXY/ALL_PROXY from the environment
+    #[arg(long = "noProxy", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub no_proxy: Option<bool>,
+
     // -------------------------------------------------------- auth and TLS
     /// INI file with user= and password= used when a URL has no credentials
     #[arg(long = "httpAuthFile")]
@@ -491,6 +495,15 @@ pub struct Cli {
     pub custom_backoff: Option<String>,
 }
 
+/// Manual `Debug`: the CLI holds passwords (`--password`, `--input-pass`,
+/// ...), URLs with credentials and headers, none of which may ever be
+/// printed by a stray `{:?}` (F-08).
+impl std::fmt::Debug for Cli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cli").finish_non_exhaustive()
+    }
+}
+
 fn is(v: Option<bool>) -> bool {
     v.unwrap_or(false)
 }
@@ -504,6 +517,9 @@ impl Cli {
     }
     pub fn debug(&self) -> bool {
         is(self.debug)
+    }
+    pub fn no_proxy(&self) -> bool {
+        is(self.no_proxy)
     }
     pub fn es_compress(&self) -> bool {
         is(self.es_compress)

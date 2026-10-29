@@ -1,0 +1,5 @@
+test schemeless_url_is_masked_and_warned ... FAILED
+test env_proxy_is_visible_and_can_be_disabled ... FAILED
+test debug_log_masks_params_and_credentials ... FAILED
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+error: test failed, to rerun pass `--test secrets`

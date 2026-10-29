@@ -33,7 +33,7 @@ impl Direction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct EsEndpoint {
     /// Scheme, host, port and base path (ending in `/`), no credentials.
     pub base: Url,
@@ -43,6 +43,19 @@ pub struct EsEndpoint {
     pub doc_type: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+}
+
+/// Manual `Debug`: the password is never printed (F-08).
+impl std::fmt::Debug for EsEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EsEndpoint")
+            .field("base", &self.base.as_str())
+            .field("index", &self.index)
+            .field("doc_type", &self.doc_type)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,8 +84,61 @@ pub fn redacted_url(url: &Url) -> String {
 pub fn redacted_endpoint(raw: &str) -> String {
     match Url::parse(raw) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => redacted_url(&url),
-        _ => raw.to_string(),
+        // Not a parseable http(s) URL (a typo, a scheme-less
+        // `user:pw@host:9200/idx` that became a file path, ...): still mask
+        // anything that looks like `user:password@` (F-06).
+        _ => mask_userinfo(raw),
     }
+}
+
+/// Replace the password in `[scheme://]user:password@...` with `***`.
+/// Everything between the first `:` of the authority and the LAST `@` is
+/// masked, so a password containing `@`, `/` or spaces never leaks.
+fn mask_userinfo(raw: &str) -> String {
+    let (scheme, rest) = match raw.find("://") {
+        Some(i) => raw.split_at(i + 3),
+        None => ("", raw),
+    };
+    let Some(at) = rest.rfind('@') else {
+        return raw.to_string();
+    };
+    match rest[..at].find(':') {
+        Some(colon) => format!("{scheme}{}:***{}", &rest[..colon], &rest[at..]),
+        None => raw.to_string(),
+    }
+}
+
+/// Replace every command-line argument that carries `user:password@` with
+/// its masked form inside `msg` (error messages may quote a file path that
+/// was really a mistyped URL; F-06).
+pub fn scrub_args(msg: &str, args: &[String]) -> String {
+    let mut out = msg.to_string();
+    for a in args {
+        let masked = mask_userinfo(a);
+        if masked != *a && !a.is_empty() {
+            out = out.replace(a.as_str(), &masked);
+        }
+        // `--input=user:pw@...`
+        if let Some((_, v)) = a.split_once('=') {
+            let masked = mask_userinfo(v);
+            if masked != v && !v.is_empty() {
+                out = out.replace(v, &masked);
+            }
+        }
+    }
+    out
+}
+
+/// `user:pw@host...` without a scheme is read as a FILE path; warn, since the
+/// user probably meant a URL (F-06, BRK-CLI-008).
+fn looks_like_url_without_scheme(raw: &str) -> bool {
+    let head = raw.split('/').next().unwrap_or("");
+    head.contains('@')
+        || (head.contains(':')
+            && head
+                .rsplit(':')
+                .next()
+                .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
 }
 
 fn decode_component(raw: &str, what: &str, redact: bool) -> Result<String> {
@@ -118,6 +184,12 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         }
         if index_override.is_some() {
             log::warn!("--{flag}-index is ignored for file endpoints");
+        }
+        if looks_like_url_without_scheme(raw) {
+            log::warn!(
+                "--{flag} {} is treated as a FILE path; add http:// or https:// if it is a cluster",
+                mask_userinfo(raw)
+            );
         }
         return Ok(Endpoint::File(PathBuf::from(raw)));
     }
@@ -362,5 +434,32 @@ mod tests {
         std::fs::write(&bad, "user=alice\n").unwrap();
         let err = read_auth_file(bad.to_str().unwrap()).unwrap_err();
         assert!(err.to_string().contains("Malformed Auth File"));
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    /// F-06: unparseable or scheme-less endpoints are still masked.
+    #[test]
+    fn redacted_endpoint_masks_userinfo_without_a_valid_url() {
+        assert_eq!(
+            redacted_endpoint("elastic:s3cr3t@host:9200/idx"),
+            "elastic:***@host:9200/idx"
+        );
+        assert_eq!(
+            redacted_endpoint("http://u:p w@bad host/idx"),
+            "http://u:***@bad host/idx"
+        );
+        assert_eq!(redacted_endpoint("/tmp/dump.json"), "/tmp/dump.json");
+        assert_eq!(
+            redacted_endpoint("https://u:pw@h:9200/i"),
+            "https://u:***@h:9200/i"
+        );
+        assert!(looks_like_url_without_scheme("elastic:pw@host:9200/idx"));
+        assert!(looks_like_url_without_scheme("localhost:9200/idx"));
+        assert!(!looks_like_url_without_scheme("/tmp/x.json"));
+        assert!(!looks_like_url_without_scheme("dump.json"));
     }
 }

@@ -1,0 +1,16 @@
+{
+  "task": "L-106",
+  "requirements": ["F-05", "F-06", "F-07", "F-08"],
+  "status": "done",
+  "fix": {
+    "F-05": "client.rs redacted_request_url: --debug logs method + URL with password and every query value outside an allow-list (scroll, keep_alive, size, from, refresh, ...) masked",
+    "F-06": "endpoint.rs redacted_endpoint falls back to mask_userinfo (masks everything between the authority's first ':' and last '@'); scheme-less user:pw@host endpoints warn 'treated as a FILE path'; main.rs scrubs every user:pw@ CLI argument from the final error message",
+    "F-07": "warn 'Requests to X go through proxy Y (from VAR)' when HTTP(S)_PROXY/ALL_PROXY applies (NO_PROXY honoured; proxy credentials masked); new --noProxy flag",
+    "F-08": "manual Debug for Cli (prints nothing), ClientOptions (password ***, header/param names only), TlsOptions (pass ***), EsEndpoint (password ***)"
+  },
+  "tests": {
+    "tests/secrets.rs": "debug_log_masks_params_and_credentials, schemeless_url_is_masked_and_warned, env_proxy_is_visible_and_can_be_disabled (does not compile/fails on old code: --noProxy unknown, secrets leaked)",
+    "unit": "client::debug_url_masks_params_and_password, client::client_options_debug_is_redacted, endpoint::redaction_tests",
+    "suite": "lib 159/0, cli_contract 22/0, injection 14/0, secrets 3/0, clippy clean"
+  }
+}

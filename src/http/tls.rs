@@ -11,7 +11,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, Serve
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 
 /// TLS material for one endpoint (input or output).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct TlsOptions {
     /// PEM CA bundle; replaces the system roots (Node `ca` semantics).
     pub ca: Option<PathBuf>,
@@ -23,6 +23,19 @@ pub struct TlsOptions {
     pub pass: Option<String>,
     /// Skip server certificate verification entirely.
     pub insecure: bool,
+}
+
+/// Manual `Debug`: the key passphrase is never printed (F-08).
+impl std::fmt::Debug for TlsOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsOptions")
+            .field("ca", &self.ca)
+            .field("cert", &self.cert)
+            .field("key", &self.key)
+            .field("pass", &self.pass.as_ref().map(|_| "***"))
+            .field("insecure", &self.insecure)
+            .finish()
+    }
 }
 
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
