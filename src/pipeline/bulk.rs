@@ -153,6 +153,37 @@ pub(crate) fn check_doc_line(line: &[u8]) -> std::result::Result<(), String> {
         .map_err(|e| format!("not exactly one JSON object: {e}"))
 }
 
+/// `_id`, `routing` and `parent` must be JSON strings; numbers are converted
+/// to strings. Anything else (objects, arrays, booleans) is rejected so one
+/// bad document cannot fail the whole bulk request (INJ-F3, TST-INJ-005).
+fn push_id_like(out: &mut Vec<u8>, name: &str, v: &LazyValue) -> Result<()> {
+    push_id_like_raw(out, name, v.as_raw_str())
+}
+
+/// [`push_id_like`] for an already validated raw JSON value.
+fn push_id_like_raw(out: &mut Vec<u8>, name: &str, raw: &str) -> Result<()> {
+    match raw.as_bytes().first() {
+        Some(b'"') => out.extend_from_slice(raw.as_bytes()),
+        Some(b'-' | b'0'..=b'9') => push_json_str(out, raw),
+        _ => bail!("{name} must be a string or a number, got {}", short(raw)),
+    }
+    Ok(())
+}
+
+/// `version` must be an integer within u64 (INJ-F3).
+fn checked_version(raw: &str) -> Result<u64> {
+    raw.parse::<u64>().map_err(|_| {
+        anyhow!(
+            "version must be an integer between 0 and 2^64-1, got {}",
+            short(raw)
+        )
+    })
+}
+
+fn short(raw: &str) -> String {
+    preview(raw.as_bytes())
+}
+
 /// A short, single-line preview of a rejected line for the error log.
 fn preview(line: &[u8]) -> String {
     const MAX: usize = 120;
@@ -322,7 +353,7 @@ impl BulkSink {
         if is_hit {
             if let Some(id) = top.get("_id") {
                 out.extend_from_slice(b",\"_id\":");
-                out.extend_from_slice(id.as_raw_str().as_bytes());
+                push_id_like(out, "_id", id)?;
             }
         }
         if self.opts.info.has_types() {
@@ -350,13 +381,18 @@ impl BulkSink {
                     out.extend_from_slice(b",\"");
                     out.extend_from_slice(name.as_bytes());
                     out.extend_from_slice(b"\":");
-                    out.extend_from_slice(v.as_bytes());
+                    if matches!(name.as_str(), "routing" | "parent") {
+                        push_id_like_raw(out, name, &v)?;
+                    } else {
+                        out.extend_from_slice(v.as_bytes());
+                    }
                 }
             }
             if self.opts.handle_version {
                 if let Some(v) = top.get("_version").or_else(|| top.get("version")) {
+                    let version = checked_version(v.as_raw_str())?;
                     out.extend_from_slice(b",\"version\":");
-                    out.extend_from_slice(v.as_raw_str().as_bytes());
+                    out.extend_from_slice(version.to_string().as_bytes());
                     if let Some(vt) = &self.opts.version_type {
                         out.extend_from_slice(b",\"version_type\":");
                         push_json_str(out, vt);
@@ -423,21 +459,34 @@ impl BulkSink {
     /// Write one batch of document lines; returns once every item was
     /// written, retried or reported.
     async fn process_batch(&mut self, buf: &[u8]) -> Result<()> {
-        let mut lines: Vec<&[u8]> = Vec::new();
+        // Validate and encode every line first: a line that is not one JSON
+        // object (INJ-F1) or whose action fields are unusable (bad `_index`,
+        // non-string `_id`, non-integer `version`: INJ-F2/F3) is rejected on
+        // its own, so it can never fail the whole bulk request.
+        let mut encoded = Vec::with_capacity(buf.len() + buf.len() / 4);
+        let mut docs: Vec<(&[u8], std::ops::Range<usize>)> = Vec::new();
         for line in buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
-            match check_doc_line(line) {
-                Ok(()) => lines.push(line),
-                Err(reason) => self.reject_line(line, &reason)?,
+            if let Err(reason) = check_doc_line(line) {
+                self.reject_line(line, &reason)?;
+                continue;
+            }
+            let at = encoded.len();
+            match self.encode_doc(line, &mut encoded) {
+                Ok(()) => docs.push((line, at..encoded.len())),
+                Err(e) => {
+                    encoded.truncate(at);
+                    self.reject_line(line, &format!("{e:#}"))?;
+                }
             }
         }
         let mut start = 0;
-        while start < lines.len() {
+        while start < docs.len() {
             // Split oversized batches at --maxBulkBytes.
-            let mut body = Vec::with_capacity(buf.len() + lines.len() * 64);
+            let mut body = Vec::with_capacity(encoded.len().min(self.opts.max_bulk_bytes + 4096));
             let mut end = start;
-            while end < lines.len() {
+            while end < docs.len() {
                 let before = body.len();
-                self.encode_doc(lines[end], &mut body)?;
+                body.extend_from_slice(&encoded[docs[end].1.clone()]);
                 end += 1;
                 if body.len() >= self.opts.max_bulk_bytes && end - start >= 1 {
                     if body.len() > self.opts.max_bulk_bytes && end - start > 1 {
@@ -447,8 +496,8 @@ impl BulkSink {
                     break;
                 }
             }
-            let chunk = &lines[start..end];
-            match self.write_chunk(chunk, body).await {
+            let chunk: Vec<&[u8]> = docs[start..end].iter().map(|(l, _)| *l).collect();
+            match self.write_chunk(&chunk, body).await {
                 Ok(()) => {}
                 Err(e) if self.opts.ignore_errors && !crate::http::is_cancelled(&e) => {
                     log::error!(
@@ -461,7 +510,7 @@ impl BulkSink {
             }
             start = end;
         }
-        if self.opts.refresh {
+        if self.opts.refresh && !docs.is_empty() {
             // Skip when another worker's refresh is already running.
             let lock = Arc::clone(&self.refresh_lock);
             if let Ok(_g) = lock.try_lock() {

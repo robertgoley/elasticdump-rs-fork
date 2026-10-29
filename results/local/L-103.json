@@ -1,0 +1,18 @@
+{
+  "task": "L-103",
+  "requirements": ["INJ-F3", "TST-INJ-005"],
+  "status": "done",
+  "fix": [
+    "encode_doc: _id, routing, parent must be JSON strings; numbers are converted to strings; anything else is an error",
+    "encode_doc: version (with --handleVersion) must parse as u64; written as a plain integer",
+    "process_batch: every line is validated and encoded before batching; a line that fails (not one object, bad _index, bad action field) is rejected on its own (reject_line), never sent, counted in failed+rejected; the remaining docs are still written when --ignore-es-write-errors (default true) or --ignore-errors; otherwise the run stops before sending",
+    "no _refresh after a batch in which nothing was sent"
+  ],
+  "tests": {
+    "inj_f3_bad_action_fields_are_rejected_per_document": "8 docs, 5 bad: only the 3 valid ones are in the bulk body, numeric _id/routing converted, exit 1 with '5 document line(s) were rejected'",
+    "inj_f3_strict_mode_sends_nothing": "--ignore-es-write-errors=false: no _bulk at all",
+    "old_code": "0/2 pass on old code (results/local/L-103-mock-tests-old-code.txt)",
+    "suite": "lib 153/0, cli_contract 22/0, injection 10/0"
+  },
+  "behaviour_change": "A run that rejected any document now exits 1 even though the rest were written (previously a malformed _id produced an HTTP 400 for the whole batch)."
+}

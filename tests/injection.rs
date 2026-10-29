@@ -376,3 +376,83 @@ async fn inj_f2_bad_names_from_files_send_nothing() {
         }
     }
 }
+
+// ------------------------------------------------------------ INJ-F3
+
+/// TST-INJ-005: `_id`/`_routing`/`_parent` must be strings (numbers are
+/// converted) and `version` an integer within u64; a bad document is rejected
+/// on its own and never makes the whole bulk request fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f3_bad_action_fields_are_rejected_per_document() {
+    let docs = [
+        r#"{"_index":"i","_id":"good1","_source":{"n":1}}"#,
+        r#"{"_index":"i","_id":{"$x":1},"_routing":[1,2],"_version":"9e99","_source":{}}"#,
+        r#"{"_index":"i","_id":5,"_routing":7,"_version":3,"_source":{"n":2}}"#,
+        r#"{"_index":"i","_id":"v","_version":"9e99","_source":{}}"#,
+        r#"{"_index":"i","_id":"v2","_version":18446744073709551616,"_source":{}}"#,
+        r#"{"_index":"i","_id":"r","_routing":{"a":1},"_source":{}}"#,
+        r#"{"_index":"i","_id":true,"_source":{}}"#,
+        r#"{"_index":"i","_id":"good2","_source":{"n":3}}"#,
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("in.json");
+    std::fs::write(&f, docs.join("\n") + "\n").unwrap();
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(ES7),
+        bulk_ok("index", 3),
+        CannedResponse::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#),
+    ])
+    .await;
+    let o = run(vec![
+        "--input".into(),
+        f.to_str().unwrap().into(),
+        "--output".into(),
+        mock.input_url("").trim_end_matches('/').to_string(),
+        "--handleVersion".into(),
+        "--noImplicitRetry".into(),
+    ])
+    .await;
+    let body = bulk_body(&mock);
+    let lines = ndjson(&body);
+    assert_eq!(lines.len(), 6, "only the 3 valid docs are sent: {body}");
+    assert_eq!(lines[0]["index"]["_id"], "good1");
+    assert_eq!(lines[2]["index"]["_id"], "5", "numbers become strings");
+    assert_eq!(lines[2]["index"]["routing"], "7");
+    assert_eq!(lines[2]["index"]["version"], 3);
+    assert_eq!(lines[4]["index"]["_id"], "good2");
+    // rejections are reported and make the run fail
+    assert!(!o.status.success(), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(err.contains("5 document line(s) were rejected"), "{err}");
+    assert!(err.contains("_id must be a string or a number"), "{err}");
+    assert!(err.contains("version must be an integer"), "{err}");
+}
+
+/// Without --ignore-es-write-errors the first bad document stops the run
+/// before any bulk request is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inj_f3_strict_mode_sends_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("in.json");
+    std::fs::write(
+        &f,
+        "{\"_index\":\"i\",\"_id\":\"ok\",\"_source\":{}}\n{\"_index\":\"i\",\"_id\":[1],\"_source\":{}}\n",
+    )
+    .unwrap();
+    let mock = MockEs::serve(vec![CannedResponse::ok(ES7), bulk_ok("index", 1)]).await;
+    let o = run(vec![
+        "--input".into(),
+        f.to_str().unwrap().into(),
+        "--output".into(),
+        mock.input_url("").trim_end_matches('/').to_string(),
+        "--ignore-es-write-errors=false".into(),
+        "--noImplicitRetry".into(),
+    ])
+    .await;
+    assert!(!o.status.success());
+    assert!(
+        mock.requests().iter().all(|r| !r.contains("/_bulk")),
+        "{:#?}",
+        mock.requests()
+    );
+}
