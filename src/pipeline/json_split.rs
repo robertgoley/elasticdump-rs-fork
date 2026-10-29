@@ -138,16 +138,36 @@ impl ValueSplitter {
 
 /// Remove insignificant whitespace (outside strings) so a value fits on one
 /// line. Returns the input unchanged when it has no line breaks.
+///
+/// Raw CR/LF bytes *inside* strings (invalid JSON, but a lenient parser may
+/// let them through) are escaped as `\r`/`\n`, so the result never contains
+/// a line break: one record is always exactly one NDJSON line (INJ-F1).
 pub fn single_line(value: Vec<u8>) -> Vec<u8> {
     if memchr::memchr2(b'\n', b'\r', &value).is_none() {
         return value;
     }
+    flatten(&value)
+}
+
+/// Borrowing variant of [`single_line`]: no copy in the common case.
+pub fn single_line_slice(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if memchr::memchr2(b'\n', b'\r', value).is_none() {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    std::borrow::Cow::Owned(flatten(value))
+}
+
+fn flatten(value: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(value.len());
     let mut in_string = false;
     let mut escaped = false;
-    for &b in &value {
+    for &b in value {
         if in_string {
-            out.push(b);
+            match b {
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                _ => out.push(b),
+            }
             if escaped {
                 escaped = false;
             } else if b == b'\\' {
@@ -231,5 +251,18 @@ mod tests {
         s.push(b"{\"a\":");
         assert!(s.next_value(false).unwrap().is_none());
         assert!(s.next_value(true).is_err());
+    }
+
+    #[test]
+    fn single_line_never_leaves_a_line_break() {
+        let pretty = b"{\"a\":\r\n\t{\"_index\":\"victim\",\n \"s\":\"x\ny\r\"}\n}".to_vec();
+        let flat = single_line(pretty.clone());
+        assert!(memchr::memchr2(b'\n', b'\r', &flat).is_none());
+        assert_eq!(flat, br#"{"a":{"_index":"victim","s":"x\ny\r"}}"#.to_vec());
+        assert_eq!(single_line_slice(&pretty).into_owned(), flat);
+        assert!(matches!(
+            single_line_slice(b"{\"a\": 1}"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 }

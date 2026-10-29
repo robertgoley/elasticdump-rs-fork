@@ -1,0 +1,14 @@
+newlines inside hits: 1
+exit=0 victim/admin={"role": "superuser"} src/x={}
+RESULT A-victim: INJECTED/BROKEN (victim/admin written by a document body)
+RESULT A-x: INJECTED/BROKEN (src/x overwritten: {})
+exit=0 dst/admin={"role": "superuser"} dst/x={}
+RESULT B-dst-admin: INJECTED/BROKEN (dst/admin now {"role": "superuser"})
+exit=0 dst/admin=MISSING
+RESULT C-dst-admin: INJECTED/BROKEN (dst/admin now MISSING)
+dump lines=2 (hits=1)
+RESULT D-lines: INJECTED/BROKEN (2 lines for 1 hit)
+RESULT D-sourceOnly: INJECTED/BROKEN (multi-line)
+restore exit=0 victim/admin=MISSING
+RESULT D-restore: OK (restore did not write victim)
+OVERALL: INJECTION-REPRODUCED

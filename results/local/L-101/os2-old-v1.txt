@@ -1,0 +1,14 @@
+newlines inside hits: 3
+exit=1 victim/admin=MISSING src/x={"a": {"_id": "admin", "_index": "victim", "_source": {"role": "superuser"}}}
+RESULT A-victim: OK (victim/admin not created)
+RESULT A-x: OK (src/x source preserved)
+exit=0 dst/admin={"role": "superuser"} dst/x={}
+RESULT B-dst-admin: INJECTED/BROKEN (dst/admin now {"role": "superuser"})
+exit=1 dst/admin={"role": "user"}
+RESULT C-dst-admin: OK (dst/admin not deleted)
+dump lines=4 (hits=1)
+RESULT D-lines: INJECTED/BROKEN (4 lines for 1 hit)
+RESULT D-sourceOnly: INJECTED/BROKEN (multi-line)
+restore exit=0 victim/admin=MISSING
+RESULT D-restore: OK (restore did not write victim)
+OVERALL: INJECTION-REPRODUCED

@@ -100,6 +100,7 @@ pub async fn write(
         Ok(_) => Ok(WriteReport {
             written: acts.len() as u64,
             failed: 0,
+            ..Default::default()
         }),
         Err(e) if opts.ignore_errors => {
             log::warn!("Atomic alias update failed; retrying per index (--ignore-errors): {e:#}");

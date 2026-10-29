@@ -359,6 +359,7 @@ pub async fn write(doc: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<W
         return Ok(WriteReport {
             written: 1,
             failed: 0,
+            ..Default::default()
         });
     };
     let info = dst.info.as_ref().expect("target cluster info");

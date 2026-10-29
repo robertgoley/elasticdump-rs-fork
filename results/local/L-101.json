@@ -1,0 +1,30 @@
+{
+  "task": "L-101",
+  "requirements": ["INJ-F1", "TST-INJ-001", "TST-INJ-002", "TST-INJ-003", "TST-INJ-010"],
+  "status": "done",
+  "live_reproduction_before_fix": {
+    "binary": "rewrite@d876d57 (it profile)",
+    "script": "scripts/poc/inj-f1.sh (VARIANT=1 is the §8.1 PoC; VARIANT=2 puts the closing braces on the injected line)",
+    "es_7.17.29": {
+      "variant1": "--output-index dst: dst/admin overwritten with {role:superuser}, dst/x emptied to {}, exit 0. Host-only and delete: whole batch aborted (exit 1) because the trailing '}' fragment had no _index / no id. Dump file: 4 lines for 1 hit; --sourceOnly multi-line.",
+      "variant2": "Host-only copy: victim/admin CREATED with {role:superuser}, src/x overwritten with {}, exit 0. --output-index: dst/admin overwritten, exit 0. --bulkAction delete: dst/admin DELETED, exit 0. Dump: 2 lines for 1 hit."
+    },
+    "opensearch_2.19.7": "identical results to ES 7.17.29 for both variants",
+    "file_restore_of_broken_dump": "not exploitable: file input uses the streaming ValueSplitter, which reassembles the multi-line value"
+  },
+  "fix": [
+    "retrieval/extract.rs: every hit goes through json_split::single_line_slice (memchr2 fast path; copies only when CR/LF present)",
+    "pipeline/sink.rs source_only_lines: same flattening for --sourceOnly",
+    "json_split::single_line/flatten: raw CR/LF inside strings are escaped, so output never contains a line break",
+    "pipeline/bulk.rs: check_doc_line rejects any line that is not exactly one JSON object (sonic from_slice IgnoredAny + leading '{'); Top::parse is all-or-nothing (no filter_map(ok)); rejected lines are counted (WriteReport.rejected) and the run exits 1 even with --ignore-errors"
+  ],
+  "verification_after_fix": {
+    "es_7.17.29": "both variants: NO-INJECTION; all checks OK; exit 0; dump = 1 line per hit",
+    "opensearch_2.19.7": "both variants: NO-INJECTION"
+  },
+  "regression_tests": {
+    "tests/injection.rs": "5 tests (host-only copy LF+CRLF, --output-index, --bulkAction delete, stdout and --sourceOnly one line per hit, --fileSize parts hold whole records): 0/5 pass on old code, 5/5 on new",
+    "unit": "bulk::inj_f1_tests::partial_or_trailing_lines_are_rejected, json_split::single_line_never_leaves_a_line_break"
+  },
+  "behaviour_note": "x keeps its source semantically (JSON-equal) but insignificant whitespace between tokens is removed, exactly as file input already did and as Node elasticdump (JSON.stringify) does. Byte-for-byte preservation of pretty-printing is not possible in NDJSON."
+}

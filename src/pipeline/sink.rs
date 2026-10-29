@@ -5,6 +5,7 @@ use anyhow::Result;
 use sonic_rs::JsonValueTrait;
 
 use super::bulk::{BulkSink, WriteReport};
+use super::json_split::single_line_slice;
 
 pub enum Sink {
     File(FileSink),
@@ -22,7 +23,7 @@ fn source_only_lines(buf: &[u8], out: &mut Vec<u8>) {
     out.clear();
     for line in buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
         match source_of(line) {
-            Some(src) => out.extend_from_slice(src.as_raw_str().as_bytes()),
+            Some(src) => out.extend_from_slice(&single_line_slice(src.as_raw_str().as_bytes())),
             None => {
                 // Not a hit (e.g. file→file of plain documents): keep as-is.
                 let v: Option<sonic_rs::Value> = sonic_rs::from_slice(line).ok();
@@ -76,6 +77,7 @@ impl Sink {
             Sink::File(f) => WriteReport {
                 written: f.written,
                 failed: 0,
+                ..Default::default()
             },
             Sink::Bulk(b) => b.report,
         }
@@ -87,6 +89,7 @@ impl Sink {
                 let report = WriteReport {
                     written: f.written,
                     failed: 0,
+                    ..Default::default()
                 };
                 f.finalize().await?;
                 Ok(report)

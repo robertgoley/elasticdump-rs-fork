@@ -70,12 +70,17 @@ pub struct BulkOptions {
 pub struct WriteReport {
     pub written: u64,
     pub failed: u64,
+    /// Input lines refused before encoding because they were not exactly one
+    /// JSON object (INJ-F1). Also counted in `failed`; any rejection makes
+    /// the run exit non-zero.
+    pub rejected: u64,
 }
 
 impl WriteReport {
     fn add(&mut self, other: WriteReport) {
         self.written += other.written;
         self.failed += other.failed;
+        self.rejected += other.rejected;
     }
 }
 
@@ -111,12 +116,18 @@ struct Top<'a> {
 }
 
 impl<'a> Top<'a> {
-    fn parse(line: &'a [u8]) -> Self {
-        let members = sonic_rs::to_object_iter(line)
-            .filter_map(|m| m.ok())
-            .filter(|(_, v)| !v.is_null())
-            .collect();
-        Self { members }
+    /// All or nothing: any parse error rejects the whole line, so a
+    /// truncated fragment never yields the members read before the error
+    /// (INJ-F1, TST-INJ-003).
+    fn parse(line: &'a [u8]) -> Result<Self> {
+        let mut members = Vec::new();
+        for m in sonic_rs::to_object_iter(line) {
+            let (k, v) = m.map_err(|e| anyhow!("malformed document line: {e}"))?;
+            if !v.is_null() {
+                members.push((k, v));
+            }
+        }
+        Ok(Self { members })
     }
 
     fn get(&self, key: &str) -> Option<&LazyValue<'a>> {
@@ -126,6 +137,34 @@ impl<'a> Top<'a> {
     fn str(&self, key: &str) -> Option<String> {
         self.get(key).and_then(|v| v.as_str().map(str::to_string))
     }
+}
+
+/// A bulk input line must be exactly one complete JSON object: no truncated
+/// or trailing fragment and no other value type (INJ-F1, TST-INJ-003).
+pub(crate) fn check_doc_line(line: &[u8]) -> std::result::Result<(), String> {
+    if line.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
+        return Err("not a JSON object".to_string());
+    }
+    if memchr::memchr2(b'\n', b'\r', line).is_some() {
+        return Err("contains a line break".to_string());
+    }
+    sonic_rs::from_slice::<serde::de::IgnoredAny>(line)
+        .map(|_| ())
+        .map_err(|e| format!("not exactly one JSON object: {e}"))
+}
+
+/// A short, single-line preview of a rejected line for the error log.
+fn preview(line: &[u8]) -> String {
+    const MAX: usize = 120;
+    let cut = &line[..line.len().min(MAX)];
+    let mut s: String = String::from_utf8_lossy(cut)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if line.len() > MAX {
+        s.push_str("...");
+    }
+    s
 }
 
 /// Meta field lookup in elasticdump order: `X`, `_X`, `fields.X`, `fields._X`
@@ -265,7 +304,7 @@ impl BulkSink {
     /// Append the action (and body) lines for one document.
     pub fn encode_doc(&mut self, line: &[u8], out: &mut Vec<u8>) -> Result<()> {
         let action = self.opts.action;
-        let top = Top::parse(line);
+        let top = Top::parse(line)?;
         let source = top.get("_source");
         let is_hit = source.is_some() || top.get("_id").is_some();
 
@@ -377,10 +416,13 @@ impl BulkSink {
     /// Write one batch of document lines; returns once every item was
     /// written, retried or reported.
     async fn process_batch(&mut self, buf: &[u8]) -> Result<()> {
-        let lines: Vec<&[u8]> = buf
-            .split(|b| *b == b'\n')
-            .filter(|l| !l.is_empty())
-            .collect();
+        let mut lines: Vec<&[u8]> = Vec::new();
+        for line in buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+            match check_doc_line(line) {
+                Ok(()) => lines.push(line),
+                Err(reason) => self.reject_line(line, &reason)?,
+            }
+        }
         let mut start = 0;
         while start < lines.len() {
             // Split oversized batches at --maxBulkBytes.
@@ -458,6 +500,25 @@ impl BulkSink {
                 self.encode_doc(chunk[i], &mut body)?;
             }
             pending = rejected;
+        }
+    }
+
+    /// Refuse a line that is not exactly one JSON object. It is never
+    /// encoded (no partial action can reach the cluster). With
+    /// --ignore-errors/--ignore-es-write-errors the run continues, but the
+    /// rejection is counted and the run still exits non-zero.
+    fn reject_line(&mut self, line: &[u8], reason: &str) -> Result<()> {
+        self.report.failed += 1;
+        self.report.rejected += 1;
+        let msg = format!(
+            "rejected a document line ({reason}); nothing was written for it: {}",
+            preview(line)
+        );
+        if self.opts.ignore_errors || self.opts.ignore_es_write_errors {
+            log::error!("{msg}");
+            Ok(())
+        } else {
+            Err(anyhow!(msg))
         }
     }
 
@@ -696,7 +757,8 @@ mod tests {
             s.report,
             WriteReport {
                 written: 4,
-                failed: 2
+                failed: 2,
+                ..Default::default()
             }
         );
 
@@ -721,5 +783,45 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r, vec![1, 2]);
+    }
+}
+
+#[cfg(test)]
+mod inj_f1_tests {
+    use super::*;
+
+    /// TST-INJ-003: a line that is not exactly one complete JSON object is
+    /// refused before encoding; no partial `Top` is ever produced.
+    #[test]
+    fn partial_or_trailing_lines_are_rejected() {
+        for bad in [
+            &br#"{"_index":"src","_id":"x","_score":1.0,"_source":{"a":"#[..],
+            br#"{"_index":"victim","_id":"admin","_source":{"role":"superuser"}}}}"#,
+            br#"}}"#,
+            br#"}"#,
+            br#"[1,2]"#,
+            br#""str""#,
+            br#"{"a":1} {"b":2}"#,
+            br#"{"a":1}x"#,
+            b"{\"a\":\n1}",
+        ] {
+            assert!(
+                check_doc_line(bad).is_err(),
+                "{}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+        for good in [
+            &br#"{"a":1}"#[..],
+            br#"  {"_index":"i","_id":"1","_source":{"s":"}\"{"}}  "#,
+            br#"{}"#,
+        ] {
+            assert!(
+                check_doc_line(good).is_ok(),
+                "{}",
+                String::from_utf8_lossy(good)
+            );
+        }
+        assert!(Top::parse(br#"{"_index":"victim","_id":"admin","_source":"#).is_err());
     }
 }

@@ -1,0 +1,14 @@
+newlines inside hits: 1
+exit=0 victim/admin=MISSING src/x={"a": {"_id": "admin", "_index": "victim", "_source": {"role": "superuser"}}}
+RESULT A-victim: OK (victim/admin not created)
+RESULT A-x: OK (src/x source preserved)
+exit=0 dst/admin={"role": "user"} dst/x={"a": {"_index": "victim", "_id": "admin", "_source": {"role": "superuser"}}}
+RESULT B-dst-admin: OK (dst/admin unchanged)
+exit=0 dst/admin={"role": "user"}
+RESULT C-dst-admin: OK (dst/admin not deleted)
+dump lines=1 (hits=1)
+RESULT D-lines: OK (1 line, parses alone)
+RESULT D-sourceOnly: OK (1 line)
+restore exit=0 victim/admin=MISSING
+RESULT D-restore: OK (restore did not write victim)
+OVERALL: NO-INJECTION

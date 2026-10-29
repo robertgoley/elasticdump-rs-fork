@@ -4,6 +4,7 @@ use sonic_rs::{JsonValueTrait, LazyValue, PointerTree, get_many, pointer};
 use std::sync::OnceLock;
 
 use crate::cli::SearchType;
+use crate::pipeline::json_split::single_line_slice;
 
 use super::retrieval_task::TotalHitsEstimate;
 
@@ -228,7 +229,10 @@ pub(crate) fn extract_batch(
         let hit = hit?;
         doc_count += 1;
 
-        buffer.extend_from_slice(hit.as_raw_str().as_bytes());
+        // The cluster returns `_source` byte for byte as indexed, so a
+        // pretty-printed document carries raw line breaks between tokens.
+        // Every hit must be exactly one NDJSON line (INJ-F1).
+        buffer.extend_from_slice(&single_line_slice(hit.as_raw_str().as_bytes()));
         buffer.push(b'\n');
 
         if search_type.uses_sort() {

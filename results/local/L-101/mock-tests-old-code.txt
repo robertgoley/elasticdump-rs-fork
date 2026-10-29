@@ -1,0 +1,6 @@
+test inj_f1_dump_is_one_line_per_hit ... FAILED
+test inj_f1_file_size_parts_hold_whole_records ... FAILED
+test inj_f1_host_only_copy_writes_one_doc_and_no_victim ... FAILED
+test inj_f1_bulk_delete_touches_only_the_hit ... FAILED
+test inj_f1_output_index_does_not_overwrite_other_ids ... FAILED
+test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s

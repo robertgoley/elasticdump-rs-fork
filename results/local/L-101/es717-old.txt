@@ -1,0 +1,25 @@
+== raw _source as returned by the cluster
+newlines inside hits: 3
+== A: host-only copy (all indices) http://127.0.0.1:19200 -> http://127.0.0.1:19200
+exit=1 victim/admin=MISSING src/x={"a": {"_id": "admin", "_index": "victim", "_source": {"role": "superuser"}}}
+RESULT A-victim: OK (victim/admin not created)
+RESULT A-x: OK (src/x source preserved)
+== B: --output-index (src -> dst)
+exit=0 dst/admin={"role": "superuser"} dst/x={}
+RESULT B-dst-admin: INJECTED/BROKEN (dst/admin now {"role": "superuser"})
+== C: --bulkAction delete (src -> dst)
+exit=1 dst/admin={"role": "user"}
+RESULT C-dst-admin: OK (dst/admin not deleted)
+== D: file dump, --sourceOnly, --fileSize
+dump lines=4 (hits=1)
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+AssertionError: ['{"_index":"src","_type":"_doc","_id":"x","_score":1.0,"_source":{"a":', '{"_index":"victim","_id":"admin","_source":{"role":"superuser"}}', '}', '}']
+RESULT D-lines: INJECTED/BROKEN (4 lines for 1 hit)
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+AssertionError: ['{"_index":"src","_type":"_doc","_id":"x","_score":1.0,"_source":{"a":', '{"role":"superuser"}', '}', '}']
+RESULT D-sourceOnly: INJECTED/BROKEN (multi-line)
+restore exit=0 victim/admin=MISSING
+RESULT D-restore: OK (restore did not write victim)
+OVERALL: INJECTION-REPRODUCED
