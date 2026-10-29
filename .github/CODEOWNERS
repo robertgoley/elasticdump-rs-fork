@@ -1,0 +1,17 @@
+# L-208/L-209 (SUP-012, SUP-014): changes to these paths need an owner review.
+# OWNER DECISION: replace @OWNER with the reviewing GitHub user/team, then enable
+# "Require review from Code Owners" in branch protection for main and rewrite.
+Cargo.toml              @OWNER
+Cargo.lock              @OWNER
+deny.toml               @OWNER
+supply-chain/           @OWNER
+.github/                @OWNER
+.config/                @OWNER
+scripts/                @OWNER
+Dockerfile              @OWNER
+Makefile                @OWNER
+images.lock             @OWNER
+tools/                  @OWNER
+# Upstream-origin code (hostile-code review record in REVIEW.md, SUP-012): any change re-opens review.
+src/                    @OWNER
+tests/                  @OWNER

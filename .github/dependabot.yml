@@ -1,7 +1,24 @@
-# Keep SHA-pinned actions current (F-02). Cargo updates stay manual
-# (reviewed against cargo-deny/cargo-vet).
+# L-209 / SUP-014 new-dependency policy (docs/DEPENDENCY-POLICY.md).
+# Grouped updates; a 7-day cooldown before a new release is proposed, so a hijacked or
+# yanked release has a week to be noticed upstream. PRs still pass cargo-deny, cargo-vet,
+# the geiger gate, the build-time inventory gate and the SBOM diff label gate.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7, semver-major-days: 30 }
+    open-pull-requests-limit: 5
+    groups:
+      cargo-patch-minor:
+        update-types: [patch, minor]
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
