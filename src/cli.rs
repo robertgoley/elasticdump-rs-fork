@@ -747,6 +747,34 @@ mod tests {
         Cli::try_parse_from(v)
     }
 
+    /// F-08 / SUP-018: no `{:?}` of a config struct may print a secret.
+    #[test]
+    fn debug_never_prints_secrets() {
+        let c = parse(&[
+            "--password=S3cr3t-pw",
+            "--pass=S3cr3t-pass",
+            "--input-pass=S3cr3t-in",
+            "--output-pass=S3cr3t-out",
+        ])
+        .unwrap();
+        assert!(!format!("{c:?}").contains("S3cr3t"));
+        let tls = crate::http::tls::TlsOptions {
+            pass: Some("S3cr3t-tls".into()),
+            ..Default::default()
+        };
+        let d = format!("{tls:?}");
+        assert!(!d.contains("S3cr3t") && d.contains("***"), "{d}");
+        let ep = crate::endpoint::EsEndpoint {
+            base: url::Url::parse("http://h:9200/").unwrap(),
+            index: None,
+            doc_type: None,
+            username: Some("u".into()),
+            password: Some("S3cr3t-ep".into()),
+        };
+        let d = format!("{ep:?}");
+        assert!(!d.contains("S3cr3t") && d.contains("***"), "{d}");
+    }
+
     #[test]
     fn defaults_match_elasticdump() {
         let c = parse(&[]).unwrap();

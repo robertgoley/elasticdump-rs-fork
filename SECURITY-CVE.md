@@ -7,12 +7,15 @@ its status. Status values:
 - **resolved**: fixed, and the "Resolved in" column says where;
 - **not-affected**: present, with a justification.
 
+Code and supply-chain findings (F-01…F-14, INJ-F1…F4) are mapped to their fixes and regression tests in [Code and supply-chain findings](#code-and-supply-chain-findings-sup-018).
+
 Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md).
 
 ## Last scan
 
 | Date (America/New_York) | Commit | Tool (DB) | Target | Result |
 |---|---|---|---|---|
+| 2026-10-29 | 55fa662 | cargo-audit 0.22.2 (re-run for L-109) | Cargo.lock | **0 vulnerabilities, 0 warnings**; cargo-deny: all four checks ok |
 | 2026-10-29 | ae2531f | cargo-audit 0.22.2 (RustSec advisory-db, 1386 advisories) | Cargo.lock (271 crates) | **0 vulnerabilities, 0 warnings** |
 | 2026-10-29 | ae2531f | cargo-deny 0.20.2, `check advisories bans licenses sources` | Cargo.lock + deny.toml | **advisories ok, bans ok, licenses ok, sources ok** |
 | 2026-10-29 | c620b80 | grype (DB v6.1.10, built 2026-10-29 02:23 EDT) | `make image-alpine` (rust:1.99.1-alpine3.24 → alpine:3.24.3) | **0 Critical, 0 High**, 3 Medium (one CVE, see below) |
@@ -199,6 +202,34 @@ This build is kept for glibc parity. It fails `make scan`. Every finding is Debi
 | CVE-2026-85091 | zlib1g | grype High / trivy MEDIUM | open on this base (Debian: not-fixed / affected); not present in the Alpine image | no Debian fix; avoided by `make image-alpine` (or dhi.io base) |
 | CVE-2026-9538 | perl-base | grype High / trivy HIGH | open on this base (Debian: wont-fix / fix_deferred); not present in the Alpine image | no Debian fix; avoided by `make image-alpine` (or dhi.io base) |
 | CVE-2026-95619 | gcc-14-base, libgcc-s1, libstdc++6 | grype High / trivy MEDIUM | open on this base (Debian: wont-fix / affected); not present in the Alpine image | no Debian fix; avoided by `make image-alpine` (or dhi.io base) |
+
+## Code and supply-chain findings (SUP-018)
+
+These are the review findings in TEST-REQUIREMENTS.md §7.3 (F-01…F-14) and §8 (INJ-F1…F4). Each one has a regression test or lint that fails on the code before the fix. Status values are the same as above. Workflow fixes are lint-verified only, because this fork is never pushed and the workflows cannot run here.
+
+| ID | Finding (short) | Status | Fix commit | Regression test / lint |
+|---|---|---|---|---|
+| INJ-F1 | Raw CR/LF in `_source` split one hit into several NDJSON/bulk lines (forged `_bulk` actions); reproduced live on ES 7.17.29 and OpenSearch 2.19.7 | resolved | 9d344de | `tests/injection.rs` `inj_f1_*` (5); `scripts/poc/inj-f1.sh` (live PoC, `results/local/L-101.json`) |
+| INJ-F2 | Index names (`--output-index`, `_index`, rename, wildcards) reached URL paths unvalidated; `.`/`..` segments vanished | resolved | 202c683 | `inj_f2_*` (3); unit `url_segments_never_vanish` |
+| INJ-F3 | `_id`/routing/parent/version copied into action lines without type checks | resolved | 7bfea42 | `inj_f3_*` (2) |
+| INJ-F4 | `--parseExtraFields` names written raw into action metadata | resolved | 5ad4579 | `inj_f4_*` (2) |
+| (L-105) | Duplicate top-level keys, non-object `_source`, header CR/LF, query encoding | resolved (Q13: duplicates are **rejected**) | 18b3a0b | `guards_*` (2); units `duplicate_keys_are_detected`, `raw_control_bytes_are_rejected`, `query_values_are_encoded_exactly` |
+| F-01 | Scanners installed with `curl \| sh` from `main` | resolved | 78c2446 | `scripts/lint-workflows.sh` (grep for `\| sh`/`main/install`; SHA-256 checks present) |
+| F-02 | Actions pinned to mutable tags | resolved | 78c2446 | `scripts/lint-workflows.sh` (every `uses:` is a 40-hex SHA), zizmor `unpinned-uses`; `.github/dependabot.yml` |
+| F-03 | No `permissions:`; checkout persisted credentials | resolved | 78c2446 | `scripts/lint-workflows.sh` (`permissions:` in every workflow, `persist-credentials: false`), zizmor `artipacked`/`excessive-permissions` |
+| F-04 | Needed fixture ignored by `*.jsonl` | resolved | 17b16d7 | `scripts/lint-hygiene.sh` F-04 (no ignored files under `tests/fixtures`) |
+| F-05 | `--debug` logged full URL incl. `--params` values | resolved | dfc044f | `tests/secrets.rs` `debug_log_masks_params_and_credentials`; unit `debug_url_masks_params_and_password` |
+| F-06 | Unparsable endpoint logged raw; scheme-less `user:pw@host` silently a file | resolved | dfc044f | `tests/secrets.rs` `schemeless_url_is_masked_and_warned` |
+| F-07 | Env proxies used silently | resolved (warn + `--noProxy`) | dfc044f | `tests/secrets.rs` `env_proxy_is_visible_and_can_be_disabled` |
+| F-08 | `#[derive(Debug)]` on secret-holding structs | resolved | dfc044f | units `client_options_debug_is_redacted`, `debug_never_prints_secrets` (Cli, TlsOptions, EsEndpoint) |
+| F-09 | Dispatch input interpolated into shell | resolved | 78c2446 | `scripts/lint-workflows.sh` (no `${{ github.event.inputs` in `run:`), zizmor `template-injection` |
+| F-10 | `cargo install cargo-zigbuild` unpinned; Zig fetched unpinned | resolved | 78c2446 | `scripts/lint-workflows.sh` (`cargo install` needs `--locked --version`) |
+| F-11 | Tests wrote `test_query_*.json` into the CWD | resolved (code); the two committed junk files are left in place at the owner's request | 17b16d7 | `scripts/check-clean-tree.sh` (tree unchanged after the suites); `scripts/lint-hygiene.sh` F-11 |
+| F-12 | compose published 9200 on all interfaces, security off | resolved | 17b16d7 | `scripts/lint-hygiene.sh` F-12 |
+| F-13 | Fixed IT passwords in world-readable `/tmp` | resolved (OpenSearch < 2.12 keeps `admin/admin`: its demo config requires it) | 17b16d7 | `scripts/lint-hygiene.sh` F-13; IT runs on all four profiles |
+| F-14 | Images pulled by tag | resolved | 17b16d7 | `scripts/lint-hygiene.sh` F-14 (Makefile, Dockerfile, compose, `scripts/it/images.lock`) |
+
+The stray `oom` file: no code path in `src/`, `tests/` or `scripts/` writes it (no such literal in any commit). The committed copy predates the first commit by 6 seconds, so it came from an ad-hoc shell redirect. `scripts/check-clean-tree.sh` catches any test that writes into the tree.
 
 ## Decisions and follow-ups
 

@@ -599,7 +599,10 @@ async fn test_pagination_and_complex_query() -> Result<()> {
 #[tokio::test]
 async fn test_scroll_dump_preserves_full_hit_documents() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = scratch(&format!("test_scroll_streaming_output_{}.jsonl", test_index));
+    let output_file = scratch(&format!(
+        "test_scroll_streaming_output_{}.jsonl",
+        test_index
+    ));
 
     setup_test_data(&test_index).await?;
 
@@ -1058,7 +1061,10 @@ async fn test_sliced_scroll() -> Result<()> {
 #[tokio::test]
 async fn test_sliced_scroll_with_query() -> Result<()> {
     let test_index = get_unique_test_index();
-    let output_file = scratch(&format!("test_sliced_scroll_with_query_output_{}.jsonl", test_index));
+    let output_file = scratch(&format!(
+        "test_sliced_scroll_with_query_output_{}.jsonl",
+        test_index
+    ));
 
     // Set up test data
     setup_test_data(&test_index).await?;

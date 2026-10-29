@@ -1,0 +1,6 @@
+{"task":"L-109","reqs":["SUP-018"],"date":"2026-10-29",
+ "table":"SECURITY-CVE.md#code-and-supply-chain-findings-sup-018",
+ "new_checks":["scripts/lint-hygiene.sh (F-04,F-11,F-12,F-13,F-14): clean now, 19 failures on d876d57",
+  "scripts/lint-workflows.sh +F-03 persist-credentials, +F-09 expressions outside env, +F-10 cargo install --locked --version: each fails on d876d57",
+  "unit cli::tests::debug_never_prints_secrets (F-08)"],
+ "rescan":"cargo audit 0 vulns/0 warnings; cargo deny advisories/bans/licenses/sources ok"}
