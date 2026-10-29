@@ -4,6 +4,7 @@ name: security
 # workflow artifacts (SBOMs and scan reports).
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main, rewrite]
   workflow_dispatch:
@@ -140,3 +141,30 @@ jobs:
         with: { toolchain: 1.85.1 }
       - run: scripts/sup/build-inventory.py
       - run: scripts/sup/offline-build.sh
+
+  # L-207 / SUP-011: SBOM + build-time inventory diff against the PR base; a non-empty diff
+  # needs the `sbom-reviewed` label. The diff is attached as an artefact and job summary.
+  sbom-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with: { tool: "cargo-cyclonedx@0.5.9" }
+      - name: SBOM diff and label gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REVIEWED: ${{ contains(github.event.pull_request.labels.*.name, 'sbom-reviewed') }}
+        run: |
+          rc=0; scripts/sup/sbom-pr.sh "$BASE_SHA" sbom-diff || rc=$?
+          cat sbom-diff/diff.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" = 10 ] && [ "$REVIEWED" != true ]; then
+            echo "::error::SBOM/build-time code changed: review, then add the sbom-reviewed label"; exit 1
+          fi
+          [ "$rc" = 0 ] || [ "$rc" = 10 ]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with: { name: sbom-diff, path: sbom-diff/ }

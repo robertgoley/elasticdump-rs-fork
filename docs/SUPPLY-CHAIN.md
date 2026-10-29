@@ -117,3 +117,21 @@ Each entry is pinned as `name@version` and carries a review note.
 3. Before building, a probe inside the sandbox checks that DNS and TCP really fail.
 
 Verified locally on 2026-10-29 with `rust:1.99-trixie`: the probe showed the network unreachable, and the build succeeded in 2m01s. No build script needs the network.
+
+## SBOM diff per PR (SUP-011, L-207)
+
+`scripts/sup/sbom-pr.sh <base-ref>` checks the base out into a temporary worktree and compares it with HEAD. It builds the following for both sides:
+
+- a CycloneDX SBOM of the Linux graph, with `cargo cyclonedx --target x86_64-unknown-linux-gnu`;
+- the build-time inventory.
+
+`scripts/sup/sbom-diff.py` then reports:
+
+- crates added, removed, upgraded or downgraded;
+- licence changes;
+- new build scripts and proc macros;
+- image package changes, when `IMAGE_SBOM_BASE`/`IMAGE_SBOM_HEAD` point to syft SBOMs.
+
+The `sbom-diff` job in `security.yml` runs on every PR. It attaches the diff as an artefact and adds it to the job summary. A non-empty diff fails the job until the PR carries the `sbom-reviewed` label.
+
+Not covered: unsafe deltas. `scripts/sup/geiger-gate.sh` in the `supply-chain` job catches those.

@@ -17,8 +17,11 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 BASE = os.path.join(ROOT, "supply-chain", "build-inventory.json")
 
 
+MANIFEST = os.path.join(ROOT, "Cargo.toml")
+
+
 def meta(platform=None):
-    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", os.path.join(ROOT, "Cargo.toml")]
+    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--manifest-path", MANIFEST]
     if platform:
         cmd += ["--filter-platform", platform]
     return json.loads(subprocess.run(cmd, check=True, capture_output=True).stdout)
@@ -71,6 +74,11 @@ def inventory():
 
 
 def main():
+    global MANIFEST
+    if "--dump" in sys.argv:  # print the inventory of another checkout (sbom-pr.sh)
+        MANIFEST = sys.argv[sys.argv.index("--dump") + 1]
+        json.dump(inventory(), sys.stdout, indent=1, sort_keys=True)
+        return 0
     inv = inventory()
     if "--update" in sys.argv:
         old = json.load(open(BASE)) if os.path.exists(BASE) else {}
