@@ -1,3 +1,6 @@
+// SUP-006: no unsafe Rust in this crate; all unsafe comes from audited deps.
+#![forbid(unsafe_code)]
+
 pub mod cli;
 pub mod config;
 pub mod endpoint;

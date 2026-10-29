@@ -40,3 +40,20 @@ Each section names the gate that enforces it and how to run it locally.
 
 Negative check (2026-10-29): adding `libz-sys` and `num-traits` reports
 `banned`, two `build-script-not-allowed` errors and `detected-executable-script`.
+
+## Unsafe inventory (SUP-006, L-203)
+
+- `#![forbid(unsafe_code)]` is set in `src/lib.rs` and `src/main.rs`; the crate has no unsafe code.
+- `scripts/sup/geiger-gate.sh` runs `cargo geiger` (Linux graph) and compares the result with
+  `supply-chain/geiger-baseline.json`. It fails if:
+  - our crate stops forbidding unsafe;
+  - any crate's used-unsafe count rises;
+  - a new crate brings unsafe code;
+  - the total rises.
+
+  After a reviewed dependency change, refresh the baseline with `--update`.
+- Baseline (2026-10-29): 27,289 used-unsafe items in 111 of 191 crates. The largest counts are
+  hashbrown, zlib-rs, tokio, memchr and sonic-rs.
+- Known gap: cargo-geiger 0.14's parser cannot read `signal-hook-registry` 1.4.8 (Rust syntax it
+  does not support), so that crate is reported as 0.
+- CI: the `supply-chain` job, which needs nightly to build cargo-geiger.

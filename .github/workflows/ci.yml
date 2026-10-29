@@ -34,6 +34,11 @@ jobs:
       - run: cargo install --locked --version 0.10.3 cargo-vet
       # L-201 / SUP-004: every crate audited (imported audits) or exempted.
       - run: cargo vet --locked
+      # L-203 / SUP-006: unsafe inventory; a rise against the baseline fails.
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly (cargo-geiger 0.14 needs >= 1.97)
+        with: { toolchain: nightly }
+      - run: cargo +nightly install --locked --version 0.14.0 cargo-geiger --features vendored-openssl
+      - run: scripts/sup/geiger-gate.sh
 
   it:
     runs-on: ubuntu-24.04
