@@ -21,7 +21,7 @@ jobs:
       - run: cargo clippy --workspace --lib --bins --tests --features elasticdump-rs/it -- -D warnings
       - run: cargo test --lib --bins
       - run: cargo test --test cli_contract
-      - run: cargo test --release -p edverify
+      - run: cargo test --release -p edverify -p edgen
 
   # SUP-* supply-chain gates (TEST-REQUIREMENTS §7.3, TASKS-LOCAL A2).
   supply-chain:

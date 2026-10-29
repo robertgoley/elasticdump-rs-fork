@@ -57,3 +57,7 @@ Negative check (2026-10-29): adding `libz-sys` and `num-traits` reports
 - Known gap: cargo-geiger 0.14's parser cannot read `signal-hook-registry` 1.4.8 (Rust syntax it
   does not support), so that crate is reported as 0.
 - CI: the `supply-chain` job, which needs nightly to build cargo-geiger.
+
+## Test-only tools
+
+`tools/edverify` and `tools/edgen` are workspace members, but they are never shipped: `default-members` is the root crate, and the image builds only `elasticdump-rs`. In cargo-vet they have `criteria = "safe-to-run"` (`[policy.edgen]`, `[policy.edverify]`), so `rand`, `rand_chacha` and `ppv-lite86` need only the safe-to-run level they already had as dev-dependencies.

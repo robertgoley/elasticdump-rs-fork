@@ -470,6 +470,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "edgen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "flate2",
+ "rand 0.8.8",
+ "rand_chacha",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sonic-rs",
+ "tempfile",
+ "zstd",
+]
+
+[[package]]
 name = "edverify"
 version = "0.1.0"
 dependencies = [
