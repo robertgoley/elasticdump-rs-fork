@@ -657,3 +657,100 @@ async fn mapping_round_trips_are_lossless_per_feature() {
     assert!(done.contains(&"base") && done.contains(&"source_disabled"));
 }
 
+/// `index` settings of `index` with the keys every new index generates removed.
+async fn settings_of(c: &Cluster, index: &str) -> Value {
+    let v = c.ok("GET", &format!("{index}/_settings"), None).await;
+    let mut s = v[index]["settings"]["index"].clone();
+    if let Some(m) = s.as_object_mut() {
+        for k in [
+            "uuid",
+            "creation_date",
+            "provided_name",
+            "version",
+            "history",
+            "resize",
+        ] {
+            m.remove(k);
+        }
+    }
+    s
+}
+
+// L-415 (TST-API-031): `--type settings` dumps strip generated keys; restoring them into a
+// new index reproduces the source settings (analysis included) modulo the generated-key
+// allow-list; `--excludeSettings` drops the named keys (with or without `index.`).
+#[tokio::test]
+async fn settings_round_trip_strips_generated_keys_and_honours_exclude() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let src = unique("api_set");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &src,
+        Some(json!({"settings": {
+            "number_of_shards": 2, "number_of_replicas": 0, "refresh_interval": "5s", "max_result_window": 20000,
+            "analysis": {"analyzer": {"a1": {"type": "custom", "tokenizer": "whitespace", "filter": ["lowercase"]}},
+                         "normalizer": {"lc": {"type": "custom", "filter": ["lowercase"]}}}
+        }})),
+    )
+    .await;
+    let file = tmp_path("api_set", "json");
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&src),
+            file.to_str().unwrap(),
+            &["--type", "settings"],
+        ))
+        .await,
+    );
+    let dumped = std::fs::read_to_string(&file).unwrap();
+    for k in [
+        "\\\"uuid\\\"",
+        "creation_date",
+        "provided_name",
+        "\\\"version\\\"",
+    ] {
+        assert!(
+            !dumped.contains(k),
+            "generated key {k} in the dump: {dumped}"
+        );
+    }
+    let dst = format!("{src}_dst");
+    c.delete_index(&dst).await;
+    assert_success(
+        &run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&dst),
+            &["--type", "settings"],
+        ))
+        .await,
+    );
+    assert_eq!(settings_of(&c, &dst).await, settings_of(&c, &src).await);
+
+    let dst2 = format!("{src}_dst2");
+    c.delete_index(&dst2).await;
+    let o = run(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(&dst2),
+        &[
+            "--type",
+            "settings",
+            "--excludeSettings",
+            "refresh_interval,index.max_result_window",
+        ],
+    ))
+    .await;
+    assert_success(&o);
+    let mut want = settings_of(&c, &src).await;
+    want.as_object_mut().unwrap().remove("refresh_interval");
+    want.as_object_mut().unwrap().remove("max_result_window");
+    assert_eq!(settings_of(&c, &dst2).await, want);
+    let _ = std::fs::remove_file(file);
+    for i in [&src, &dst, &dst2] {
+        c.delete_index(i).await;
+    }
+}
