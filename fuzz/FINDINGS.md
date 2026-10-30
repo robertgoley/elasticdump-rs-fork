@@ -18,3 +18,4 @@ Short smoke runs only (<= 300 s per target, one at a time, `-rss_limit_mb=1024`,
 | ini_auth_file | 300 s | 2,621,675 | 1161 | ok |
 | json_split | 300 s | 2,407,718 | 223 | ok |
 | parse_size | 300 s | 56,205,718 | 182 | ok |
+| renamer_new_index | 300 s | 497,607 | 14079 | ok |
