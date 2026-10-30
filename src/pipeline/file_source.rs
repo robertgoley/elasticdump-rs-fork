@@ -60,6 +60,20 @@ pub fn open_reader_counted(
         inner: raw,
         n: raw_bytes,
     });
+    decode_input(raw, path.map(|p| p.as_path()))
+}
+
+/// Largest zstd window accepted on input (2^27 = 128 MiB, libzstd's own default
+/// limit, set explicitly): a frame that declares more is refused before any
+/// memory is reserved for it (TST-SUP-020).
+pub const ZSTD_WINDOW_LOG_MAX: u32 = 27;
+
+/// Wraps raw input bytes in the right decoder, chosen by magic bytes: gzip
+/// (multi-member), zstd (concatenated and skippable frames) or plain.
+pub fn decode_input(
+    raw: Box<dyn Read + Send>,
+    path: Option<&std::path::Path>,
+) -> Result<Box<dyn Read + Send>> {
     let mut buffered = BufReader::with_capacity(READ_CHUNK, raw);
     let head = buffered.fill_buf().context("Failed to read input")?;
     if head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b {
@@ -68,9 +82,10 @@ pub fn open_reader_counted(
     } else if head.starts_with(&ZSTD_MAGIC) {
         log::debug!("Input is zstd-compressed");
         // Concatenated frames (e.g. `cat` of parts) are decoded in sequence.
-        Ok(Box::new(
-            zstd::stream::read::Decoder::with_buffer(buffered).context("zstd decoder")?,
-        ))
+        let mut d = zstd::stream::read::Decoder::with_buffer(buffered).context("zstd decoder")?;
+        d.window_log_max(ZSTD_WINDOW_LOG_MAX)
+            .context("zstd decoder")?;
+        Ok(Box::new(d))
     } else if path.is_some_and(|p| p.extension().is_some_and(|e| e == "zst" || e == "zstd"))
         && !head.is_empty()
     {
@@ -107,9 +122,16 @@ fn read_loop(
             return Ok(());
         }
         let n = reader.read(&mut chunk).map_err(|e| {
+            let hint = if e.to_string().contains("too much memory") {
+                format!(
+                    "; zstd frames with a window over 2^{ZSTD_WINDOW_LOG_MAX} bytes are refused (recompress without --long or with --long={ZSTD_WINDOW_LOG_MAX})"
+                )
+            } else {
+                String::new()
+            };
             // the BufReader reads ahead, so the offset is where reading had got to
             anyhow!(
-                "Failed to read {name}: {e} (truncated or corrupt input: stopped near byte {} of the file, after {decoded} decoded bytes and {docs_read} complete documents; documents of earlier batches may already have been written)",
+                "Failed to read {name}: {e}{hint} (truncated or corrupt input: stopped near byte {} of the file, after {decoded} decoded bytes and {docs_read} complete documents; documents of earlier batches may already have been written)",
                 raw_bytes.load(Ordering::Relaxed)
             )
         })?;

@@ -2997,3 +2997,103 @@ async fn data_stream_documents_need_create_and_target_the_stream() {
         }
     }
 }
+
+/// L-508 (TST-SUP-020): hostile compressed input. Every case either restores exactly the
+/// documents it holds or stops with exit 1 and a clear error, and writes no output file.
+#[test]
+fn hostile_compressed_input_fails_cleanly() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let docs = "{\"_id\":\"a\",\"_source\":{\"n\":1}}\n{\"_id\":\"b\",\"_source\":{\"n\":2}}\n";
+    let zst = |s: &[u8]| zstd::stream::encode_all(s, 3).unwrap();
+    let gz = |s: &[u8]| {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        e.write_all(s).unwrap();
+        e.finish().unwrap()
+    };
+    // zstd frame by hand: magic, FHD 0 (no FCS/checksum/dict), window descriptor, blocks
+    let frame = |wd: u8, blocks: &[(u8, u32, &[u8])]| {
+        let mut f = vec![0x28, 0xb5, 0x2f, 0xfd, 0x00, wd];
+        for (i, (ty, size, body)) in blocks.iter().enumerate() {
+            let last = u32::from(i + 1 == blocks.len());
+            let h = last | (u32::from(*ty) << 1) | (size << 3);
+            f.extend_from_slice(&h.to_le_bytes()[..3]);
+            f.extend_from_slice(body);
+        }
+        f
+    };
+    let full = zst(docs.as_bytes());
+    let skippable = [&[0x50, 0x2a, 0x4d, 0x18, 4, 0, 0, 0][..], b"junk"].concat();
+    let (first, second) = docs.split_at(docs.find('\n').unwrap() + 1);
+    let huge_window = frame(0xa8, &[(0, 1, b"{")]); // window 2^31 > cap 2^27
+    let mut members = gz(first.as_bytes());
+    members.extend(gz(second.as_bytes()));
+    // a 64 MiB value from 512 RLE blocks of 128 KiB (about 2 KiB on disk: 32000:1)
+    // the value continues from the first frame into the second
+    let mut bomb = frame(0x38, &[(0, 32, br#"{"_id":"big","_source":{"v":"xxx"#)]);
+    let mut rle: Vec<(u8, u32, &[u8])> = vec![(1, 128 << 10, b"x"); 512];
+    rle.push((0, 3, b"\"}}"));
+    bomb.extend(frame(0x38, &rle));
+    let cases: Vec<(&str, Vec<u8>, Result<usize, &str>)> = vec![
+        (
+            "concat.zst",
+            [
+                zst(first.as_bytes()),
+                skippable.clone(),
+                zst(second.as_bytes()),
+            ]
+            .concat(),
+            Ok(2),
+        ),
+        ("multi.json.gz", members.clone(), Ok(2)),
+        (
+            "truncated.zst",
+            full[..full.len() - 5].to_vec(),
+            Err("truncated or corrupt input"),
+        ),
+        (
+            "garbage.zst",
+            [full.clone(), b"GARBAGE!".to_vec()].concat(),
+            Err("truncated or corrupt input"),
+        ),
+        (
+            "garbage.json.gz",
+            [members.clone(), b"GARBAGE!".to_vec()].concat(),
+            Err("truncated or corrupt input"),
+        ),
+        (
+            "truncated.json.gz",
+            members[..members.len() - 6].to_vec(),
+            Err("truncated or corrupt input"),
+        ),
+        ("window.zst", huge_window, Err("window over 2^27")),
+        ("bomb.zst", bomb, Err("--maxDocMb")),
+    ];
+    for (name, bytes, want) in cases {
+        let input = dir.path().join(name);
+        std::fs::write(&input, &bytes).unwrap();
+        let out = dir.path().join(format!("{name}.out.json"));
+        let o = run(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--maxDocMb",
+            "16",
+        ]);
+        let err = stderr(&o);
+        match want {
+            Ok(n) => {
+                assert_eq!(o.status.code(), Some(0), "{name}: {err}");
+                let got = std::fs::read_to_string(&out).unwrap();
+                assert_eq!(got.lines().count(), n, "{name}: {got}");
+            }
+            Err(needle) => {
+                assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+                assert!(err.contains(needle), "{name}: {err}");
+                assert!(!out.exists(), "{name}: output written");
+                assert!(!err.contains("panicked"), "{name}: {err}");
+            }
+        }
+    }
+}
