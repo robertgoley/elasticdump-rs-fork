@@ -10,6 +10,7 @@ pub mod output;
 pub mod pipeline;
 pub mod rename;
 pub mod retrieval;
+pub mod secrets;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -100,7 +101,18 @@ fn init_logging(cli: &Cli) {
         "warn"
     };
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default))
-        .format_target(false)
+        .format(|buf, record| {
+            use std::io::Write;
+            // every log line is scrubbed of registered secrets (TST-BRK-CLI-007)
+            let msg = secrets::scrub(&record.args().to_string());
+            let style = buf.default_level_style(record.level());
+            writeln!(
+                buf,
+                "[{} {style}{}{style:#}] {msg}",
+                buf.timestamp(),
+                record.level()
+            )
+        })
         .try_init();
 }
 
@@ -466,6 +478,36 @@ async fn es_source_options(
     })
 }
 
+/// Register every credential of this run so logs and errors never show it.
+fn register_secrets(cli: &Cli, eps: [&Endpoint; 2], auth_file: Option<&(String, String)>) {
+    for ep in eps {
+        if let Endpoint::Es(ep) = ep {
+            if let Some(p) = &ep.password {
+                secrets::register_basic(ep.username.as_deref(), p);
+            }
+        }
+    }
+    if let Some((u, p)) = auth_file {
+        secrets::register_basic(Some(u), p);
+    }
+    for p in [&cli.password, &cli.pass, &cli.input_pass, &cli.output_pass]
+        .into_iter()
+        .flatten()
+    {
+        secrets::register(p);
+    }
+    for dir in [Direction::Input, Direction::Output] {
+        for (k, v) in config::headers_for(cli, dir).unwrap_or_default() {
+            secrets::register_header(&k, &v);
+        }
+        for (k, v) in config::params_for(cli, dir).unwrap_or_default() {
+            if secrets::is_sensitive_name(&k) {
+                secrets::register(&v);
+            }
+        }
+    }
+}
+
 /// Refuse, before anything is written, a cluster copy whose rename rules map
 /// several source indices to one target (TST-BRK-CLI-003). Documents read from
 /// a file are checked as they arrive (`IndexRenamer::index`).
@@ -666,6 +708,7 @@ pub async fn run() -> Result<()> {
     if let Endpoint::Es(ep) = &mut output {
         config::resolve_endpoint_auth(&cli, ep, Direction::Output, auth_file.as_ref());
     }
+    register_secrets(&cli, [&input, &output], auth_file.as_ref());
 
     log::info!(
         "Starting dump: {} -> {} (type {})",

@@ -661,7 +661,7 @@ impl BulkSink {
     fn report_failure(&mut self, doc: &[u8], item: &str) -> Result<()> {
         self.report.failed += 1;
         if self.opts.ignore_es_write_errors {
-            eprintln!("{item}");
+            eprintln!("{}", crate::secrets::scrub(item));
             Ok(())
         } else {
             let id = get(doc, &["_id"]).map(|v| v.as_raw_str().to_string());

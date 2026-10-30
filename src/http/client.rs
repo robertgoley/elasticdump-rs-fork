@@ -332,7 +332,9 @@ impl EsClient {
             builder = builder.timeout(timeout);
         }
         if let Some(idle) = opts.idle_timeout {
-            builder = builder.read_timeout(idle);
+            // a silent server during connect or the TLS handshake is covered
+            // too (read_timeout only starts with the response; found in L-453)
+            builder = builder.read_timeout(idle).connect_timeout(idle);
         }
         if let Some(n) = opts.max_sockets {
             builder = builder.pool_max_idle_per_host(n);
