@@ -226,3 +226,51 @@ async fn search_after_needs_sort_and_refuses_silent_loss_on_ties() {
     let _ = std::fs::remove_file(f);
     c.delete_index(&src).await;
 }
+
+// L-409 (TST-API-014): `--searchWithTemplate` with an inline and a stored (`id`) mustache
+// template returns the same documents as the equivalent plain query.
+#[tokio::test]
+async fn search_templates_inline_and_stored_match_plain_query() {
+    let c = Cluster::from_env();
+    let src = unique("api_tpl");
+    seed_index(&c, &src, 1200).await;
+    let tid = unique("api_tpl_script");
+    c.ok(
+        "PUT",
+        &format!("_scripts/{tid}"),
+        Some(serde_json::json!({"script": {"lang": "mustache", "source": {"query": {"range": {"n": {"gte": "{{min}}"}}}}}})),
+    )
+    .await;
+    let (plain, o) = dump(
+        &c,
+        &src,
+        &["--searchBody", r#"{"query":{"range":{"n":{"gte":100}}}}"#],
+    )
+    .await;
+    assert_success(&o);
+    let want = file_docs(&plain);
+    assert_eq!(want.len(), 1100);
+    let inline = r#"{"source":{"query":{"range":{"n":{"gte":"{{min}}"}}}},"params":{"min":100}}"#;
+    let stored = format!(r#"{{"id":"{tid}","params":{{"min":100}}}}"#);
+    for (name, body) in [("inline", inline.to_string()), ("stored", stored)] {
+        let (f, o) = dump(
+            &c,
+            &src,
+            &[
+                "--searchWithTemplate",
+                "--searchBody",
+                &body,
+                "--limit",
+                "300",
+            ],
+        )
+        .await;
+        assert_success(&o);
+        assert_eq!(file_docs(&f), want, "{name}");
+        let _ = std::fs::remove_file(f);
+    }
+    let _ = std::fs::remove_file(plain);
+    let _ = c.call("DELETE", &format!("_scripts/{tid}"), None).await;
+    c.delete_index(&src).await;
+}
+
