@@ -1360,3 +1360,77 @@ async fn l611_client_certificate_faults_have_clear_messages() {
         assert!(!dir.path().join("o.json").exists());
     }
 }
+
+// L-612 (TST-BRK-TLS-003): protocol mismatches beyond L-431 (https to a plain HTTP port, http
+// to a TLS port, TLS 1.1 only): a TLS 1.0-only server, a server with an RSA-1024 key, and
+// https to a port that accepts but never speaks. Each fails with a clear, permanent message
+// (no retry loop) within a few seconds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l612_protocol_mismatches_fail_clearly_and_fast() {
+    use std::time::{Duration, Instant};
+    let dir = tempfile::tempdir().unwrap();
+    let Some(certs) = cert_factory(dir.path()) else {
+        return;
+    };
+    let o = Command::new("sh")
+        .current_dir(&certs)
+        .args(["-c", "openssl req -newkey rsa:1024 -nodes -keyout weak.key -out weak.csr -subj /CN=localhost 2>/dev/null \
+            && printf 'subjectAltName=DNS:localhost\\nextendedKeyUsage=serverAuth\\n' > weak.ext \
+            && openssl x509 -req -in weak.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out weak.pem -days 2 -extfile weak.ext 2>/dev/null"])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let (_t10, p10) = s_server(&certs, "ok", &["-tls1", "-cipher", "DEFAULT:@SECLEVEL=0"]);
+    let (_weak, pweak) = s_server(&certs, "weak", &["-cipher", "DEFAULT:@SECLEVEL=0"]);
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let psilent = silent.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut keep = Vec::new();
+        for c in silent.incoming().flatten() {
+            keep.push(c); // accept, never answer
+        }
+    });
+    let ca = certs.join("ca.pem").to_str().unwrap().to_string();
+    for (name, port, want) in [
+        ("TLS 1.0 only", p10, "TLS 1.2+ is required"),
+        ("RSA-1024 server key", pweak, "RSA key under 2048 bits"),
+        ("https to a silent port", psilent, "timed out"),
+    ] {
+        let t = Instant::now();
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("https://localhost:{port}/idx"),
+                "--output",
+                dir.path().join("o.json").to_str().unwrap(),
+                "--type",
+                "mapping",
+                "--input-ca",
+                &ca,
+                "--retryAttempts",
+                "2",
+                "--retryDelay",
+                "1",
+                "--timeout",
+                "1500",
+            ]),
+            vec![],
+        )
+        .await;
+        let took = t.elapsed();
+        let err = stderr(&o);
+        println!(
+            "L-612 {name}: {took:?}: {}",
+            err.lines().rfind(|l| l.starts_with("Error")).unwrap_or("")
+        );
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        assert!(err.contains(want), "{name}: want {want:?}: {err}");
+        assert!(took < Duration::from_secs(10), "{name}: bounded: {took:?}");
+        if name != "https to a silent port" {
+            assert!(
+                !err.contains("retrying"),
+                "{name}: a TLS failure is permanent: {err}"
+            );
+        }
+    }
+}

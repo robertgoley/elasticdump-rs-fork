@@ -440,6 +440,11 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
             true,
             "TLS: the server did not answer with TLS; this port probably serves plain HTTP, so use http://",
         )
+    } else if has("BadSignature") || has("UnsupportedSignatureAlgorithm") {
+        (
+            true,
+            "TLS: the server certificate uses a key or signature algorithm this tool does not accept (an RSA key under 2048 bits, or SHA-1); re-issue it with RSA-2048+ or ECDSA and SHA-256",
+        )
     } else if has("invalid peer certificate") || has("BadCertificate") || has("UnknownCA") {
         (
             true,
