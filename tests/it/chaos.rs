@@ -207,3 +207,37 @@ async fn l621_parallel_create_restores_count_conflicts_correctly() {
         c.delete_index(i).await;
     }
 }
+
+// L-622 (TST-BRK-SRV-012): a red index (its primary cannot be allocated: allocation filtering
+// requires a node that does not exist). A dump fails clearly (exit 1) naming the index and
+// that shards are unavailable, within the retry budget, and writes nothing.
+#[tokio::test]
+async fn l622_red_index_fails_clearly() {
+    let c = Cluster::from_env();
+    let index = unique("red");
+    c.delete_index(&index).await;
+    c.ok(
+        "PUT",
+        &index,
+        Some(serde_json::json!({"settings": {
+            "number_of_shards": 1, "number_of_replicas": 0,
+            "index.routing.allocation.require._name": "no-such-node"
+        }})),
+    )
+    .await;
+    let (_, h) = c
+        .call("GET", &format!("_cluster/health/{index}?timeout=2s"), None)
+        .await;
+    assert_eq!(h["status"], "red", "{h}");
+    let out = tmp_path("red", "json");
+    let mut a = io_args(&c, &c.url_with_auth(&index), out.to_str().unwrap());
+    a.extend(s(&["--retryAttempts", "2", "--retryDelay", "100"]));
+    let started = std::time::Instant::now();
+    let o = run_loud(a).await;
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("the index is red"), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(60), "bounded");
+    assert!(!out.exists(), "nothing committed");
+    c.delete_index(&index).await;
+}

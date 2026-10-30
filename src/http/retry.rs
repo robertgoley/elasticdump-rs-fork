@@ -80,6 +80,15 @@ impl fmt::Display for EsHttpError {
                 self.endpoint_or_operation(),
                 privilege_hint(&self.endpoint)
             ),
+            503 if self.body.contains("missing shards")
+                || self.body.contains("no_shard_available_action_exception")
+                || self.body.contains("all shards failed") =>
+            {
+                write!(
+                    f,
+                    " (shards are unavailable: the index is red, e.g. an unassigned primary after a lost node or an allocation filter; check GET _cluster/health/<index>?level=shards and re-run once it is yellow or green; partial search results are never accepted, they would silently miss documents)"
+                )
+            }
             _ => Ok(()),
         }
     }
