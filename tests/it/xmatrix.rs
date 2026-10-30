@@ -421,3 +421,103 @@ fn expectation_table_is_complete_and_strict() {
         "pass-with-warnings[b | a]"
     ));
 }
+
+// L-440 (TST-API-072): live cluster-to-cluster pairs (the `cross` profile with chosen images,
+// scripts/it/xpairs.sh). Every type is copied in both directions straight from the source
+// cluster; data must arrive digest-equal and each metadata outcome must agree with the file
+// cell of the same pair in the expectation table, translated for a live source:
+//   pass, pass-with-warnings          -> succeeds
+//   needs-flag[--excludeSettings]     -> succeeds without the flag (the source engine is known,
+//                                        so its own keys are dropped with a "Dropping" warning)
+//   needs-flag[other flags]           -> fails without, succeeds with those flags
+//   refused[…]                        -> fails
+#[tokio::test]
+async fn cluster_to_cluster_pair_every_type() {
+    let Some(peer) = Cluster::peer() else {
+        println!("SKIP: no peer cluster (cross profile only)");
+        return;
+    };
+    let table = load_table(&std::fs::read_to_string(table_path()).unwrap());
+    let a = Cluster::from_env();
+    for (src, dst) in [(a.clone(), peer.clone()), (peer, a)] {
+        let (from, to) = (label(&src).await, label(&dst).await);
+        let es = matches!(src.engine, Engine::Elasticsearch);
+        let n = Names::new();
+        clean_all(&src, &n).await;
+        seed(&src, &n, es).await;
+        let want = src.docs(&n.ix).await;
+        let policies = src.has_policies().await;
+        for ty in TYPES {
+            if ty == "policy" && !policies {
+                continue;
+            }
+            let key = cell_key(&from, &to, ty);
+            let cellv = table
+                .get(&key)
+                .unwrap_or_else(|| panic!("{key}: no file cell in the table"));
+            let (kind, detail) = split_result(cellv);
+            let flags: Vec<String> = match kind {
+                "needs-flag" if detail != "--excludeSettings" => {
+                    detail.split(' ').map(String::from).collect()
+                }
+                _ => vec![],
+            };
+            let copy = |extra: Vec<String>| {
+                let (src, dst, n) = (&src, &dst, &n);
+                async move {
+                    clean_all(dst, n).await;
+                    let pre: &[&str] = match ty {
+                        "data" => &["analyzer", "mapping"],
+                        "alias" | "mapping" => &["analyzer"],
+                        "index_template" => &["component_template"],
+                        _ => &[],
+                    };
+                    let one = |t: &'static str, extra: Vec<String>| {
+                        let mut a = s(&[
+                            "--input",
+                            &src.url_with_auth(n.selector(t)),
+                            "--output",
+                            &restore_target(dst, n, t),
+                            "--type",
+                            t,
+                        ]);
+                        a.extend(extra);
+                        run_loud(a)
+                    };
+                    for p in pre {
+                        let _ = one(p, vec![]).await;
+                    }
+                    one(ty, extra).await
+                }
+            };
+            let o = copy(vec![]).await;
+            let err = String::from_utf8_lossy(&o.stderr).to_string();
+            match kind {
+                "refused" => assert!(!o.status.success(), "{key}: expected a refusal; {err}"),
+                "needs-flag" if !flags.is_empty() => {
+                    assert!(
+                        !o.status.success(),
+                        "{key}: expected to need {flags:?}; {err}"
+                    );
+                    let o = copy(flags.clone()).await;
+                    assert_success(&o);
+                }
+                _ => {
+                    assert!(o.status.success(), "{key} ({cellv}): {err}");
+                    if detail == "--excludeSettings" {
+                        assert!(err.contains("Dropping"), "{key}: {err}");
+                    }
+                }
+            }
+            if o.status.success() || !flags.is_empty() {
+                assert!(exists(&dst, &n, ty).await, "{key}: object missing");
+                if ty == "data" {
+                    assert_eq!(dst.docs(&n.ix).await, want, "{key}: docs");
+                }
+            }
+            println!("{key}: {cellv} -> live copy agrees");
+        }
+        clean_all(&dst, &n).await;
+        clean_all(&src, &n).await;
+    }
+}

@@ -77,8 +77,14 @@ async fn cluster_to_cluster_full_copy_both_directions() {
             .await;
             assert_success(&o);
             let err = String::from_utf8_lossy(&o.stderr);
-            if ty == "settings" {
-                // the source engine's own keys are dropped with a warning
+            // the source engine's own keys are dropped with a warning (OpenSearch 1.x has no
+            // index.replication.type, so nothing is dropped there)
+            let own = src_c
+                .ok("GET", &format!("{src}/_settings?flat_settings=true"), None)
+                .await[&src]["settings"]
+                .get(own_key(src_c.engine))
+                .is_some();
+            if ty == "settings" && own {
                 let dropped = match src_c.engine {
                     Engine::Elasticsearch => "_tier_preference",
                     Engine::OpenSearch => "replication.type",
