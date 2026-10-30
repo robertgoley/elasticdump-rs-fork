@@ -172,6 +172,13 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
             "--scrollId cannot be combined with --slices, --searchAfter or PIT",
         ));
     }
+    // L-641: sliced streams interleave nondeterministically, so --offset would skip an
+    // arbitrary set of documents rather than "the first N".
+    if cli.offset > 0 && cli.slices > 1 {
+        return Err(usage(
+            "--offset cannot be combined with --slices (sliced results have no stable order to skip into)",
+        ));
+    }
     if cli.r#type != DumpType::Data && (cli.offset > 0 || cli.size >= 0) {
         log::warn!(
             "--offset/--size are ignored for --type {}",
@@ -453,7 +460,7 @@ async fn es_source_options(
     } else {
         (crate::http::PitApi::Elastic, json!(["_shard_doc"]))
     };
-    let size = (cli.size >= 0).then_some(cli.size as u64 + cli.offset);
+    let size = (cli.size >= 0).then(|| (cli.size as u64).saturating_add(cli.offset));
     let search_body = if cli.search_with_template() {
         let template = retrieval::search_body::load_search_body(cli.search_body.as_deref()).await?;
         let rendered = render_search_template(&client, retry, &template).await?;

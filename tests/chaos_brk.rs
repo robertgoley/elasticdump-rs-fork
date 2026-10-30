@@ -3110,3 +3110,428 @@ async fn l640_max_sockets_caps_requests_in_flight() {
         }
     }
 }
+
+/// L-641: conflicting / odd flag combinations. Each row is either a usage error (exit 2,
+/// before any network I/O, so the unreachable URL is never dialled) or a documented
+/// precedence that must run file -> file and exit 0. No combination may panic.
+#[test]
+fn l641_conflicting_flag_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let input = d.join("in.json");
+    let mut nd = String::new();
+    for i in 0..20 {
+        nd.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+    }
+    std::fs::write(&input, nd).unwrap();
+    let inp = input.to_str().unwrap().to_string();
+    let es = "http://127.0.0.1:1/idx";
+    // (name, args, expected exit code, stderr substring)
+    let rows: Vec<(&str, Vec<&str>, i32, &str)> = vec![
+        (
+            "offset+slices",
+            vec![
+                "--input", es, "--output", "@OUT", "--offset", "10", "--slices", "2",
+            ],
+            2,
+            "--offset cannot be combined with --slices",
+        ),
+        (
+            "scrollId+slices",
+            vec![
+                "--input",
+                es,
+                "--output",
+                "@OUT",
+                "--scrollId",
+                "a",
+                "--slices",
+                "2",
+            ],
+            2,
+            "--scrollId cannot be combined",
+        ),
+        (
+            "scrollId+pit",
+            vec![
+                "--input",
+                es,
+                "--output",
+                "@OUT",
+                "--scrollId",
+                "a",
+                "--searchType",
+                "pit",
+            ],
+            2,
+            "--scrollId cannot be combined",
+        ),
+        (
+            "searchAfter-no-sort",
+            vec![
+                "--input",
+                es,
+                "--output",
+                "@OUT",
+                "--searchAfter",
+                "--slices",
+                "2",
+            ],
+            2,
+            "needs a \"sort\"",
+        ),
+        (
+            "maxRows+stdout",
+            vec!["--input", "@IN", "--output", "$", "--maxRows", "5"],
+            2,
+            "require a file --output",
+        ),
+        (
+            "fileSize+stdout",
+            vec!["--input", "@IN", "--output", "$", "--fileSize", "1mb"],
+            2,
+            "require a file --output",
+        ),
+        (
+            "fileSize+es",
+            vec!["--input", "@IN", "--output", es, "--fileSize", "1mb"],
+            2,
+            "require a file --output",
+        ),
+        (
+            "maxRows+es",
+            vec!["--input", "@IN", "--output", es, "--maxRows", "5"],
+            2,
+            "require a file --output",
+        ),
+        (
+            "fileSize+maxRows",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--fileSize",
+                "1mb",
+                "--maxRows",
+                "5",
+            ],
+            2,
+            "",
+        ),
+        (
+            "fileSize-tiny",
+            vec!["--input", "@IN", "--output", "@OUT", "--fileSize", "10b"],
+            2,
+            "",
+        ),
+        (
+            "human+fileSize",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--format",
+                "human",
+                "--fileSize",
+                "1mb",
+            ],
+            2,
+            "",
+        ),
+        (
+            "gzip-level-oor",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--fsCompress",
+                "--compressionLevel",
+                "42",
+            ],
+            2,
+            "out of range for Gzip",
+        ),
+        (
+            "zstd-level-oor",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--compressionType",
+                "zstd",
+                "--compressionLevel",
+                "99",
+            ],
+            2,
+            "out of range for Zstd",
+        ),
+        (
+            "renamePrefix+outindex",
+            vec!["--input", es, "--output", es, "--renamePrefix", "p_"],
+            2,
+            "cannot be combined with an explicit output",
+        ),
+        (
+            "renameIndex+file",
+            vec!["--input", es, "--output", "@OUT", "--renameIndex", "a:b"],
+            2,
+            "not to file output",
+        ),
+        (
+            "renameAliases-alone",
+            vec!["--input", "@IN", "--output", es, "--renameAliases"],
+            2,
+            "need --renamePrefix or --renameIndex",
+        ),
+        (
+            "bulkAction-bad",
+            vec!["--input", "@IN", "--output", es, "--bulkAction", "upsert"],
+            2,
+            "",
+        ),
+        (
+            "searchType-bad",
+            vec!["--input", es, "--output", "@OUT", "--searchType", "foo"],
+            2,
+            "",
+        ),
+        (
+            "maxSockets0",
+            vec!["--input", "@IN", "--output", es, "--maxSockets", "0"],
+            2,
+            "",
+        ),
+        (
+            "concurrency0",
+            vec!["--input", "@IN", "--output", es, "--concurrency", "0"],
+            2,
+            "",
+        ),
+        (
+            "transform",
+            vec!["--input", "@IN", "--output", "@OUT", "--transform", "x"],
+            2,
+            "not supported",
+        ),
+        (
+            "output-index-upper",
+            vec!["--input", "@IN", "--output", "http://127.0.0.1:1/UPPER"],
+            2,
+            "",
+        ),
+        (
+            "output-index-star",
+            vec!["--input", "@IN", "--output", "http://127.0.0.1:1/a*b"],
+            2,
+            "",
+        ),
+        (
+            "offset+slices-file-out",
+            vec![
+                "--input", es, "--output", "@OUT", "--offset", "1", "--slices", "4", "--size", "5",
+            ],
+            2,
+            "--offset cannot be combined with --slices",
+        ),
+        // Documented precedence / no-op combinations: must succeed file -> file.
+        (
+            "fsCompress+zstd",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--fsCompress",
+                "--compressionType",
+                "zstd",
+            ],
+            0,
+            "",
+        ),
+        (
+            "fsCompress+gzip",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--fsCompress",
+                "--compressionType",
+                "gzip",
+            ],
+            0,
+            "",
+        ),
+        (
+            "quiet+debug",
+            vec!["--input", "@IN", "--output", "@OUT", "--quiet", "--debug"],
+            0,
+            "",
+        ),
+        (
+            "noRefresh+file",
+            vec!["--input", "@IN", "--output", "@OUT", "--noRefresh"],
+            0,
+            "",
+        ),
+        (
+            "esCompress+file",
+            vec!["--input", "@IN", "--output", "@OUT", "--esCompress"],
+            0,
+            "",
+        ),
+        (
+            "overwrite+stdout",
+            vec!["--input", "@IN", "--output", "$", "--overwrite"],
+            0,
+            "",
+        ),
+        (
+            "skipExisting+overwrite",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--skip-existing",
+                "--overwrite",
+            ],
+            0,
+            "",
+        ),
+        (
+            "maxRows0",
+            vec!["--input", "@IN", "--output", "@OUT", "--maxRows", "0"],
+            0,
+            "",
+        ),
+        (
+            "size-neg2",
+            vec!["--input", "@IN", "--output", "@OUT", "--size", "-2"],
+            0,
+            "",
+        ),
+        (
+            "offset+size",
+            vec![
+                "--input", "@IN", "--output", "@OUT", "--offset", "5", "--size", "3",
+            ],
+            0,
+            "",
+        ),
+        (
+            "offset-huge",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--offset",
+                "18446744073709551615",
+            ],
+            0,
+            "",
+        ),
+        (
+            "size-huge+offset",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--offset",
+                "3",
+                "--size",
+                "9223372036854775807",
+            ],
+            0,
+            "",
+        ),
+        (
+            "limit+size",
+            vec![
+                "--input", "@IN", "--output", "@OUT", "--limit", "2", "--size", "7",
+            ],
+            0,
+            "",
+        ),
+        (
+            "compressionLevel-alone",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--compressionLevel",
+                "3",
+            ],
+            0,
+            "has no effect",
+        ),
+        (
+            "sourceOnly+file",
+            vec!["--input", "@IN", "--output", "@OUT", "--sourceOnly"],
+            0,
+            "",
+        ),
+        (
+            "maxRows+fsCompress",
+            vec![
+                "--input",
+                "@IN",
+                "--output",
+                "@OUT",
+                "--maxRows",
+                "7",
+                "--fsCompress",
+            ],
+            0,
+            "",
+        ),
+        (
+            "ignoreErrors+file",
+            vec!["--input", "@IN", "--output", "@OUT", "--ignore-errors"],
+            0,
+            "",
+        ),
+        (
+            "debug+stdout",
+            vec!["--input", "@IN", "--output", "$", "--debug"],
+            0,
+            "",
+        ),
+    ];
+    assert!(rows.len() >= 40, "{} rows", rows.len());
+    let mut failures = Vec::new();
+    for (i, (name, args, code, needle)) in rows.iter().enumerate() {
+        let out = d.join(format!("out{i}.json"));
+        let args: Vec<String> = args
+            .iter()
+            .map(|a| match *a {
+                "@IN" => inp.clone(),
+                "@OUT" => out.to_str().unwrap().to_string(),
+                x => x.to_string(),
+            })
+            .collect();
+        let o = bin()
+            .args(&args)
+            .args(["--retryAttempts", "0"])
+            .output()
+            .expect("spawn");
+        let err = String::from_utf8_lossy(&o.stderr).to_string();
+        let rc = o.status.code();
+        if rc != Some(*code) || !err.contains(needle) || err.contains("panicked") {
+            failures.push(format!(
+                "{name}: rc {rc:?} (want {code}) stderr: {}",
+                err.trim()
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

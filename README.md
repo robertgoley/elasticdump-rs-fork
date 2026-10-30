@@ -76,6 +76,9 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 * **Writing:** `--bulkAction index|create|update|delete`, `--handleVersion`, `--versionType`, `--noRefresh`,
   `--ignore-errors`, `--ignore-es-write-errors` (default: continue past failed items), `--parseExtraFields`.
 * **Files:** `--fsCompress`, `--compressionType gzip|zstd`, `--compressionLevel`, `--fileSize`, `--maxRows`.
+  `--compressionType` wins over `--fsCompress` when both are given. `--offset` cannot be combined with `--slices`
+  (sliced results interleave, so there is no stable "first N" to skip); `--skip-existing` (metadata restores) and
+  `--overwrite` (file output) are independent.
 * **Throughput:** `--concurrency`, `--throttleInterval`, `--intervalCap`, `--concurrencyInterval`,
   `--carryoverConcurrencyCount`, `--maxSockets` (a hard cap on requests in flight, and so on connections; it
   wins over a higher `--concurrency`), `--timeout` (ms of server *silence*, as in Node's `request`;
