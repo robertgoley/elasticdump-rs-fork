@@ -1996,3 +1996,70 @@ async fn l624_unsupported_compression_is_named() {
         assert!(!out.exists(), "{name}: output written");
     }
 }
+
+// L-625 (TST-BRK-IN-006): invalid UTF-8 inside a string fails naming the document (Node would
+// silently write U+FFFD); UTF-16 LE/BE files (with or without a BOM) are refused up front with
+// an iconv hint; a UTF-8 BOM at the start of the file or of a later line (cat of two dumps) is
+// tolerated. A refused input never commits the output file.
+#[tokio::test]
+async fn l625_text_encoding_problems_are_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let l = r#"{"_index":"x","_id":"1","_source":{"s":"ok"}}"#;
+    let utf16 = |be: bool, bom: bool| {
+        let mut v: Vec<u8> = Vec::new();
+        if bom {
+            v.extend(if be { [0xfe, 0xff] } else { [0xff, 0xfe] });
+        }
+        for u in format!("{l}\n").encode_utf16() {
+            v.extend(if be { u.to_be_bytes() } else { u.to_le_bytes() });
+        }
+        v
+    };
+    let mut bad = format!("{l}\n").into_bytes();
+    bad.extend_from_slice(
+        b"{\"_index\":\"x\",\"_id\":\"2\",\"_source\":{\"s\":\"bad\xff\xfe\"}}\n",
+    );
+    let bom_mid = format!("\u{feff}{l}\n\u{feff}{l}\n").into_bytes();
+    let cases: Vec<(&str, Vec<u8>, Option<&str>)> = vec![
+        (
+            "bad",
+            bad,
+            Some("document 2 of the input is not valid UTF-8"),
+        ),
+        ("le", utf16(false, true), Some("is UTF-16LE text")),
+        ("be", utf16(true, true), Some("is UTF-16BE text")),
+        ("le-nobom", utf16(false, false), Some("is UTF-16LE text")),
+        ("be-nobom", utf16(true, false), Some("is UTF-16BE text")),
+        ("bom-mid", bom_mid, None),
+    ];
+    for (name, bytes, want) in cases {
+        let input = dir.path().join(format!("{name}.json"));
+        std::fs::write(&input, bytes).unwrap();
+        let out = dir.path().join(format!("{name}.out"));
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        match want {
+            Some(w) => {
+                assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+                assert!(err.contains(w), "{name}: {err}");
+                assert!(!out.exists(), "{name}: output committed");
+            }
+            None => {
+                assert!(o.status.success(), "{name}: {err}");
+                assert_eq!(
+                    std::fs::read_to_string(&out).unwrap(),
+                    format!("{l}\n{l}\n")
+                );
+            }
+        }
+    }
+}

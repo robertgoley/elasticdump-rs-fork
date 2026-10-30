@@ -110,6 +110,7 @@ pub fn decode_input(
             path.unwrap().display()
         )
     } else {
+        check_utf16(head, &name)?;
         Ok(Box::new(buffered))
     }
 }
@@ -132,6 +133,23 @@ fn unsupported_format(head: &[u8]) -> Option<&'static str> {
         .map(|(_, k)| *k)
 }
 
+/// UTF-16 input (with a BOM, or ASCII JSON interleaved with NULs) is refused up front
+/// (TST-BRK-IN-006): read as UTF-8 it would yield NUL-ridden garbage documents.
+fn check_utf16(head: &[u8], name: &str) -> Result<()> {
+    let kind = if head.starts_with(&[0xff, 0xfe])
+        || (head.len() >= 2 && head[1] == 0 && head[0] != 0)
+    {
+        "UTF-16LE"
+    } else if head.starts_with(&[0xfe, 0xff]) || (head.len() >= 2 && head[0] == 0 && head[1] != 0) {
+        "UTF-16BE"
+    } else {
+        return Ok(());
+    };
+    anyhow::bail!(
+        "Input {name} is {kind} text; only UTF-8 is read. Convert it first, e.g. iconv -f UTF-16 -t UTF-8"
+    )
+}
+
 fn is_tar(head: &[u8]) -> bool {
     head.len() >= 262 && &head[257..262] == b"ustar"
 }
@@ -144,7 +162,10 @@ fn no_tar(inner: Box<dyn Read + Send>, name: &str, codec: &str) -> Result<Box<dy
         Ok(head) if is_tar(head) => anyhow::bail!(
             "Input {name} is a {codec}-compressed tar archive, which is not supported; extract the dump file first"
         ),
-        Ok(_) => Ok(Box::new(b)),
+        Ok(head) => {
+            check_utf16(head, name)?;
+            Ok(Box::new(b))
+        }
         // a decode error is handed to the first read, where it gets the offsets context
         Err(e) => Ok(Box::new(FirstReadError(Some(e)))),
     }
@@ -219,6 +240,14 @@ fn read_loop(
                 })?;
             let Some(value) = value else { break };
             let line = single_line(value);
+            if let Err(e) = std::str::from_utf8(&line) {
+                // TST-BRK-IN-006: Node would silently turn the bytes into U+FFFD
+                return Err(anyhow!(
+                    "{name}: document {} of the input is not valid UTF-8 (invalid byte at offset {} of the document); it and the documents after it were not written ({docs_read} documents before it were read). Re-encode the file as UTF-8",
+                    docs_read + 1,
+                    e.valid_up_to()
+                ));
+            }
             if docs_read == 0 {
                 if let Some(found) = crate::meta::metadata_dump_type(&line) {
                     return Err(anyhow::Error::new(crate::UsageError(format!(
