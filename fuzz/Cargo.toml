@@ -87,3 +87,17 @@ path = "fuzz_targets/ini_auth_file.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "zstd_in"
+path = "fuzz_targets/zstd_in.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gzip_in"
+path = "fuzz_targets/gzip_in.rs"
+test = false
+doc = false
+bench = false

@@ -28,3 +28,22 @@ password was parsed, errors and the query-string warning quote no URL text. Seed
 
 Result: all 10 targets ran 300 s with no open crash; 3 findings fixed (F-505-0, F-505-1, F-505-2).
 Corpora and artefacts are not kept (regenerate with `scripts/fuzz/seed.py`).
+
+## L-508 (TST-SUP-020): compressed input
+
+| Target | Run | Execs | Coverage | Result |
+|---|---|---|---|---|
+| zstd_in | 300 s | 763,130 | 344 | ok (libzstd C code is not coverage-instrumented; the count is the Rust side) |
+| gzip_in | 300 s | 1,110,153 | 1078 | ok |
+
+Contract test `hostile_compressed_input_fails_cleanly`: concatenated zstd frames with a skippable frame and
+gzip multi-member restore every document; truncated frames/members, trailing garbage, a 2^31 window and a
+64 MiB RLE bomb value (`--maxDocMb 16`) exit 1 with a clear message and no output file.
+`scripts/res/bombs.sh` (256 MB cgroup): 2 GiB value bomb (zst, 32000:1) exit 1 with the `--maxDocMb` error,
+peak 70 MB; 2 GiB whitespace bombs (zst 32000:1, gzip 1000:1) exit 0, peak 4 MB; no OOM kill.
+
+ruzstd (decode only), measured on a 49.6 MB NDJSON dump compressed to 7.7 MB: libzstd 1.5.7 about
+1600 MB/s, ruzstd 0.7.3 about 480 MB/s (both far above restore throughput). ruzstd 0.8 needs rustc 1.87
+(MSRV here is 1.85). Decision (recorded, for the owner): keep libzstd for decode as well, since it stays linked
+for compression anyway, with the explicit window cap and these fuzz targets; switching the restore path
+to ruzstd 0.7 is a small, optional change if untrusted `.zst` input becomes a primary threat.

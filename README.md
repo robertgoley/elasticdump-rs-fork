@@ -118,7 +118,10 @@ for every place the tool changes what is loaded, and for the tested versions, se
 
 * **zstd**: `--compressionType zstd` writes `.zst` files/parts that Node cannot read. Default output stays uncompressed;
   `--fsCompress` keeps meaning gzip.
-* **Compressed input is auto-detected** (gzip or zstd magic bytes) with or without `--fsCompress`.
+* **Compressed input is auto-detected** (gzip or zstd magic bytes) with or without `--fsCompress`. Decoding streams
+  (memory stays bounded by `--maxDocMb`, also for 1000:1 and 30000:1 bombs); zstd frames that declare a window over
+  128 MiB (`zstd --long=28` or more) are refused with a hint. Truncated input, trailing garbage and corrupt frames stop
+  the run with exit 1 and nothing committed.
 * **`--fileSize` counts UTF-8 bytes**; Node counts UTF-16 code units. Identical part names for ASCII data
   (verified against Node), slightly different boundaries for non-ASCII text.
 * **Object key order is kept as the server sent it.** Node re-serialises parsed JSON, and JavaScript lists

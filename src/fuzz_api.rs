@@ -25,6 +25,59 @@ pub fn json_split(data: &[u8]) {
     }
 }
 
+/// Compressed input as `file_source` reads it (TST-SUP-020): the bytes go through
+/// `decode_input` (magic-byte detection, zstd window cap) and the JSON splitter with a
+/// 1 MiB document cap. Output is bounded at 64 MiB per input so bombs end quickly.
+fn compressed_input(magic: &[u8], data: &[u8]) {
+    use std::io::Read;
+    let mut bytes = data.to_vec();
+    if !bytes.starts_with(magic) {
+        bytes.splice(0..0, magic.iter().copied());
+    }
+    let Ok(mut r) =
+        crate::pipeline::file_source::decode_input(Box::new(std::io::Cursor::new(bytes)), None)
+    else {
+        return;
+    };
+    let mut s = ValueSplitter::with_max_value(Some(1 << 20));
+    let mut buf = vec![0u8; 64 << 10];
+    let mut total = 0usize;
+    while total < 64 << 20 {
+        match r.read(&mut buf) {
+            Ok(0) => {
+                while let Ok(Some(v)) = s.next_value(true) {
+                    let _ = single_line(v);
+                }
+                return;
+            }
+            Ok(n) => {
+                total += n;
+                s.push(&buf[..n]);
+                loop {
+                    match s.next_value(false) {
+                        Ok(Some(v)) => {
+                            let _ = single_line(v);
+                        }
+                        Ok(None) => break,
+                        Err(_) => return,
+                    }
+                }
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+/// `.zst` input: frames (concatenated, skippable, truncated, huge windows).
+pub fn zstd_in(data: &[u8]) {
+    compressed_input(&crate::pipeline::file_source::ZSTD_MAGIC, data);
+}
+
+/// `.gz` input: members (multi-member, trailing garbage, truncated).
+pub fn gzip_in(data: &[u8]) {
+    compressed_input(&[0x1f, 0x8b], data);
+}
+
 /// Metadata line decoding and re-encoding.
 pub fn codec_decode(data: &[u8]) {
     use crate::meta::codec::{LineEncoding, decode_any, encode_line};
@@ -209,6 +262,8 @@ mod tests {
             super::ilm_to_ism_convert(s);
             super::renamer_new_index(s);
             super::ini_auth_file(s);
+            super::zstd_in(s);
+            super::gzip_in(s);
         }
     }
 }
