@@ -749,15 +749,18 @@ impl BulkSink {
 
     fn report_failure(&mut self, doc: &[u8], item: &str) -> Result<()> {
         self.report.failed += 1;
+        // name the document that was sent, not what the item echoes (TST-BRK-SRV-003)
+        let id = get(doc, &["_id"])
+            .map(|v| v.as_raw_str().to_string())
+            .unwrap_or_else(|| "<auto id>".into());
         if self.opts.ignore_es_write_errors {
-            eprintln!("{}", crate::secrets::scrub(item));
+            eprintln!(
+                "not written: document {id}: {}",
+                crate::secrets::scrub(item)
+            );
             Ok(())
         } else {
-            let id = get(doc, &["_id"]).map(|v| v.as_raw_str().to_string());
-            Err(anyhow!(
-                "bulk write failed for document {}: {item}",
-                id.unwrap_or_else(|| "<auto id>".into())
-            ))
+            Err(anyhow!("bulk write failed for document {id}: {item}"))
         }
     }
 
@@ -801,8 +804,11 @@ impl BulkSink {
         for (item, &doc_idx) in items.iter().zip(pending) {
             let raw = item.as_raw_str().as_bytes();
             let action = self.opts.action.as_str();
+            // the item is keyed by the action, but data streams (and some proxies) answer
+            // under another key (`create` for `index`): use the single key's status then
             let status = get(raw, &[action, "status"])
                 .and_then(|v| v.as_u64())
+                .or_else(|| item_status_any_key(raw))
                 .unwrap_or(0);
             if (200..400).contains(&status) {
                 self.report.written += 1;
@@ -844,6 +850,16 @@ impl BulkSink {
             Err(e) => log::warn!("refresh failed: {e}"),
         }
     }
+}
+
+/// `status` of a bulk item `{"<any action>": {"status": N, …}}` with exactly one key.
+fn item_status_any_key(raw: &[u8]) -> Option<u64> {
+    let mut it = sonic_rs::to_object_iter(raw);
+    let (_, v) = it.next()?.ok()?;
+    if it.next().is_some() {
+        return None;
+    }
+    get(v.as_raw_str().as_bytes(), &["status"]).and_then(|s| s.as_u64())
 }
 
 fn source_bytes<'a>(line: &'a [u8], source: Option<&'a LazyValue<'_>>, is_hit: bool) -> &'a [u8] {

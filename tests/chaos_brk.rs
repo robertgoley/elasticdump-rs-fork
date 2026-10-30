@@ -1597,3 +1597,98 @@ async fn l614_bulk_5xx_beyond_the_retry_budget_is_counted() {
         }
     }
 }
+
+// L-615 (TST-BRK-SRV-003): one `_bulk` answer with every kind of item: 201, 200, 409, 400
+// mapper_parsing, 429, 503, 500, an item without `status`, and an item under a different key
+// than the action (`create` for an `index` action, as data streams answer). Only the 429 and
+// 503 documents are re-sent; the counts equal the ground truth; the failed ids are listed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l615_mixed_bulk_items_are_classified_one_by_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+    let text = ids.iter().fold(String::new(), |mut acc, id| {
+        acc.push_str(&hit(&format!("doc-{id}"), "{}"));
+        acc.push('\n');
+        acc
+    });
+    std::fs::write(&input, text).unwrap();
+    let err = |status: u16, ty: &str| {
+        format!(
+            r#"{{"index":{{"_id":"x","status":{status},"error":{{"type":"{ty}","reason":"r"}}}}}}"#
+        )
+    };
+    let first = format!(
+        r#"{{"took":1,"errors":true,"items":[{},{},{},{},{},{},{},{},{}]}}"#,
+        r#"{"index":{"_id":"doc-a","status":201,"result":"created"}}"#,
+        r#"{"index":{"_id":"doc-b","status":200,"result":"updated"}}"#,
+        err(409, "version_conflict_engine_exception"),
+        err(400, "mapper_parsing_exception"),
+        err(429, "es_rejected_execution_exception"),
+        err(503, "unavailable_shards_exception"),
+        err(500, "illegal_state_exception"),
+        r#"{"index":{"_id":"doc-h"}}"#,
+        r#"{"create":{"_id":"doc-i","status":201,"result":"created"}}"#,
+    );
+    let second =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+        .route(Route::contains("POST", "/_bulk").replies([Reply::ok(first), Reply::ok(second)]))
+        .fallback(Reply::ok(
+            r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+        ))
+        .start()
+        .await;
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/dst", m.url()),
+            "--noRefresh",
+            "--retryAttempts",
+            "2",
+            "--retryDelay",
+            "1",
+        ]),
+        vec![],
+    )
+    .await;
+    let e = stderr(&o);
+    let bulks: Vec<String> = m
+        .requests()
+        .iter()
+        .filter(|r| r.path.ends_with("/_bulk"))
+        .map(|r| r.body_str())
+        .collect();
+    assert_eq!(bulks.len(), 2, "{e}");
+    let resent: Vec<&str> = bulks[1]
+        .lines()
+        .filter(|l| l.contains("\"_id\"") && l.contains("\"index\""))
+        .collect();
+    assert_eq!(resent.len(), 2, "only 429 + 503 re-sent: {}", bulks[1]);
+    assert!(
+        resent[0].contains("doc-e") && resent[1].contains("doc-f"),
+        "{}",
+        bulks[1]
+    );
+    assert!(
+        e.contains("Total Writes: 5") && e.contains("Failed Writes: 4"),
+        "{e}"
+    );
+    for id in ["doc-c", "doc-d", "doc-g", "doc-h"] {
+        assert!(e.contains(id), "failed id {id} listed: {e}");
+    }
+    for id in ["doc-a", "doc-b", "doc-e", "doc-f", "doc-i"] {
+        assert!(
+            !e.lines().any(|l| l.contains("ERROR") && l.contains(id)),
+            "{id} is not a failure: {e}"
+        );
+    }
+    assert_eq!(
+        o.status.code(),
+        Some(3),
+        "finished with failed writes (Q3): {e}"
+    );
+}
