@@ -1167,3 +1167,46 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
         }
     }
 }
+
+// L-419/L-425 (TST-API-035, TST-API-041): deprecation `Warning` headers are tolerated and each
+// distinct text is logged once; `X-Elastic-Product` is ignored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn warning_headers_are_logged_once_and_not_fatal() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let w = r#"299 Elasticsearch-8.19.23-abc "this request accesses system indices, but in a future major version direct access will be prevented by default""#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(
+            Reply::ok(r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#)
+                .with_header("X-Elastic-Product", "Elasticsearch"),
+        ))
+        .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(page("s1", &[hit("1", "{}")], 2)).with_header("Warning", w)))
+        .route(Route::exact("POST", "/_search/scroll").replies([
+            Reply::ok(page("s1", &[hit("2", "{}")], 2)).with_header("Warning", w),
+            Reply::ok(page("s1", &[], 2)).with_header("Warning", w),
+        ]))
+        .route(Route::prefix("DELETE", "/_search/scroll").reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            format!("{}/idx", m.url()),
+            "--output".into(),
+            "$".into(),
+            "--limit".into(),
+            "1".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(stdout(&o).lines().count(), 2);
+    assert_eq!(
+        stderr(&o)
+            .matches("server warning: this request accesses system indices")
+            .count(),
+        1,
+        "{}",
+        stderr(&o)
+    );
+}

@@ -1054,3 +1054,68 @@ async fn alias_round_trip_keeps_every_property() {
     }
 }
 
+fn assert_warnings_once(err: &str) {
+    let mut seen = std::collections::HashSet::new();
+    for l in err.lines().filter(|l| l.contains("server warning:")) {
+        let text = l
+            .split("server warning:")
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string();
+        assert!(
+            seen.insert(text.clone()),
+            "warning logged twice: {text}\n{err}"
+        );
+    }
+}
+
+// L-419 (TST-API-035): legacy `_template` round trip on every version; ES >= 8 answers with
+// deprecation `Warning` headers, which are logged once each and never fatal.
+#[tokio::test]
+async fn legacy_template_round_trip_with_warnings_once() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let name = unique("api_ltpl");
+    c.ok(
+        "PUT",
+        &format!("_template/{name}"),
+        Some(json!({"index_patterns": [format!("{name}-*")], "order": 3, "settings": {"number_of_shards": 1},
+                    "mappings": {"properties": {"k": {"type": "keyword"}}}, "aliases": {format!("{name}_al"): {}}})),
+    )
+    .await;
+    let want = c.ok("GET", &format!("_template/{name}"), None).await;
+    let file = tmp_path("api_ltpl", "json");
+    let o = run_loud(io(
+        &c,
+        &c.url_with_auth(&name),
+        file.to_str().unwrap(),
+        &["--type", "template"],
+    ))
+    .await;
+    assert_success(&o);
+    assert_warnings_once(&String::from_utf8_lossy(&o.stderr));
+    c.ok("DELETE", &format!("_template/{name}"), None).await;
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "template"],
+    ))
+    .await;
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_warnings_once(&err);
+    if matches!(c.engine, Engine::Elasticsearch) && c.major().await >= 8 {
+        println!(
+            "ES {} template restore warnings: {:?}",
+            c.version().await,
+            err.lines()
+                .filter(|l| l.contains("server warning"))
+                .collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(c.ok("GET", &format!("_template/{name}"), None).await, want);
+    let _ = std::fs::remove_file(file);
+    c.ok("DELETE", &format!("_template/{name}"), None).await;
+}

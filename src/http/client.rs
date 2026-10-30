@@ -142,6 +142,50 @@ const LOGGABLE_PARAMS: &[&str] = &[
     "local",
 ];
 
+/// TST-API-041: deprecation `Warning` headers (RFC 7234 `299 <agent> "<text>" ...`) are not
+/// errors; each distinct text is logged once per run.
+fn log_server_warnings(headers: &reqwest::header::HeaderMap) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    for v in headers.get_all(reqwest::header::WARNING) {
+        let Ok(raw) = v.to_str() else { continue };
+        let text = warning_text(raw);
+        let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+        if seen
+            .lock()
+            .map(|mut s| s.insert(text.clone()))
+            .unwrap_or(false)
+        {
+            log::warn!("server warning: {text}");
+        }
+    }
+}
+
+/// The quoted text of a `Warning` header value, or the whole value.
+fn warning_text(raw: &str) -> String {
+    let mut parts = raw.splitn(2, '"');
+    let _code_agent = parts.next();
+    match parts.next() {
+        Some(rest) => {
+            let mut out = String::new();
+            let mut esc = false;
+            for ch in rest.chars() {
+                match (esc, ch) {
+                    (false, '\\') => esc = true,
+                    (false, '"') => break,
+                    (_, c) => {
+                        out.push(c);
+                        esc = false;
+                    }
+                }
+            }
+            out
+        }
+        None => raw.to_string(),
+    }
+}
+
 /// A request URL for the debug log: password and non-allow-listed query
 /// values masked.
 pub fn redacted_request_url(url: &Url) -> String {
@@ -391,7 +435,9 @@ impl EsClient {
                 .body(b),
         };
         let _permit = self.0.gate.acquire().await;
-        rb.send().await.map_err(SendError::Http)
+        let resp = rb.send().await.map_err(SendError::Http)?;
+        log_server_warnings(resp.headers());
+        Ok(resp)
     }
 
     /// Cluster flavor and version (`GET /`), fetched once and cached.
@@ -438,6 +484,21 @@ mod tests {
         let mut o = ClientOptions::new(Url::parse(base).unwrap());
         o.params = params;
         EsClient::new(&o, RequestGate::default()).unwrap()
+    }
+
+    #[test]
+    fn warning_header_text_is_extracted() {
+        assert_eq!(
+            super::warning_text(
+                r#"299 Elasticsearch-8.19.23-abc "Legacy index templates are deprecated in favor of composable templates." "Thu, 30 Oct 2026 06:00:00 GMT""#
+            ),
+            "Legacy index templates are deprecated in favor of composable templates."
+        );
+        assert_eq!(
+            super::warning_text(r#"299 OpenSearch-2.19 "a \"quoted\" b""#),
+            r#"a "quoted" b"#
+        );
+        assert_eq!(super::warning_text("plain"), "plain");
     }
 
     #[test]
