@@ -1407,3 +1407,55 @@ async fn policies_1050_round_trip_paging_and_overwrite() {
         let _ = c.call("DELETE", &path(i), None).await;
     }
 }
+
+// L-422 (TST-API-038): on OpenSearch 1.3 a policy created through the legacy
+// `_opendistro/_ism` path is visible to the tool, which only ever uses `_plugins/_ism`
+// (asserted statically for the binary's endpoint inventory, and live through the recorder).
+// Open Distro 1.13 (ES 7.10-based) is out of scope (Q7: not in the image matrix).
+#[tokio::test]
+async fn os13_legacy_opendistro_policies_are_read_via_plugins() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) || c.vnum().await >= (2, 0) {
+        println!("SKIP: legacy _opendistro path check runs on OpenSearch 1.x");
+        return;
+    }
+    let id = unique("api_odpol");
+    c.ok("PUT", &format!("_opendistro/_ism/policies/{id}"), Some(json!({"policy": {"description": "legacy", "default_state": "a", "states": [{"name": "a", "actions": [], "transitions": []}]}}))).await;
+    let rec = crate::support::golden::Recorder::start(&c.url_with_auth("")).await;
+    let file = tmp_path("api_odpol", "json");
+    let mut a = s(&[
+        "--input",
+        &format!("{}/{id}", rec.url()),
+        "--output",
+        file.to_str().unwrap(),
+        "--type",
+        "policy",
+    ]);
+    a.extend(c.tls_args("input"));
+    assert_success(&run(a).await);
+    let dir = tempfile::tempdir().unwrap();
+    rec.save(dir.path()).unwrap();
+    let mut paths = vec![];
+    for e in std::fs::read_dir(dir.path()).unwrap().flatten() {
+        if e.file_name().to_string_lossy().ends_with(".req.json") {
+            let r: Value =
+                serde_json::from_str(&std::fs::read_to_string(e.path()).unwrap()).unwrap();
+            paths.push(r["path"].as_str().unwrap().to_string());
+        }
+    }
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.starts_with("/_plugins/_ism/policies/")),
+        "{paths:?}"
+    );
+    assert!(
+        paths.iter().all(|p| !p.contains("_opendistro")),
+        "{paths:?}"
+    );
+    assert!(std::fs::read_to_string(&file).unwrap().contains("legacy"));
+    let _ = std::fs::remove_file(file);
+    c.ok("DELETE", &format!("_plugins/_ism/policies/{id}"), None)
+        .await;
+}
