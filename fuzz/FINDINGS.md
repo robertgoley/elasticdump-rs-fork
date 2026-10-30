@@ -19,3 +19,12 @@ Short smoke runs only (<= 300 s per target, one at a time, `-rss_limit_mb=1024`,
 | json_split | 300 s | 2,407,718 | 223 | ok |
 | parse_size | 300 s | 56,205,718 | 182 | ok |
 | renamer_new_index | 300 s | 497,607 | 14079 | ok |
+
+Also from L-505 (property test, not libFuzzer): F-505-2, `url_props::redaction_never_shows_the_password`
+shrank to `http://a:/Qz%E5?\éK#@ziclmqln/us`: a password with `/` spills into the path, and the
+percent-decode error quoted the "index name" (a password fragment). Fixed: when `@` is present but no
+password was parsed, errors and the query-string warning quote no URL text. Seed kept in
+`proptest-regressions/endpoint.txt`.
+
+Result: all 10 targets ran 300 s with no open crash; 3 findings fixed (F-505-0, F-505-1, F-505-2).
+Corpora and artefacts are not kept (regenerate with `scripts/fuzz/seed.py`).
