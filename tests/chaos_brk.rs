@@ -1797,3 +1797,78 @@ async fn l617_malformed_search_page_never_reaches_stdout_partially() {
         assert!(err.contains("malformed search response") || err.contains("hits"), "{label}: {err}");
     }
 }
+
+// L-620 (TST-BRK-SRV-010): the server returns the same hit on two pages (an overlapping or
+// buggy cursor). With the snapshot total intact (4 docs, 5 hits served) the scroll total check
+// already fails the run (exit 1, nothing committed). When the total agrees with the pages (5)
+// the tool does not dedupe (Node parity): both copies are written in order, and the test-side
+// id check catches the overlap, which is the regression guard a digest comparison relies on.
+#[tokio::test]
+async fn l620_duplicate_hits_fail_the_total_check_or_are_written_as_served() {
+    let h: Vec<String> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|i| hit(i, &format!("{{\"k\":\"{i}\"}}")))
+        .collect();
+    for total in [4usize, 5] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(
+                Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
+                    "s1",
+                    &h[..2],
+                    total,
+                ))),
+            )
+            .route(Route::exact("POST", "/_search/scroll").replies([
+                // overlaps the first page by one hit
+                Reply::ok(page("s1", &[h[1].clone(), h[2].clone()], total)),
+                Reply::ok(page("s1", &h[3..], total)),
+                Reply::ok(page("s1", &[], total)),
+            ]))
+            .fallback(Reply::ok(CLEARED))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("{}/idx", m.url()),
+                "--output",
+                out.to_str().unwrap(),
+                "--limit",
+                "2",
+            ]),
+            vec![],
+        )
+        .await;
+        if total == 4 {
+            assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+            assert!(
+                stderr(&o).contains("retrieved 5 of 4 documents"),
+                "{}",
+                stderr(&o)
+            );
+            assert!(!out.exists(), "nothing committed");
+            continue;
+        }
+        assert!(o.status.success(), "{}", stderr(&o));
+        let ids: Vec<String> = std::fs::read_to_string(&out)
+            .unwrap()
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l).unwrap()["_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            ["a", "b", "b", "c", "d"],
+            "written as served, in order"
+        );
+        let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+        assert_ne!(unique.len(), ids.len(), "the id check sees the duplicate");
+    }
+}
