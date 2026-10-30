@@ -78,6 +78,69 @@ pub fn gzip_in(data: &[u8]) {
     compressed_input(&[0x1f, 0x8b], data);
 }
 
+/// sonic-rs against serde_json (TST-SUP-022), on the calls this crate relies on:
+/// 1. `check_doc_line` (sonic-rs validation + escape check) accepts exactly the lines
+///    serde_json parses as one object (lone `\uD800`-style surrogate escapes excepted:
+///    serde_json refuses them, JSON and the engines accept them);
+/// 2. for valid objects, `to_object_iter` yields every member, each raw span parses
+///    on its own to serde_json's value (last duplicate wins in both), and `get` finds
+///    the first member's value;
+/// 3. for valid arrays, `to_array_iter` spans match element by element.
+pub fn sonic_vs_serde(data: &[u8]) {
+    use serde_json::Value;
+    let serde = serde_json::from_slice::<Value>(data);
+    // any surrogate escape: serde_json refuses unpaired ones (with varying messages)
+    let surrogate_escape = data.windows(4).any(|w| {
+        w[0] == b'\\'
+            && w[1] == b'u'
+            && matches!(w[2], b'd' | b'D')
+            && matches!(w[3], b'8'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+    });
+    let first = data.iter().find(|b| !b.is_ascii_whitespace());
+    let serde_line_ok = match &serde {
+        Ok(v) => v.is_object() && !data.iter().any(|b| *b == b'\n' || *b == b'\r'),
+        Err(_) => false,
+    };
+    let ours = crate::pipeline::bulk::check_doc_line(data).is_ok();
+    // serde_json's arbitrary_precision reserves this key (its own quirk, not sonic-rs)
+    let reserved = memchr::memmem::find(data, b"$serde_json::private").is_some();
+    if reserved {
+        return;
+    }
+    let skip = serde.is_err() && surrogate_escape;
+    if !skip && first == Some(&b'{') {
+        assert_eq!(
+            ours, serde_line_ok,
+            "check_doc_line vs serde_json: {serde:?}"
+        );
+    }
+    let span = |raw: &str| serde_json::from_str::<Value>(raw).expect("span is one JSON value");
+    match serde {
+        Ok(Value::Object(map)) => {
+            let mut merged = serde_json::Map::new();
+            let mut first_member = None;
+            for m in sonic_rs::to_object_iter(data) {
+                let (k, v) = m.expect("sonic-rs rejected a member of a valid object");
+                let val = span(v.as_raw_str());
+                first_member.get_or_insert_with(|| (k.to_string(), val.clone()));
+                merged.insert(k.to_string(), val);
+            }
+            assert_eq!(Value::Object(merged), Value::Object(map.clone()));
+            if let Some((k, v)) = first_member {
+                let got = sonic_rs::get(data, [k.as_str()]).expect("get of an existing key");
+                assert_eq!(span(got.as_raw_str()), v, "get({k:?})");
+            }
+        }
+        Ok(Value::Array(items)) => {
+            let got: Vec<Value> = sonic_rs::to_array_iter(data)
+                .map(|e| span(e.expect("sonic-rs rejected an element").as_raw_str()))
+                .collect();
+            assert_eq!(got, items);
+        }
+        _ => {}
+    }
+}
+
 /// Metadata line decoding and re-encoding.
 pub fn codec_decode(data: &[u8]) {
     use crate::meta::codec::{LineEncoding, decode_any, encode_line};
@@ -243,6 +306,8 @@ mod tests {
             b"\xff\xfe",
             // L-507 regression: lenient conversion of a policy without phases panicked
             br#"{"phases":{}}"#,
+            // L-509: lone surrogate escape (serde_json refuses, JSON allows)
+            br#"{"s":"\ud800"}"#,
             // L-505 regression: ASan heap-buffer-overflow in sonic-rs string serialisation
             // (fixed by its `sanitize` feature; only visible in an ASan release build).
             br#"{"_index":"golden_dst","_id":"r4","_source":{"k":"d","n":4}}"#,
@@ -264,6 +329,7 @@ mod tests {
             super::ini_auth_file(s);
             super::zstd_in(s);
             super::gzip_in(s);
+            super::sonic_vs_serde(s);
         }
     }
 }

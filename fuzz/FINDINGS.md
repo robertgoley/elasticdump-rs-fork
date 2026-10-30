@@ -47,3 +47,20 @@ ruzstd (decode only), measured on a 49.6 MB NDJSON dump compressed to 7.7 MB: li
 (MSRV here is 1.85). Decision (recorded, for the owner): keep libzstd for decode as well, since it stays linked
 for compression anyway, with the explicit window cap and these fuzz targets; switching the restore path
 to ruzstd 0.7 is a small, optional change if untrusted `.zst` input becomes a primary threat.
+
+## L-509 (TST-SUP-022): sonic-rs against serde_json
+
+`sonic_vs_serde` (ASan, the cargo-fuzz default): `check_doc_line` accepts exactly the lines serde_json parses
+as one object; on valid objects/arrays `to_object_iter` / `to_array_iter` / `get` return spans that re-parse to
+serde_json's values (last duplicate wins in both).
+
+| Run | Execs | Coverage | Result |
+|---|---|---|---|
+| 300 s | - | - | oracle gap: serde_json refuses unpaired surrogate escapes (`"\ud800"`, valid JSON; the engines accept it). Excluded from the comparison |
+| 300 s | - | - | oracle gap: serde_json's `arbitrary_precision` reserves the key `$serde_json::private::Number` (a serde_json quirk; affects only metadata parsed with serde_json). Excluded |
+| 300 s | 4,204,562 | 4246 | ok: no divergence, no sanitizer report |
+
+Known, by design, already guarded: sonic-rs does not validate escapes inside skipped string values (F-505-1,
+`check_escapes`), and `to_object_iter` stops at the closing brace without looking at trailing bytes
+(`check_doc_line` rejects those). sonic-rs is pinned to `=0.5.10` in Cargo.toml so an upgrade re-runs this
+target first. No divergence needed filing upstream; the 4 h nightly campaign is B.

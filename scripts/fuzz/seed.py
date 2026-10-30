@@ -10,7 +10,7 @@ corpus = root / "fuzz" / "corpus"
 seeds = {t: [] for t in [
     "json_split", "codec_decode", "bulk_encode_doc", "extract_batch", "bulk_handle_response",
     "parse_size", "endpoint_parse", "ilm_to_ism_convert", "renamer_new_index", "ini_auth_file",
-    "zstd_in", "gzip_in"]}
+    "zstd_in", "gzip_in", "sonic_vs_serde"]}
 
 for meta in (root / "tests" / "golden").glob("*/*/meta.toml"):
     case = meta.parent
@@ -74,6 +74,10 @@ if binp.exists():
                 continue
             b = z.read_bytes()
             seeds["zstd_in"] += [b, b + b, b[:-4]]
+
+seeds["sonic_vs_serde"] += seeds["bulk_encode_doc"][:200] + seeds["extract_batch"][:50] + [
+    b'{"a":1,"a":2}', b'[1,"x",{"b":[]}]', b'{"s":"\\ud800"}', b'{"n":1e400,"m":-0.0}', b'{"a":1} x',
+    b'{"k":"\\u00e9\\/\\""}']
 
 shutil.rmtree(corpus, ignore_errors=True)
 for t, items in seeds.items():

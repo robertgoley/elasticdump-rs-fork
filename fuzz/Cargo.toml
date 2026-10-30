@@ -101,3 +101,10 @@ path = "fuzz_targets/gzip_in.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "sonic_vs_serde"
+path = "fuzz_targets/sonic_vs_serde.rs"
+test = false
+doc = false
+bench = false
