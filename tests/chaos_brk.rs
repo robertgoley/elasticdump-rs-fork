@@ -368,3 +368,99 @@ async fn l602_reset_mid_pit_page_is_retried_without_dups_or_gaps() {
     eprintln!("L-602: {total_resets} mid-response resets over 100 runs");
     assert!(total_resets > 100, "faults were injected ({total_resets})");
 }
+
+// L-603 (TST-BRK-NET-005): a large, legitimate response dripped slowly. `--timeout 30000` bounds
+// silence, not the whole request (Node's `request` semantics), so a response that takes longer
+// than the timeout but keeps progressing succeeds; a server that goes silent for longer than
+// the timeout still fails. Scaled down for CI: --timeout 1000 with a body that takes ~3 s at
+// 2 KB every 100 ms (20 KB/s) succeeds; the same with a 1.5 s pause fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l603_slow_but_progressing_response_is_not_cut_off_by_timeout() {
+    use std::time::{Duration, Instant};
+    let docs: Vec<String> = (0..120)
+        .map(|i| {
+            hit(
+                &i.to_string(),
+                &format!(r#"{{"pad":"{}"}}"#, "x".repeat(400)),
+            )
+        })
+        .collect();
+    let body = page("s1", &docs, docs.len());
+    assert!(body.len() > 55_000);
+    for (label, fault, ok) in [
+        (
+            "drip",
+            Fault::SlowDrip {
+                chunk: 2048,
+                every: Duration::from_millis(100),
+            },
+            true,
+        ),
+        (
+            "silence",
+            Fault::StallMidBody {
+                after: 4096,
+                stall: Duration::from_millis(1500),
+            },
+            false,
+        ),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(
+                Route::contains("POST", "/idx/_search").reply(Reply::ok(&body).with_fault(fault)),
+            )
+            .route(
+                Route::exact("POST", "/_search/scroll").reply(Reply::ok(page(
+                    "s1",
+                    &[],
+                    docs.len(),
+                ))),
+            )
+            .fallback(Reply::ok(CLEARED))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let t = Instant::now();
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("{}/idx", m.url()),
+                "--output",
+                out.to_str().unwrap(),
+                "--limit",
+                "200",
+                "--timeout",
+                "1000",
+                "--retryAttempts",
+                "1",
+                "--retryDelay",
+                "1",
+            ]),
+            vec![],
+        )
+        .await;
+        let took = t.elapsed();
+        let err = stderr(&o);
+        if ok {
+            assert!(o.status.success(), "{label}: {err}");
+            assert!(
+                took > Duration::from_millis(2000),
+                "{label}: really slow ({took:?})"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&out).unwrap().lines().count(),
+                docs.len()
+            );
+        } else {
+            assert_eq!(o.status.code(), Some(1), "{label}: {err}");
+            assert!(
+                err.contains("timed out") && err.contains("--timeout"),
+                "{label}: {err}"
+            );
+            assert!(took < Duration::from_secs(15), "{label}: {took:?}");
+            assert!(!out.exists());
+        }
+    }
+}

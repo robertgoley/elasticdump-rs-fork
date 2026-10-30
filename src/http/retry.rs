@@ -416,7 +416,7 @@ async fn read_capped(
 /// Which limit a timeout hit (TST-BRK-NET-004).
 fn timeout_hint(error: &reqwest::Error) -> &'static str {
     if error.is_timeout() {
-        " (timed out: no data from the server within --idleTimeout seconds, default 300, or the whole request exceeded --timeout)"
+        " (timed out: no data from the server within --timeout ms / --idleTimeout seconds, default 300, or the whole request exceeded --requestTimeout)"
     } else {
         ""
     }

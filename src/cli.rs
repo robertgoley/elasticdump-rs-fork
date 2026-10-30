@@ -384,11 +384,13 @@ pub struct Cli {
     #[arg(long = "maxSockets", value_parser = parse_non_zero_usize)]
     pub max_sockets: Option<usize>,
 
-    /// Request timeout in milliseconds
+    /// Milliseconds of server silence (while connecting, waiting for or reading a response)
+    /// before a request fails or is retried, like Node's; a slow but progressing response is
+    /// not cut off. Overrides --idleTimeout
     #[arg(long)]
     pub timeout: Option<u64>,
 
-    /// Extension: request timeout in seconds (--timeout wins)
+    /// Extension: deadline in seconds for a whole request, body included (0 = none)
     #[arg(long = "requestTimeout")]
     pub request_timeout_secs: Option<u64>,
 

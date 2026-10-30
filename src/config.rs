@@ -117,19 +117,25 @@ pub fn tls_for(cli: &Cli, dir: Direction, env: &dyn Fn(&str) -> Option<String>) 
     }
 }
 
+/// `--requestTimeout` (seconds; extension): a deadline for the whole request, body included.
+/// `--timeout` is not a total deadline: like Node's `request` library it bounds silence, so a
+/// slow but progressing response still succeeds (TST-BRK-NET-005; see [`idle_timeout`]).
 pub fn request_timeout(cli: &Cli) -> Option<Duration> {
-    match (cli.timeout, cli.request_timeout_secs) {
-        (Some(0), _) => None,
-        (Some(ms), _) => Some(Duration::from_millis(ms)),
-        (None, Some(0)) | (None, None) => None,
-        (None, Some(s)) => Some(Duration::from_secs(s)),
+    match cli.request_timeout_secs {
+        Some(0) | None => None,
+        Some(s) => Some(Duration::from_secs(s)),
     }
 }
 
-/// `--idleTimeout` (seconds, default 300; 0 disables): the longest silence on a connection
-/// while waiting for or reading a response (TST-BRK-NET-004).
+/// The longest silence on a connection while connecting, waiting for or reading a response
+/// (TST-BRK-NET-004/005): `--timeout` in milliseconds (Node's flag: the `request` library's
+/// connect/read-idle timeout) when given and non-zero, else `--idleTimeout` in seconds
+/// (default 300; 0 disables).
 pub fn idle_timeout(cli: &Cli) -> Option<Duration> {
-    (cli.idle_timeout_secs > 0).then(|| Duration::from_secs(cli.idle_timeout_secs))
+    match cli.timeout {
+        Some(ms) if ms > 0 => Some(Duration::from_millis(ms)),
+        _ => (cli.idle_timeout_secs > 0).then(|| Duration::from_secs(cli.idle_timeout_secs)),
+    }
 }
 
 /// `--retryAttempts N` retries N times. With 0 (the default), requests are
@@ -339,15 +345,20 @@ mod tests {
     }
 
     #[test]
-    fn timeout_ms_wins_over_seconds() {
+    fn timeout_is_an_idle_bound_and_request_timeout_a_deadline() {
         assert_eq!(request_timeout(&cli(&[])), None);
         assert_eq!(
             request_timeout(&cli(&["--timeout", "1500", "--requestTimeout", "9"])),
+            Some(Duration::from_secs(9))
+        );
+        assert_eq!(request_timeout(&cli(&["--timeout", "1500"])), None);
+        assert_eq!(
+            idle_timeout(&cli(&["--timeout", "1500", "--idleTimeout", "7"])),
             Some(Duration::from_millis(1500))
         );
         assert_eq!(
-            request_timeout(&cli(&["--requestTimeout", "9"])),
-            Some(Duration::from_secs(9))
+            idle_timeout(&cli(&["--timeout", "0", "--idleTimeout", "7"])),
+            Some(Duration::from_secs(7))
         );
     }
 }
