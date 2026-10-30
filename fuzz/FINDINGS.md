@@ -76,3 +76,4 @@ from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) 
 | file_to_bulk | 300 s | 2,448,842 | 3970 | ok |
 | url_segments | 300 s | 10,727,995 | 425 | ok |
 | meta_names | 300 s | 54,495,383 | 147 | ok |
+| extract_batch | 300 s | - | - | CRASH (see PROGRESS/notes) |
