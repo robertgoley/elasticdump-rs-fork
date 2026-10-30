@@ -270,6 +270,12 @@ fn read_loop(
     if batch.docs > 0 {
         let _ = tx.blocking_send(Ok(batch));
     }
+    if docs_read == 0 && !cancel.is_cancelled() {
+        // TST-BRK-IN-014: an empty input is not an error, but say so
+        log::warn!(
+            "{name} holds no documents ({decoded} bytes after decompression: empty, whitespace or a byte-order mark only); nothing was written"
+        );
+    }
     Ok(())
 }
 

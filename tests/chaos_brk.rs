@@ -2554,3 +2554,71 @@ async fn l631_node_meta_encodings_restore_or_are_refused_by_name() {
         }
     }
 }
+
+// L-632 (TST-BRK-IN-014): empty inputs (0 bytes, whitespace only, BOM only, empty gzip, empty
+// zstd frame, /dev/null). Data: `Total Writes: 0`, a warning that the input holds no
+// documents, exit 0, an empty output file. Meta: exit 1 with "Input '<file>' is empty".
+#[tokio::test]
+async fn l632_empty_inputs_warn_for_data_and_fail_for_meta() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default())
+        .finish()
+        .unwrap();
+    let zst = zstd::encode_all(&b""[..], 3).unwrap();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for (name, bytes) in [
+        ("zero.json", b"".to_vec()),
+        ("ws.json", b"  \n\n\t\n".to_vec()),
+        ("bom.json", b"\xef\xbb\xbf".to_vec()),
+        ("e.json.gz", gz),
+        ("e.json.zst", zst),
+    ] {
+        let p = dir.path().join(name);
+        std::fs::File::create(&p)
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+        files.push(p);
+    }
+    files.push("/dev/null".into());
+    for f in files {
+        let out = dir.path().join("out.json");
+        let _ = std::fs::remove_file(&out);
+        let o = run_async(
+            s(&[
+                "--input",
+                f.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "{f:?}: {err}");
+        assert!(
+            err.contains("Total Writes: 0") && err.contains("holds no documents"),
+            "{f:?}: {err}"
+        );
+        assert_eq!(std::fs::read(&out).unwrap().len(), 0, "{f:?}");
+        let o = run_async(
+            s(&[
+                "--input",
+                f.to_str().unwrap(),
+                "--output",
+                "http://127.0.0.1:9/x",
+                "--type",
+                "mapping",
+            ]),
+            vec![],
+        )
+        .await;
+        assert_eq!(o.status.code(), Some(1), "{f:?}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains(&format!("Input '{}' is empty", f.display())),
+            "{f:?}: {}",
+            stderr(&o)
+        );
+    }
+}

@@ -61,7 +61,14 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
             }
         }
         if n == 0 {
-            return first.ok_or_else(|| anyhow!("Input is empty"));
+            return first.ok_or_else(|| {
+                anyhow!(
+                    "Input {} is empty (no JSON value: empty, whitespace or a byte-order mark only); a metadata restore needs the dumped object",
+                    path.as_ref()
+                        .map(|p| format!("'{}'", p.display()))
+                        .unwrap_or_else(|| "stdin".into())
+                )
+            });
         }
     }
 }
