@@ -51,6 +51,21 @@ const RESTORE_INPUT: &str = concat!(
     "\n",
 );
 
+/// `--handleVersion --versionType external` input: routing and an explicit version.
+const VERSION_INPUT: &str = concat!(
+    r#"{"_index":"golden_dst","_id":"v1","_version":5,"_routing":"ra","_source":{"k":"a","n":1}}"#,
+    "\n",
+    r#"{"_index":"golden_dst","_id":"v2","_version":7,"_source":{"k":"b","n":2}}"#,
+    "\n",
+);
+
+fn input_for(case: &str) -> &'static str {
+    match case {
+        "bulk-version" => VERSION_INPUT,
+        _ => RESTORE_INPUT,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Setup {
     None,
@@ -162,6 +177,101 @@ const CASES: &[Case] = &[
                 "{{URL}}/golden_dst",
                 "--limit",
                 "3",
+            ],
+            false,
+        )
+    },
+    // TST-API-020: _bulk request shape per action, with routing and external versions, gzip
+    // bodies and --maxBulkBytes splits (byte-exact NDJSON in the goldens; a 2xx recorded on
+    // every version is the "accepts the gzip body" evidence)
+    Case {
+        setup: Setup::FreshDst,
+        ..case(
+            "bulk-create",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--bulkAction",
+                "create",
+            ],
+            false,
+        )
+    },
+    Case {
+        setup: Setup::None,
+        ..case(
+            "bulk-update",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--bulkAction",
+                "update",
+            ],
+            false,
+        )
+    },
+    Case {
+        setup: Setup::None,
+        ..case(
+            "bulk-delete",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--bulkAction",
+                "delete",
+            ],
+            false,
+        )
+    },
+    Case {
+        setup: Setup::FreshDst,
+        ..case(
+            "bulk-version",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--handleVersion",
+                "--versionType",
+                "external",
+            ],
+            false,
+        )
+    },
+    Case {
+        setup: Setup::FreshDst,
+        ..case(
+            "bulk-gzip",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--esCompress",
+                "--limit",
+                "2",
+            ],
+            false,
+        )
+    },
+    Case {
+        setup: Setup::FreshDst,
+        ..case(
+            "bulk-split",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--maxBulkBytes",
+                "120b",
             ],
             false,
         )
@@ -548,8 +658,8 @@ async fn record() {
         let dir = root.join(case.name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        if case.name == "data-restore" {
-            std::fs::write(dir.join("input.ndjson"), RESTORE_INPUT).unwrap();
+        if case.args.contains(&"{{DIR}}/input.ndjson") {
+            std::fs::write(dir.join("input.ndjson"), input_for(case.name)).unwrap();
         }
         setup(&c, case.setup).await;
         let out = tmp_path(&format!("golden-{}", case.name), "out");

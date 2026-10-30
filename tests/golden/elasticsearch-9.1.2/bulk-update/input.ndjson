@@ -1,0 +1,4 @@
+{"_index":"golden_dst","_id":"r1","_source":{"k":"a","n":1}}
+{"_index":"golden_dst","_id":"r2","_source":{"k":"b","n":2}}
+{"_index":"golden_dst","_id":"r3","_source":{"k":"c","n":3,"t":"unicode ✓"}}
+{"_index":"golden_dst","_id":"r4","_source":{"k":"d","n":4}}

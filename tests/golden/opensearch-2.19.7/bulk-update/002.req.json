@@ -1,0 +1,58 @@
+{
+  "method": "POST",
+  "path": "/golden_dst/_bulk",
+  "query": [],
+  "body": {
+    "ndjson": [
+      {
+        "update": {
+          "_index": "golden_dst",
+          "_id": "r1"
+        }
+      },
+      {
+        "doc": {
+          "k": "a",
+          "n": 1
+        }
+      },
+      {
+        "update": {
+          "_index": "golden_dst",
+          "_id": "r2"
+        }
+      },
+      {
+        "doc": {
+          "k": "b",
+          "n": 2
+        }
+      },
+      {
+        "update": {
+          "_index": "golden_dst",
+          "_id": "r3"
+        }
+      },
+      {
+        "doc": {
+          "k": "c",
+          "n": 3,
+          "t": "unicode ✓"
+        }
+      },
+      {
+        "update": {
+          "_index": "golden_dst",
+          "_id": "r4"
+        }
+      },
+      {
+        "doc": {
+          "k": "d",
+          "n": 4
+        }
+      }
+    ]
+  }
+}

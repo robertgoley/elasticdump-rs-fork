@@ -1,0 +1,34 @@
+{
+  "method": "POST",
+  "path": "/golden_dst/_bulk",
+  "query": [],
+  "body": {
+    "ndjson": [
+      {
+        "index": {
+          "_index": "golden_dst",
+          "_id": "v1",
+          "routing": "ra",
+          "version": 5,
+          "version_type": "external"
+        }
+      },
+      {
+        "k": "a",
+        "n": 1
+      },
+      {
+        "index": {
+          "_index": "golden_dst",
+          "_id": "v2",
+          "version": 7,
+          "version_type": "external"
+        }
+      },
+      {
+        "k": "b",
+        "n": 2
+      }
+    ]
+  }
+}

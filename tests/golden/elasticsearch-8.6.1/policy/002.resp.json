@@ -119,8 +119,8 @@
         "composable_templates": [
           ".monitoring-beats-mb",
           ".monitoring-ent-search-mb",
-          ".monitoring-kibana-mb",
           ".monitoring-es-mb",
+          ".monitoring-kibana-mb",
           ".monitoring-logstash-mb"
         ]
       }

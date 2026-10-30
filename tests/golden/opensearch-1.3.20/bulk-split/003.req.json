@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/golden_dst/_bulk",
+  "query": [],
+  "body": {
+    "ndjson": [
+      {
+        "index": {
+          "_index": "golden_dst",
+          "_id": "r2"
+        }
+      },
+      {
+        "k": "b",
+        "n": 2
+      }
+    ]
+  }
+}

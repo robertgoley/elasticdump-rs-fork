@@ -28,3 +28,11 @@ that the recording replays with the live exit code. Expected failures are record
 Elasticsearch OSS 7.10.2 exits 1 (no ILM/ISM API). `--searchWithPit` on versions without a PIT API (ES OSS 7.10,
 OpenSearch 1.3) falls back to scroll; the recording asserts the scroll request shape.
 Single case: `GOLDEN_CASE=<name> scripts/golden/record.sh <profile>`.
+
+Bulk shapes (L-411, API-020): `bulk-create`, `bulk-update`, `bulk-delete` (one action each, chained on golden_dst),
+`bulk-version` (`--handleVersion --versionType external` with `_routing`), `bulk-gzip` (`--esCompress`: the gzip
+request body is stored decoded; the recorded 2xx is the per-version "accepts gzip" evidence), `bulk-split`
+(`--maxBulkBytes 120b` -> one document per request). All 9 versions accept every shape with 0 item errors.
+`--parseExtraFields` is not in the goldens: any extra meta key it copies is engine-specific (covered by unit tests).
+ILM `in_use_by` lists are sorted and dot-prefixed (system) indices/data streams dropped by the normaliser: ES creates
+`.logs-deprecation.*` lazily, which made the policy goldens flap.

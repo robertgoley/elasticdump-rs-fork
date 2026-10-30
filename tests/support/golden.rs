@@ -151,6 +151,22 @@ impl Normaliser {
                             *x = json!(0)
                         }
                         "modified_date" if x.is_string() => *x = json!("<date>"),
+                        // ILM `in_use_by` lists come from hash sets (order varies per run), and
+                        // system data streams (`.logs-deprecation.*`) appear lazily: sort, and
+                        // drop dot-prefixed indices / data streams
+                        "in_use_by" if x.is_object() => {
+                            for (lk, l) in x.as_object_mut().unwrap().iter_mut() {
+                                if let Value::Array(a) = l {
+                                    if lk == "indices" || lk == "data_streams" {
+                                        a.retain(|e| {
+                                            !e.as_str().is_some_and(|s| s.starts_with('.'))
+                                        });
+                                    }
+                                    a.sort_by_key(|e| e.to_string());
+                                }
+                            }
+                            self.apply_at(x, false)
+                        }
                         "_seq_no" | "_primary_term" if x.is_u64() => {
                             if let Some(n) = self.nums.lock().unwrap().get(&x.to_string()) {
                                 *x = json!(*n);

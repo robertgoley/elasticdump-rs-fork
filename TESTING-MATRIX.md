@@ -114,15 +114,15 @@ machine-maintained list, and CI runs `matrix-md.py --check`.
 <!-- BEGIN generated:goldens -->
 | Engine-version | Cases | Exchanges |
 |---|---|---|
-| elasticsearch-7.10.2 | 19 | 59 |
-| elasticsearch-7.17.29 | 19 | 59 |
-| elasticsearch-8.19.23 | 19 | 59 |
-| elasticsearch-8.6.1 | 19 | 59 |
-| elasticsearch-9.1.2 | 19 | 59 |
-| elasticsearch-oss-7.10.2 | 19 | 58 |
-| opensearch-1.3.20 | 19 | 59 |
-| opensearch-2.19.7 | 19 | 59 |
-| opensearch-3.9.0 | 19 | 59 |
+| elasticsearch-7.10.2 | 25 | 82 |
+| elasticsearch-7.17.29 | 25 | 82 |
+| elasticsearch-8.19.23 | 25 | 82 |
+| elasticsearch-8.6.1 | 25 | 82 |
+| elasticsearch-9.1.2 | 25 | 82 |
+| elasticsearch-oss-7.10.2 | 25 | 81 |
+| opensearch-1.3.20 | 25 | 82 |
+| opensearch-2.19.7 | 25 | 82 |
+| opensearch-3.9.0 | 25 | 82 |
 <!-- END generated:goldens -->
 
 ### Per-version contract (API-002, generated)
@@ -167,6 +167,12 @@ Case x engine-version:
 | alias | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | alias-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | analyzer-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-create | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-delete | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-gzip | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-split | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-update | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| bulk-version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | component-template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | data-pit | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ scroll | ✓ scroll | ✓ | ✓ |
 | data-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |

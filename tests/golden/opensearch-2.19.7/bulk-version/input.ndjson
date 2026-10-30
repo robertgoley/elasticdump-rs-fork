@@ -1,0 +1,2 @@
+{"_index":"golden_dst","_id":"v1","_version":5,"_routing":"ra","_source":{"k":"a","n":1}}
+{"_index":"golden_dst","_id":"v2","_version":7,"_source":{"k":"b","n":2}}

@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "_shards": {
+      "total": 2,
+      "successful": 1,
+      "failed": 0
+    }
+  }
+}

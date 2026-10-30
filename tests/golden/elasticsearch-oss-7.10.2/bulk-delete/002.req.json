@@ -1,0 +1,33 @@
+{
+  "method": "POST",
+  "path": "/golden_dst/_bulk",
+  "query": [],
+  "body": {
+    "ndjson": [
+      {
+        "delete": {
+          "_index": "golden_dst",
+          "_id": "r1"
+        }
+      },
+      {
+        "delete": {
+          "_index": "golden_dst",
+          "_id": "r2"
+        }
+      },
+      {
+        "delete": {
+          "_index": "golden_dst",
+          "_id": "r3"
+        }
+      },
+      {
+        "delete": {
+          "_index": "golden_dst",
+          "_id": "r4"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "errors": false,
+    "took": 0,
+    "items": [
+      {
+        "index": {
+          "_index": "golden_dst",
+          "_id": "r3",
+          "_version": 1,
+          "result": "created",
+          "_shards": {
+            "total": 2,
+            "successful": 1,
+            "failed": 0
+          },
+          "_seq_no": 2,
+          "_primary_term": 1,
+          "status": 201
+        }
+      },
+      {
+        "index": {
+          "_index": "golden_dst",
+          "_id": "r4",
+          "_version": 1,
+          "result": "created",
+          "_shards": {
+            "total": 2,
+            "successful": 1,
+            "failed": 0
+          },
+          "_seq_no": 3,
+          "_primary_term": 1,
+          "status": 201
+        }
+      }
+    ]
+  }
+}

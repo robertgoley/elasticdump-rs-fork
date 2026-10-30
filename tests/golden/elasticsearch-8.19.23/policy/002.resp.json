@@ -263,8 +263,8 @@
         "composable_templates": [
           ".monitoring-beats-mb",
           ".monitoring-ent-search-mb",
-          ".monitoring-kibana-mb",
           ".monitoring-es-mb",
+          ".monitoring-kibana-mb",
           ".monitoring-logstash-mb"
         ]
       }
@@ -846,8 +846,8 @@
         "indices": [],
         "data_streams": [],
         "composable_templates": [
-          "logs-otel@template",
-          "logs"
+          "logs",
+          "logs-otel@template"
         ]
       }
     },
@@ -981,20 +981,20 @@
         "indices": [],
         "data_streams": [],
         "composable_templates": [
-          "metrics-service_summary.60m.otel@template",
-          "metrics-service_destination.1m@template",
-          "metrics-otel@template",
-          "metrics-service_transaction.10m.otel@template",
-          "metrics-service_destination.10m@template",
-          "metrics-transaction.10m.otel@template",
-          "metrics-service_summary.10m.otel@template",
-          "metrics-transaction.60m.otel@template",
-          "metrics-transaction.1m.otel@template",
-          "metrics-service_transaction.1m.otel@template",
-          "metrics-service_destination.60m@template",
-          "metrics-service_summary.1m.otel@template",
           "metrics",
-          "metrics-service_transaction.60m.otel@template"
+          "metrics-otel@template",
+          "metrics-service_destination.10m@template",
+          "metrics-service_destination.1m@template",
+          "metrics-service_destination.60m@template",
+          "metrics-service_summary.10m.otel@template",
+          "metrics-service_summary.1m.otel@template",
+          "metrics-service_summary.60m.otel@template",
+          "metrics-service_transaction.10m.otel@template",
+          "metrics-service_transaction.1m.otel@template",
+          "metrics-service_transaction.60m.otel@template",
+          "metrics-transaction.10m.otel@template",
+          "metrics-transaction.1m.otel@template",
+          "metrics-transaction.60m.otel@template"
         ]
       }
     },
