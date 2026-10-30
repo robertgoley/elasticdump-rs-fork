@@ -2086,7 +2086,7 @@ async fn stale_keep_alive_connections_do_not_fail_continuations() {
                 Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
                     "s1",
                     &[hit("1", "{}")],
-                    3,
+                    N,
                 ))),
             )
             .route(
@@ -2280,4 +2280,46 @@ async fn oversized_responses_fail_with_a_limit_hint() {
         let o = run_async(args("2"), vec![]).await;
         assert!(o.status.success(), "chunked={chunked}: {}", stderr(&o));
     }
+}
+
+// L-446 (TST-BRK-SRV-009): the server reports an exact total for a scroll but ends the read
+// early (an empty continuation after 2 of 5): the dump fails, names both numbers and commits
+// nothing. With --size the total is not a promise and nothing is checked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scroll_total_mismatch_is_an_error() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+        .route(
+            Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
+                "s1",
+                &[hit("1", "{}"), hit("2", "{}")],
+                5,
+            ))),
+        )
+        .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(page("s1", &[], 5))))
+        .fallback(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#))
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("d.json");
+    let args = |extra: &[&str]| -> Vec<String> {
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            format!("{}/idx", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--overwrite".into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    };
+    let o = run_async(args(&[]), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("retrieved 2 of 5"), "{err}");
+    assert!(!out.exists(), "nothing committed");
+    let o = run_async(args(&["--size", "2"]), vec![]).await;
+    assert!(o.status.success(), "{}", stderr(&o));
 }

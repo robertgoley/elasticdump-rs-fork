@@ -675,12 +675,37 @@ fn reconcile_total(search_type: &SearchType, retrieved: u64, total: u64) -> Opti
             }
             None
         }
+        // scroll and PIT read a snapshot: anything but exactly the total means pages were lost
+        // or the server ended the read early (BRK-SRV-009)
+        _ if retrieved != total => {
+            let how = if matches!(search_type, SearchType::Scroll) {
+                "scroll"
+            } else {
+                "point-in-time"
+            };
+            Some(anyhow::anyhow!(
+                "the {how} read retrieved {retrieved} of {total} documents, but a {how} is a snapshot whose exact total is {total}: the server ended the read early or returned short or extra pages. Nothing is reported as complete; re-run the dump (with --searchType pit if scroll contexts expire)"
+            ))
+        }
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn snapshot_reads_must_match_the_exact_total() {
+        for st in [
+            crate::cli::SearchType::Scroll,
+            crate::cli::SearchType::PointInTime,
+        ] {
+            let e = super::reconcile_total(&st, 7, 10).expect("shortfall");
+            assert!(format!("{e}").contains("retrieved 7 of 10"), "{e}");
+            assert!(super::reconcile_total(&st, 11, 10).is_some(), "surplus");
+            assert!(super::reconcile_total(&st, 10, 10).is_none());
+        }
+    }
+
     #[test]
     fn search_after_shortfall_is_an_error_and_surplus_only_a_warning() {
         let sa = crate::cli::SearchType::SearchAfter;
