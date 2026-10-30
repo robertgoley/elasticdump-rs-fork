@@ -44,3 +44,10 @@ Node's dumps are committed as `tests/fixtures/node/<engine>-<version>/<type>.jso
 (`IT_NODE=0` forces that path). One shape difference is normalised by the test: for a single **named** ISM
 policy, Node writes the raw `GET _plugins/_ism/policies/<id>` response while Rust always writes the list
 shape `{"policies":[…],"total_policies":N}`; Rust restores both.
+
+Further interop findings (L-434..L-437, `it::node_interop`): gzip files interoperate both ways. Node cannot
+read Rust's zstd files: with `--fsCompress` it exits 1, and **without** it Node exits 0 having imported 0
+documents (a silent no-op on Node's side). Node with `--support-big-int` writes integers ≥ 1e21 in exponent
+form (`1.2345678901234567890123456789e+29`), which is value-equal but not byte-equal; Rust keeps the original
+digits. Split parts: `--fileSize` counts UTF-8 bytes in Rust and JavaScript string length in Node, so non-ASCII
+data splits into more Rust parts (7 vs 5 in the test). Node's own bigint fixtures round-trip byte for byte.
