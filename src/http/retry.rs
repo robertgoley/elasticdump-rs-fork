@@ -378,6 +378,15 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
     })
 }
 
+/// Which limit a timeout hit (TST-BRK-NET-004).
+fn timeout_hint(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        " (timed out: no data from the server within --idleTimeout seconds, default 300, or the whole request exceeded --timeout)"
+    } else {
+        ""
+    }
+}
+
 fn classify(error: &reqwest::Error) -> RetryOutcome {
     if error.is_connect() {
         RetryOutcome::ConnectError
@@ -495,7 +504,11 @@ where
                     // transport error so scroll continuations never retry it.
                     Err(e) => (
                         RetryOutcome::TransportError,
-                        anyhow!("{prefix}Failed to read {operation} response bytes: {e}"),
+                        anyhow!(
+                            "{prefix}Failed to read {operation} response bytes: {}{}",
+                            error_chain(&e),
+                            timeout_hint(&e)
+                        ),
                     ),
                 }
             }
@@ -512,7 +525,9 @@ where
                 } else {
                     classify(&e)
                 };
-                let hint = hint.map(|(_, h)| format!(" ({h})")).unwrap_or_default();
+                let hint = hint
+                    .map(|(_, h)| format!(" ({h})"))
+                    .unwrap_or_else(|| timeout_hint(&e).to_string());
                 (
                     outcome,
                     anyhow!("{prefix}Elasticsearch {operation} request failed: {chain}{hint}"),

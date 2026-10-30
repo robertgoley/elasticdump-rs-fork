@@ -392,6 +392,11 @@ pub struct Cli {
     #[arg(long = "requestTimeout")]
     pub request_timeout_secs: Option<u64>,
 
+    /// Extension: fail (or retry) a request when the server sends no data for this many
+    /// seconds, so a stalled server cannot hang the run forever (0 = never)
+    #[arg(long = "idleTimeout", default_value_t = 300)]
+    pub idle_timeout_secs: u64,
+
     // ------------------------------------------------------------ retries
     /// Retries per request (0 = 4 implicit retries unless --noImplicitRetry)
     #[arg(long = "retryAttempts", default_value_t = 0)]

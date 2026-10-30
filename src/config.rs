@@ -126,6 +126,12 @@ pub fn request_timeout(cli: &Cli) -> Option<Duration> {
     }
 }
 
+/// `--idleTimeout` (seconds, default 300; 0 disables): the longest silence on a connection
+/// while waiting for or reading a response (TST-BRK-NET-004).
+pub fn idle_timeout(cli: &Cli) -> Option<Duration> {
+    (cli.idle_timeout_secs > 0).then(|| Duration::from_secs(cli.idle_timeout_secs))
+}
+
 /// `--retryAttempts N` retries N times. With 0 (the default), requests are
 /// still retried 4 times (elasticdump's effective `maxAttempts: 5`) unless
 /// `--noImplicitRetry` is given.
@@ -211,6 +217,7 @@ pub fn build_client(
         params: params_for(cli, dir)?,
         tls,
         timeout: request_timeout(cli),
+        idle_timeout: idle_timeout(cli),
         compress: cli.es_compress(),
         max_sockets: cli.max_sockets,
         debug: cli.debug(),
@@ -318,6 +325,16 @@ mod tests {
         let p = retry_policy(&cli(&["--retryAttempts", "2", "--retryDelay", "10"])).unwrap();
         assert_eq!((p.attempts, p.base_delay), (2, Duration::from_millis(10)));
         assert!(retry_policy(&cli(&["--retryOn", "bogus"])).is_err());
+    }
+
+    #[test]
+    fn idle_timeout_defaults_to_five_minutes() {
+        assert_eq!(idle_timeout(&cli(&[])), Some(Duration::from_secs(300)));
+        assert_eq!(
+            idle_timeout(&cli(&["--idleTimeout", "7"])),
+            Some(Duration::from_secs(7))
+        );
+        assert_eq!(idle_timeout(&cli(&["--idleTimeout", "0"])), None);
     }
 
     #[test]

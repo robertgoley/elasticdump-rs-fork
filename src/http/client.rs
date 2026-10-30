@@ -58,6 +58,8 @@ pub struct ClientOptions {
     pub params: Vec<(String, String)>,
     pub tls: TlsOptions,
     pub timeout: Option<Duration>,
+    /// Longest silence while waiting for or reading a response (`--idleTimeout`).
+    pub idle_timeout: Option<Duration>,
     /// Ask for compressed responses and gzip bulk request bodies.
     pub compress: bool,
     pub max_sockets: Option<usize>,
@@ -80,6 +82,7 @@ impl std::fmt::Debug for ClientOptions {
             .field("param_names", &names(&self.params))
             .field("tls", &self.tls)
             .field("timeout", &self.timeout)
+            .field("idle_timeout", &self.idle_timeout)
             .field("compress", &self.compress)
             .field("max_sockets", &self.max_sockets)
             .field("debug", &self.debug)
@@ -98,6 +101,7 @@ impl ClientOptions {
             params: vec![],
             tls: TlsOptions::default(),
             timeout: None,
+            idle_timeout: None,
             compress: false,
             max_sockets: None,
             debug: false,
@@ -326,6 +330,9 @@ impl EsClient {
             .gzip(opts.compress);
         if let Some(timeout) = opts.timeout {
             builder = builder.timeout(timeout);
+        }
+        if let Some(idle) = opts.idle_timeout {
+            builder = builder.read_timeout(idle);
         }
         if let Some(n) = opts.max_sockets {
             builder = builder.pool_max_idle_per_host(n);

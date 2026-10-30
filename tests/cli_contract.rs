@@ -2005,3 +2005,64 @@ async fn bulk_reset_after_apply_is_never_a_silent_duplicate() {
         "{err}"
     );
 }
+
+// L-442 (TST-BRK-NET-004): a server that accepts and never answers, sends headers then stops,
+// or stops mid-body cannot hang the run: without --timeout, the idle timeout (--idleTimeout,
+// default 300 s) ends the request, it is retried where that is safe, and the run then fails
+// with a message naming the limit, well within the configured bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stalled_server_fails_within_the_idle_timeout() {
+    use std::time::Duration;
+    use support::router_mock::{Fault, Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let stall = Duration::from_secs(60);
+    let body = page("s1", &[hit("1", "{}")], 1);
+    for (label, fault) in [
+        ("never answers", Fault::Delay(stall)),
+        ("headers then silence", Fault::StallAfterHeaders(stall)),
+        ("stops mid-body", Fault::StallMidBody { after: 10, stall }),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(
+                Route::contains("POST", "/idx/_search").reply(Reply::ok(&body).with_fault(fault)),
+            )
+            .fallback(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let t = std::time::Instant::now();
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--idleTimeout".into(),
+                "1".into(),
+                "--retryAttempts".into(),
+                "1".into(),
+                "--retryDelay".into(),
+                "1".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let took = t.elapsed();
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{label}: {err}");
+        assert!(took < Duration::from_secs(20), "{label}: took {took:?}");
+        assert!(err.contains("--idleTimeout"), "{label}: {err}");
+        assert!(!out.exists(), "{label}: nothing committed");
+        let searches = m
+            .requests()
+            .iter()
+            .filter(|r| r.path.starts_with("/idx/_search"))
+            .count();
+        assert_eq!(
+            searches, 2,
+            "{label}: the initial search is retried once: {err}"
+        );
+    }
+}
