@@ -7,6 +7,7 @@ pub mod endpoint;
 #[cfg(any(feature = "fuzz", test))]
 pub mod fuzz_api;
 pub mod http;
+pub mod memplan;
 pub mod meta;
 pub mod output;
 pub mod pipeline;
@@ -696,6 +697,7 @@ pub async fn run() -> Result<()> {
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
     let cli = Cli::parse_from(argv);
     init_logging(&cli);
+    memplan::set(cli.buffer_size, cli.slices, cli.concurrency, cli.limit);
     signals::install();
     for w in &oos_warnings {
         log::warn!("{w}");

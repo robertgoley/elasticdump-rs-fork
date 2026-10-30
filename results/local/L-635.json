@@ -1,0 +1,145 @@
+{
+ "task": "L-635",
+ "req": "TST-BRK-RES-001",
+ "date": "2026-10-30",
+ "binary": "target/release (CARGO_BUILD_JOBS=2)",
+ "method": "scripts/res/low-memory.sh: cgroup v2 memory.max via scripts/res/cg-run.sh (approved sudo scope 1), swap 0; 1000 x 40 KB docs file -> local mock _bulk",
+ "runs": [
+  {
+   "cap_mb": 64,
+   "flags": "--limit 10 --bufferSize 2",
+   "estimate_mb": 11,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 7
+  },
+  {
+   "cap_mb": 64,
+   "flags": "--limit 50 --bufferSize 4",
+   "estimate_mb": 24,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 20
+  },
+  {
+   "cap_mb": 64,
+   "flags": "",
+   "estimate_mb": 107,
+   "warned": 1,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 37
+  },
+  {
+   "cap_mb": 64,
+   "flags": "--limit 100 --concurrency 4",
+   "estimate_mb": 124,
+   "warned": 1,
+   "rc": 137,
+   "oom_kill": 1,
+   "peak_mb": 64
+  },
+  {
+   "cap_mb": 64,
+   "flags": "--limit 10000",
+   "estimate_mb": 9752,
+   "warned": 1,
+   "rc": 137,
+   "oom_kill": 1,
+   "peak_mb": 64
+  },
+  {
+   "cap_mb": 128,
+   "flags": "--limit 10 --bufferSize 2",
+   "estimate_mb": 11,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 7
+  },
+  {
+   "cap_mb": 128,
+   "flags": "--limit 50 --bufferSize 4",
+   "estimate_mb": 24,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 20
+  },
+  {
+   "cap_mb": 128,
+   "flags": "",
+   "estimate_mb": 107,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 36
+  },
+  {
+   "cap_mb": 128,
+   "flags": "--limit 100 --concurrency 4",
+   "estimate_mb": 124,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 85
+  },
+  {
+   "cap_mb": 128,
+   "flags": "--limit 10000",
+   "estimate_mb": 9752,
+   "warned": 1,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 121
+  },
+  {
+   "cap_mb": 256,
+   "flags": "--limit 10 --bufferSize 2",
+   "estimate_mb": 11,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 7
+  },
+  {
+   "cap_mb": 256,
+   "flags": "--limit 50 --bufferSize 4",
+   "estimate_mb": 24,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 20
+  },
+  {
+   "cap_mb": 256,
+   "flags": "",
+   "estimate_mb": 107,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 37
+  },
+  {
+   "cap_mb": 256,
+   "flags": "--limit 100 --concurrency 4",
+   "estimate_mb": 124,
+   "warned": 0,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 86
+  },
+  {
+   "cap_mb": 256,
+   "flags": "--limit 10000",
+   "estimate_mb": 9752,
+   "warned": 1,
+   "rc": 0,
+   "oom_kill": 0,
+   "peak_mb": 121
+  }
+ ],
+ "summary": "All runs inside the README estimate succeeded with memory.peak <= estimate (max 86 MB vs 124 MB). Every run whose estimate exceeded the cap warned at start; 2 of them were OOM-killed at 64 MB (exit 137), as warned. No cgroups left."
+}

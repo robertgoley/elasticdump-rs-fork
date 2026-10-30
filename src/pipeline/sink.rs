@@ -39,6 +39,7 @@ fn source_only_lines(buf: &[u8], out: &mut Vec<u8>) {
 
 impl Sink {
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        crate::memplan::observe(buf);
         match self {
             Sink::File(f) => {
                 let docs = memchr::memchr_iter(b'\n', buf).count() as u64;

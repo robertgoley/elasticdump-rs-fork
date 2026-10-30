@@ -326,6 +326,9 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
 Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~1.5 + ~10 MB`. Measured (100k docs,
 ~420 B each): 11 MB dumping at `--limit 100`, 25–35 MB at `--limit 5000` (sliced or not), 61 MB restoring and
 74 MB copying at `--limit 5000 --concurrency 4`.
+When the first batch shows that this estimate exceeds the memory available (the cgroup's `memory.max` or
+`MemAvailable`, whichever is smaller), a warning names the flags to lower; under real cgroup caps of 64–256 MB every
+run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L-635.json`).
 
 ## Performance
 

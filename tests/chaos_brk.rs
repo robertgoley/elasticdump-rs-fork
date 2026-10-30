@@ -2753,3 +2753,45 @@ async fn l634_input_changed_while_reading_is_defined() {
         let _ = out;
     }
 }
+
+// L-635 (TST-BRK-RES-001), in-suite half: a run whose README memory estimate exceeds what the
+// host (or its cgroup) has warns once at the start naming the flags to lower. The cgroup runs
+// at 64/128/256 MB are scripts/res/low-memory.sh (results/local/L-635.json).
+#[tokio::test]
+async fn l635_memory_estimate_over_the_available_memory_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let doc = format!(
+        "{{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{{\"pad\":\"{}\"}}}}\n",
+        "x".repeat(40_000)
+    );
+    std::fs::write(&input, doc.repeat(3)).unwrap();
+    for (limit, warn) in [("100000000", true), ("10", false)] {
+        let out = dir.path().join(format!("o{limit}.json"));
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+                "--limit",
+                limit,
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "{err}");
+        assert_eq!(
+            err.matches("memory: this run may need").count(),
+            usize::from(warn),
+            "{err}"
+        );
+        if warn {
+            assert!(
+                err.contains("lower --limit, --bufferSize, --concurrency or --slices"),
+                "{err}"
+            );
+        }
+    }
+}
