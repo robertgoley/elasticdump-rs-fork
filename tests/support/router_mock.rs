@@ -61,6 +61,8 @@ pub enum Fault {
     Reset,
     /// Send the first `n` bytes of the full response, then close with a TCP RST.
     ResetAt(usize),
+    /// Send the status line and headers, then FIN (half-close) without the body.
+    FinAfterHeaders,
     /// Send the response in `chunk`-byte pieces every `every`.
     SlowDrip { chunk: usize, every: Duration },
     /// Advertise `Content-Length` = real length + `delta`, then close.
@@ -696,6 +698,11 @@ async fn send_reply(sock: &mut TcpStream, r: &Reply, close: bool) -> std::io::Re
             sock.write_all(&wire[..end]).await?;
             sock.flush().await?;
             tokio::time::sleep(*stall).await;
+            Ok(false)
+        }
+        Fault::FinAfterHeaders => {
+            sock.write_all(&wire[..head_len]).await?;
+            sock.flush().await?;
             Ok(false)
         }
         Fault::TruncateAt(n) => {

@@ -464,3 +464,116 @@ async fn l603_slow_but_progressing_response_is_not_cut_off_by_timeout() {
         }
     }
 }
+
+// L-604 (TST-BRK-NET-007): half-closed sockets. The server sends FIN right after the headers
+// (no body), or reads the request and sends FIN without any answer. A search page and an
+// explicit-id `_bulk` are retried and the run completes; when every attempt is half-closed
+// the run fails with a clear transport error well within the bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l604_half_closed_sockets_are_retried_or_fail_clearly() {
+    use std::time::{Duration, Instant};
+    let body = page("s1", &[hit("1", "{}"), hit("2", "{}")], 2);
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, format!("{}\n{}\n", hit("1", "{}"), hit("2", "{}"))).unwrap();
+    let bulk_ok =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    for (label, fault) in [
+        ("FIN after headers", Fault::FinAfterHeaders),
+        ("FIN without an answer", Fault::TruncateAt(0)),
+    ] {
+        for persistent in [false, true] {
+            let tag = format!("{label}, persistent={persistent}");
+            let replies = |good: Reply| -> Vec<Reply> {
+                let bad = good.clone().with_fault(fault.clone());
+                if persistent {
+                    vec![bad]
+                } else {
+                    vec![bad, good]
+                }
+            };
+            // dump: the initial search
+            let m = RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                .route(Route::contains("POST", "/idx/_search").replies(replies(Reply::ok(&body))))
+                .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(page("s1", &[], 2))))
+                .fallback(Reply::ok(CLEARED))
+                .start()
+                .await;
+            let out = dir.path().join("d.json");
+            let _ = std::fs::remove_file(&out);
+            let t = Instant::now();
+            let o = run_async(
+                s(&[
+                    "--input",
+                    &format!("{}/idx", m.url()),
+                    "--output",
+                    out.to_str().unwrap(),
+                    "--retryAttempts",
+                    "2",
+                    "--retryDelay",
+                    "1",
+                    "--timeout",
+                    "2000",
+                ]),
+                vec![],
+            )
+            .await;
+            let err = stderr(&o);
+            assert!(t.elapsed() < Duration::from_secs(20), "{tag}");
+            if persistent {
+                assert_eq!(o.status.code(), Some(1), "dump {tag}: {err}");
+                assert_eq!(
+                    count(&m.requests(), "POST", "/idx/_search"),
+                    3,
+                    "dump {tag}: {err}"
+                );
+                assert!(
+                    err.contains("initial search")
+                        && (err.contains("connection") || err.contains("body")),
+                    "dump {tag}: {err}"
+                );
+                assert!(!out.exists());
+            } else {
+                assert!(o.status.success(), "dump {tag}: {err}");
+                assert_eq!(std::fs::read_to_string(&out).unwrap().lines().count(), 2);
+            }
+            // restore: an explicit-id _bulk
+            let m = RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                .route(Route::contains("POST", "/_bulk").replies(replies(Reply::ok(bulk_ok))))
+                .fallback(Reply::ok(
+                    r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+                ))
+                .start()
+                .await;
+            let o = run_async(
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    &format!("{}/dst", m.url()),
+                    "--noRefresh",
+                    "--retryAttempts",
+                    "2",
+                    "--retryDelay",
+                    "1",
+                    "--timeout",
+                    "2000",
+                ]),
+                vec![],
+            )
+            .await;
+            let err = stderr(&o);
+            let bulks = count(&m.requests(), "POST", "/dst/_bulk");
+            if persistent {
+                assert_eq!(o.status.code(), Some(1), "restore {tag}: {err}");
+                assert_eq!(bulks, 3, "restore {tag}: {err}");
+            } else {
+                assert!(o.status.success(), "restore {tag}: {err}");
+                assert_eq!(bulks, 2, "restore {tag}: {err}");
+                assert!(err.contains("Total Writes: 2"), "{err}");
+            }
+        }
+    }
+}
