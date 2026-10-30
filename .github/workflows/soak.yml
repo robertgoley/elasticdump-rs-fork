@@ -1,0 +1,49 @@
+name: soak
+# INF-010 weekly layout: T6 soak (L1 full + L2, 100M+ docs) on a dedicated big runner
+# (>= 16 vCPU, 64 GB RAM, 1 TB NVMe; label from the SOAK_RUNNER repository variable,
+# e.g. `self-hosted-big`). Without that variable the job is skipped: hosted runners
+# cannot hold L2 and scripts/load/run.sh refuses it there. T8 (supply chain, full) is the
+# weekly schedule of security.yml. No ticket is opened on failure; artefacts are kept.
+on:
+  schedule:
+    - cron: "41 2 * * 6"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Load tier"
+        type: choice
+        options: [L2, L1]
+        default: L2
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    if: vars.SOAK_RUNNER != ''
+    runs-on: ${{ vars.SOAK_RUNNER }}
+    timeout-minutes: 720
+    env:
+      LOAD_PLACE: big
+      TIER: ${{ inputs.tier || 'L2' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [dump-restore-logs, copy-logs]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - run: scripts/load/run.sh "$TIER" "$SCENARIO" --engine opensearch-plain --place big
+        env: { SCENARIO: "${{ matrix.scenario }}" }
+      - if: always()
+        run: scripts/ci/collect-artifacts.sh "soak-$SCENARIO"
+        env: { SCENARIO: "${{ matrix.scenario }}" }
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soak-${{ matrix.scenario }}
+          path: |
+            artifacts/
+            results/load/
