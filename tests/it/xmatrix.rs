@@ -369,3 +369,55 @@ async fn xmatrix_import_every_export() {
         );
     }
 }
+
+// L-439 (TST-API-071): the committed table parses, covers the 9 x 8 pairs, and the matching
+// rules reject a changed cell (no cluster needed).
+#[test]
+fn expectation_table_is_complete_and_strict() {
+    let t = load_table(&std::fs::read_to_string(table_path()).unwrap());
+    let pairs: std::collections::BTreeSet<&str> =
+        t.keys().map(|k| k.split(" : ").next().unwrap()).collect();
+    assert_eq!(pairs.len(), 72, "9 images x 8 destinations");
+    assert_eq!(
+        t.len(),
+        72 * 11 - 8,
+        "every type, no policy from the ES OSS build"
+    );
+    for v in t.values() {
+        let (kind, _) = split_result(v);
+        assert!(
+            [
+                "pass",
+                "pass-with-warnings",
+                "needs-flag",
+                "refused",
+                "mismatch"
+            ]
+            .contains(&kind),
+            "{v}"
+        );
+    }
+    assert!(matches("pass", "pass"));
+    assert!(!matches("pass", "pass-with-warnings[x]"));
+    assert!(matches(
+        "refused[ISM → ILM]",
+        "refused[these are ISM → ILM policies]"
+    ));
+    assert!(!matches("refused[ISM]", "refused[ILM]"));
+    assert!(!matches(
+        "needs-flag[--excludeSettings]",
+        "needs-flag[--convertIlmToIsm]"
+    ));
+    assert!(matches(
+        "pass-with-warnings[a | b]",
+        "pass-with-warnings[xa | bx]"
+    ));
+    assert!(!matches(
+        "pass-with-warnings[a]",
+        "pass-with-warnings[a | b]"
+    ));
+    assert!(!matches(
+        "pass-with-warnings[a | b]",
+        "pass-with-warnings[b | a]"
+    ));
+}
