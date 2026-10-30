@@ -1,0 +1,1 @@
+{"__U___ix":{"mappings":{"properties":{"k":{"type":"keyword"},"n":{"type":"long"},"t":{"type":"text","analyzer":"my_an"}}}}}

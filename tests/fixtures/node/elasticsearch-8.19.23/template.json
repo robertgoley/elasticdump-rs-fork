@@ -1,0 +1,1 @@
+"{\"__U___lt\":{\"order\":3,\"index_patterns\":[\"__U__-lt-*\"],\"settings\":{\"index\":{\"number_of_shards\":\"1\"}},\"mappings\":{\"properties\":{\"x\":{\"type\":\"keyword\"}}},\"aliases\":{}}}"

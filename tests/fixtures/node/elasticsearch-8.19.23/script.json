@@ -1,0 +1,1 @@
+"{\"stored_scripts\":[{\"_id\":\"__U___sc\",\"found\":true,\"script\":{\"lang\":\"painless\",\"source\":\"doc['n'].value * params.f\"}}]}"

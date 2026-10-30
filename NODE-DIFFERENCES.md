@@ -36,3 +36,11 @@ Found during this implementation (not in the original list): #2, #14 (closed-ind
 application), #18, #19, #20. The Node interop tests run when Node elasticdump is installed at
 `/tmp/ed/node_modules/.bin/elasticdump`; they also assert Node's broken ISM restore (#7) so a fixed Node release
 would be noticed.
+
+`it::node_interop::node_interop_every_type` (L-433) runs all 11 types in both directions (Node dump → Rust
+restore, Rust dump → Node restore) on OpenSearch 2.19.7 and Elasticsearch 8.19.23: 22 directions per engine.
+Node's dumps are committed as `tests/fixtures/node/<engine>-<version>/<type>.json` (unique prefix replaced by
+`__U__`; re-record with `IT_RECORD_NODE_FIXTURES=1`), so the Node → Rust half also runs without Node
+(`IT_NODE=0` forces that path). One shape difference is normalised by the test: for a single **named** ISM
+policy, Node writes the raw `GET _plugins/_ism/policies/<id>` response while Rust always writes the list
+shape `{"policies":[…],"total_policies":N}`; Rust restores both.

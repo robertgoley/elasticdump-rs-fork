@@ -1,0 +1,1 @@
+"{\"index_templates\":[{\"name\":\"__U___it\",\"index_template\":{\"index_patterns\":[\"__U__-it-*\"],\"template\":{\"settings\":{\"index\":{\"number_of_replicas\":\"0\"}}},\"composed_of\":[\"__U___ct\"],\"priority\":77}}]}"
