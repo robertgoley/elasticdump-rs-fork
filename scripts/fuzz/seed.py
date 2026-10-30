@@ -10,7 +10,8 @@ corpus = root / "fuzz" / "corpus"
 seeds = {t: [] for t in [
     "json_split", "codec_decode", "bulk_encode_doc", "extract_batch", "bulk_handle_response",
     "parse_size", "endpoint_parse", "ilm_to_ism_convert", "renamer_new_index", "ini_auth_file",
-    "zstd_in", "gzip_in", "sonic_vs_serde"]}
+    "zstd_in", "gzip_in", "sonic_vs_serde",
+    "file_to_bulk", "url_segments", "meta_names"]}
 
 for meta in (root / "tests" / "golden").glob("*/*/meta.toml"):
     case = meta.parent
@@ -78,6 +79,10 @@ if binp.exists():
 seeds["sonic_vs_serde"] += seeds["bulk_encode_doc"][:200] + seeds["extract_batch"][:50] + [
     b'{"a":1,"a":2}', b'[1,"x",{"b":[]}]', b'{"s":"\\ud800"}', b'{"n":1e400,"m":-0.0}', b'{"a":1} x',
     b'{"k":"\\u00e9\\/\\""}']
+
+seeds["file_to_bulk"] += [b"\n".join(seeds["bulk_encode_doc"][i:i + 5]) for i in range(0, 100, 5)]
+seeds["url_segments"] += [b"logs\x00_search", b"a b\x00%2e\x00..", "é\x00😀".encode(), b"lo\ngs\x00_mapping"]
+seeds["meta_names"] += [b"logs-2024", b".kibana", b"_all", "ǅ".encode(), b"a:b", b"x" * 256]
 
 shutil.rmtree(corpus, ignore_errors=True)
 for t, items in seeds.items():

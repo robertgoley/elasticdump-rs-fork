@@ -108,3 +108,24 @@ path = "fuzz_targets/sonic_vs_serde.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "file_to_bulk"
+path = "fuzz_targets/file_to_bulk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_segments"
+path = "fuzz_targets/url_segments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "meta_names"
+path = "fuzz_targets/meta_names.rs"
+test = false
+doc = false
+bench = false

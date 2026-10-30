@@ -59,6 +59,21 @@ pub fn fuzz_extract_batch(data: &[u8]) {
     ] {
         if let Ok(b) = extract::extract_batch(&bytes, &st) {
             assert!(b.output.buffer.len() <= data.len() + b.output.doc_count as usize);
+            // INJ-015 fuzz_extract_batch: every output line is exactly one JSON object
+            let lines: Vec<&[u8]> = b
+                .output
+                .buffer
+                .split(|c| *c == b'\n')
+                .filter(|l| !l.is_empty())
+                .collect();
+            assert_eq!(lines.len() as u64, b.output.doc_count);
+            for l in lines {
+                assert!(
+                    crate::pipeline::bulk::check_doc_line(l).is_ok(),
+                    "{}",
+                    String::from_utf8_lossy(l)
+                );
+            }
         }
         let _ = extract::extract_batch_metadata(&bytes, &st);
     }

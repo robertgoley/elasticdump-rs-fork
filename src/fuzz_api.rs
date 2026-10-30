@@ -268,11 +268,91 @@ pub fn renamer_new_index(data: &[u8]) {
     for (p, x) in [(&rules[..], &[][..]), (&[][..], &rules[..])] {
         if let Ok(r) = crate::rename::IndexRenamer::new(p, x, "", "") {
             for n in lines.clone().take(8) {
-                let _ = r.index(n);
+                // INJ-015 fuzz_rename_output: an accepted output is a valid index name
+                if let Ok(out) = r.index(n) {
+                    assert!(
+                        crate::rename::validate_index_name(&out).is_ok(),
+                        "rename {n:?} -> invalid {out:?}"
+                    );
+                }
                 let _ = r.alias(n);
                 let _ = r.pattern(n);
             }
         }
+    }
+}
+
+/// INJ-015 `fuzz_file_to_bulk`: bytes -> splitter -> `single_line` -> line check ->
+/// `encode_doc`, as the restore path does. Oracle: exactly 2 NDJSON lines per accepted
+/// document (index action), each line one valid JSON value, and every `_index` a valid
+/// index name.
+pub fn file_to_bulk(data: &[u8]) {
+    let mut s = ValueSplitter::with_max_value(Some(1 << 20));
+    s.push(data);
+    let mut accepted = 0usize;
+    let mut out = Vec::new();
+    while let Ok(Some(v)) = s.next_value(true) {
+        let line = single_line(v);
+        if crate::pipeline::bulk::check_doc_line(&line).is_err() {
+            continue;
+        }
+        let before = out.len();
+        if SINK.with(|k| k.borrow_mut().encode_doc(&line, &mut out).is_ok()) {
+            accepted += 1;
+        } else {
+            out.truncate(before);
+        }
+    }
+    let lines: Vec<&[u8]> = out
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(lines.len(), 2 * accepted);
+    for pair in lines.chunks(2) {
+        assert!(crate::pipeline::bulk::check_doc_line(pair[0]).is_ok());
+        assert!(crate::pipeline::bulk::check_doc_line(pair[1]).is_ok());
+        let action: serde_json::Value = serde_json::from_slice(pair[0]).expect("action line");
+        let idx = action["index"]["_index"].as_str().expect("_index");
+        assert!(crate::rename::validate_index_name(idx).is_ok(), "{idx:?}");
+    }
+}
+
+/// INJ-015 `fuzz_url_segments`: arbitrary path segments (split at NUL) never produce a
+/// URL whose path holds an empty, `.` or `..` segment, and every segment round-trips.
+pub fn url_segments(data: &[u8]) {
+    let Ok(s) = std::str::from_utf8(data) else {
+        return;
+    };
+    let segs: Vec<&str> = s.split('\0').take(6).collect();
+    SINK.with(|k| {
+        let k = k.borrow();
+        if let Ok(url) = k.fuzz_client().url(&segs, &[("q", s)], false) {
+            let got: Vec<String> = url
+                .path_segments()
+                .unwrap()
+                .map(|p| {
+                    percent_encoding::percent_decode_str(p)
+                        .decode_utf8_lossy()
+                        .into_owned()
+                })
+                .collect();
+            assert_eq!(got, segs, "{url}");
+            assert!(got.iter().all(|g| !g.is_empty() && g != "." && g != ".."));
+        }
+    });
+}
+
+/// INJ-015 `fuzz_meta_names`: whatever `validate_index_name` accepts meets the
+/// Elasticsearch/OpenSearch rules written out independently here.
+pub fn meta_names(data: &[u8]) {
+    let Ok(name) = std::str::from_utf8(data) else {
+        return;
+    };
+    if crate::rename::validate_index_name(name).is_ok() {
+        assert!(!name.is_empty() && name.len() <= 255 && name != "." && name != "..");
+        assert!(!name.starts_with(['-', '_', '+']));
+        assert!(!name.chars().any(|c| "\\/*?\"<>| ,#:".contains(c)));
+        assert_eq!(name.to_lowercase(), name);
     }
 }
 
@@ -330,6 +410,9 @@ mod tests {
             super::zstd_in(s);
             super::gzip_in(s);
             super::sonic_vs_serde(s);
+            super::file_to_bulk(s);
+            super::url_segments(s);
+            super::meta_names(s);
         }
     }
 }

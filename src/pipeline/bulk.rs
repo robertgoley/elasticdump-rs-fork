@@ -303,6 +303,11 @@ fn meta(top: &Top, name: &str) -> Option<String> {
 }
 
 impl BulkSink {
+    #[cfg(any(feature = "fuzz", test))]
+    pub fn fuzz_client(&self) -> &EsClient {
+        &self.client
+    }
+
     pub fn new(client: EsClient, opts: BulkOptions, cancel: CancellationToken) -> Self {
         Self {
             client,

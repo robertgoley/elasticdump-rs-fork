@@ -385,9 +385,11 @@ impl EsClient {
         query: &[(&str, &str)],
         with_params: bool,
     ) -> std::result::Result<Url, SendError> {
+        // Control characters: the URL parser drops tab, CR and LF from paths, so
+        // "lo\ngs" would silently address "logs" (L-512 fuzz_url_segments finding).
         if let Some(bad) = segments
             .iter()
-            .find(|s| s.is_empty() || **s == "." || **s == "..")
+            .find(|s| s.is_empty() || **s == "." || **s == ".." || s.chars().any(char::is_control))
         {
             return Err(SendError::InvalidPath(format!(
                 "refusing to send a request with the path segment {bad:?} in /{}",
@@ -539,7 +541,8 @@ mod tests {
     #[test]
     fn url_segments_never_vanish() {
         let c = client("http://h:9200/base", vec![]);
-        for bad in [".", "..", ""] {
+        // L-512: the URL parser strips tab/CR/LF, which would merge "lo\ngs" into "logs"
+        for bad in [".", "..", "", "lo\ngs", "a\tb", "x\r", "\u{7f}"] {
             assert!(c.url(&[bad, "_settings"], &[], false).is_err(), "{bad:?}");
             assert!(c.url(&["i", bad], &[], false).is_err(), "{bad:?}");
         }
