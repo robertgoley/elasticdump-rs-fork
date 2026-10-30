@@ -2419,3 +2419,110 @@ async fn wrong_type_inputs_are_refused_before_writing() {
     .await;
     assert!(o.status.success(), "{}", stderr(&o));
 }
+
+// L-449 (TST-BRK-IN-005): malformed values the splitter passes through (unbalanced brackets,
+// a stray `}`, top-level scalars and arrays, NaN/Infinity, trailing commas) are rejected one
+// by one with their input line number; the good documents of the same batch are written in
+// one bulk request, and the run exits 1. With --ignore-es-write-errors false the first bad line
+// stops the run before its batch is sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_values_are_rejected_per_line_with_their_number() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let lines = [
+        r#"{"_id":"g1","_source":{"a":1}}"#,
+        r#"{"a":1]"#,
+        r#"{"_id":"g2","_source":{"a":2}}"#,
+        "123",
+        r#""x""#,
+        "null",
+        "[1,2]",
+        r#"{"_id":"g3","_source":{"a":NaN}}"#,
+        r#"{"_id":"g4","_source":{"a":Infinity}}"#,
+        r#"{"_id":"g5","_source":{"a":5,}}"#,
+        r#"{"_id":"g6","_source":{"a":6}}"#,
+        "}",
+        r#"{"_id":"g7","_source":{"a":7}}"#,
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, lines.join("\n") + "\n").unwrap();
+    let ok_items = r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok_items)))
+        .fallback(Reply::ok(
+            r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+        ))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m.url()),
+            "--ignore-errors".into(),
+            "--noRefresh".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    let bulks: Vec<String> = m
+        .requests()
+        .iter()
+        .filter(|r| r.path.ends_with("/_bulk"))
+        .map(|r| r.body_str())
+        .collect();
+    assert_eq!(bulks.len(), 1, "{err}");
+    for good in ["g1", "g2", "g6", "g7"] {
+        assert!(
+            bulks[0].contains(&format!("\"_id\":\"{good}\"")),
+            "{}",
+            bulks[0]
+        );
+    }
+    assert_eq!(bulks[0].lines().count(), 8, "4 docs: {}", bulks[0]);
+    let rejected: Vec<&str> = err
+        .lines()
+        .filter(|l| l.contains("rejected document"))
+        .collect();
+    assert_eq!(rejected.len(), 9, "{err}");
+    for n in [2, 4, 5, 6, 7, 8, 9, 10, 12] {
+        assert!(
+            err.contains(&format!("rejected document {n} of the input")),
+            "line {n}: {err}"
+        );
+    }
+    // strict: the first bad line stops the run and names it; that batch is not sent
+    let m2 = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok_items)))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m2.url()),
+            "--noRefresh".into(),
+            "--ignore-es-write-errors".into(),
+            "false".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("rejected document 2 of the input"), "{err}");
+    assert_eq!(
+        m2.requests()
+            .iter()
+            .filter(|r| r.path.ends_with("/_bulk"))
+            .count(),
+        0
+    );
+}

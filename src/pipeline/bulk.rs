@@ -98,6 +98,9 @@ pub struct BulkSink {
     inflight: JoinSet<Result<WriteReport>>,
     /// At most one `_refresh` in flight (others are skipped).
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    /// 1-based number (in the input) of the next document handed to `write_batch`, so a
+    /// rejected line can be located (TST-BRK-IN-005).
+    next_doc: u64,
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -243,7 +246,13 @@ impl BulkSink {
             throttle: None,
             inflight: JoinSet::new(),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            next_doc: 1,
         }
+    }
+
+    /// The input number of the next document (when `--offset` skipped some).
+    pub fn set_next_doc(&mut self, n: u64) {
+        self.next_doc = n;
     }
 
     /// `--concurrency` (max in-flight write batches) and `--throttleInterval`
@@ -265,6 +274,7 @@ impl BulkSink {
             throttle: None,
             inflight: JoinSet::new(),
             refresh_lock: Arc::clone(&self.refresh_lock),
+            next_doc: 1,
         }
     }
 
@@ -285,8 +295,10 @@ impl BulkSink {
 
     /// Hand one batch to the writer. Sequential with `--concurrency 1`.
     pub async fn write_batch(&mut self, buf: &[u8]) -> Result<()> {
+        let first = self.next_doc;
+        self.next_doc += buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count() as u64;
         if self.concurrency <= 1 {
-            self.process_batch(buf).await?;
+            self.process_batch(buf, first).await?;
         } else {
             while self.inflight.len() >= self.concurrency {
                 let joined = self.inflight.join_next().await.expect("non-empty");
@@ -298,7 +310,7 @@ impl BulkSink {
             let mut worker = self.worker();
             let data = Bytes::copy_from_slice(buf);
             self.inflight.spawn(async move {
-                worker.process_batch(&data).await?;
+                worker.process_batch(&data, first).await?;
                 Ok(worker.report)
             });
         }
@@ -497,16 +509,16 @@ impl BulkSink {
 
     /// Write one batch of document lines; returns once every item was
     /// written, retried or reported.
-    async fn process_batch(&mut self, buf: &[u8]) -> Result<()> {
+    async fn process_batch(&mut self, buf: &[u8], first_doc: u64) -> Result<()> {
         // Validate and encode every line first: a line that is not one JSON
         // object (INJ-F1) or whose action fields are unusable (bad `_index`,
         // non-string `_id`, non-integer `version`: INJ-F2/F3) is rejected on
         // its own, so it can never fail the whole bulk request.
         let mut encoded = Vec::with_capacity(buf.len() + buf.len() / 4);
         let mut docs: Vec<(&[u8], std::ops::Range<usize>)> = Vec::new();
-        for line in buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()) {
+        for (no, line) in (first_doc..).zip(buf.split(|b| *b == b'\n').filter(|l| !l.is_empty())) {
             if let Err(reason) = check_doc_line(line) {
-                self.reject_line(line, &reason)?;
+                self.reject_line(line, &reason, no)?;
                 continue;
             }
             let at = encoded.len();
@@ -514,7 +526,7 @@ impl BulkSink {
                 Ok(()) => docs.push((line, at..encoded.len())),
                 Err(e) => {
                     encoded.truncate(at);
-                    self.reject_line(line, &format!("{e:#}"))?;
+                    self.reject_line(line, &format!("{e:#}"), no)?;
                 }
             }
         }
@@ -625,11 +637,11 @@ impl BulkSink {
     /// encoded (no partial action can reach the cluster). With
     /// --ignore-errors/--ignore-es-write-errors the run continues, but the
     /// rejection is counted and the run still exits non-zero.
-    fn reject_line(&mut self, line: &[u8], reason: &str) -> Result<()> {
+    fn reject_line(&mut self, line: &[u8], reason: &str, no: u64) -> Result<()> {
         self.report.failed += 1;
         self.report.rejected += 1;
         let msg = format!(
-            "rejected a document line ({reason}); nothing was written for it: {}",
+            "rejected document {no} of the input (line {no} of an NDJSON dump) ({reason}); nothing was written for it: {}",
             preview(line)
         );
         if self.opts.ignore_errors || self.opts.ignore_es_write_errors {

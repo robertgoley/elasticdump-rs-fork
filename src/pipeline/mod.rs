@@ -30,9 +30,13 @@ pub async fn file_to_sink(
         if window.is_exhausted() {
             return Ok(());
         }
+        let mut seen = 0u64;
         while let Some(batch) = rx.recv().await {
             let batch = batch?;
+            let skipped = window.pending_skip().min(batch.docs);
             let (slice, docs) = window.apply(&batch.buf, batch.docs);
+            sink.set_next_doc(seen + skipped + 1);
+            seen += batch.docs;
             if docs > 0 {
                 if let Err(e) = sink.write_all(slice).await {
                     if sink.is_stdout() && crate::output::is_broken_pipe(&e) {

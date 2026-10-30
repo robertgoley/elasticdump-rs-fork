@@ -58,6 +58,13 @@ impl Sink {
         }
     }
 
+    /// The input number of the next document (bulk sinks name it when they reject one).
+    pub fn set_next_doc(&mut self, n: u64) {
+        if let Sink::Bulk(b) = self {
+            b.set_next_doc(n);
+        }
+    }
+
     pub async fn flush(&mut self) -> Result<()> {
         match self {
             Sink::File(f) => f.flush().await,

@@ -23,6 +23,11 @@ impl DocWindow {
         self.skip == 0 && self.remaining.is_none()
     }
 
+    /// Documents `--offset` still has to skip.
+    pub fn pending_skip(&self) -> u64 {
+        self.skip
+    }
+
     /// `true` once `--size` documents have been passed.
     pub fn is_exhausted(&self) -> bool {
         self.remaining == Some(0)
