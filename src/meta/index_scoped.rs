@@ -326,6 +326,13 @@ fn prepare_settings(def: &mut Value, info: &ClusterInfo, target: &str, opts: &Me
     }
 }
 
+/// The key of a server's `unknown setting [key]` error.
+fn unknown_setting(msg: &str) -> Option<&str> {
+    let rest = &msg[msg.find("unknown setting [")? + "unknown setting [".len()..];
+    let key = &rest[..rest.find(']')?];
+    (!key.is_empty() && !key.contains(char::is_whitespace)).then_some(key)
+}
+
 pub(crate) fn other_engine(info: &ClusterInfo) -> &'static str {
     if info.is_opensearch() {
         "Elasticsearch"
@@ -336,9 +343,18 @@ pub(crate) fn other_engine(info: &ClusterInfo) -> &'static str {
 
 fn create_error(e: anyhow::Error, opts: &MetaOptions, what: &str) -> Result<bool> {
     if opts.source_info.is_none() {
-        Err(e.context(format!(
-            "if this setting is engine-specific (Elasticsearch vs OpenSearch), drop it with --excludeSettings ({what})"
-        )))
+        // name the key when the server did (`unknown setting [index.replication.type]`, e.g. an
+        // OpenSearch 2 dump restored to OpenSearch 1.3), so the hint can be pasted as is
+        let msg = format!("{e:#}");
+        let hint = match unknown_setting(&msg) {
+            Some(key) => format!(
+                "if this setting is engine- or version-specific, drop it with --excludeSettings={key} ({what})"
+            ),
+            None => format!(
+                "if this setting is engine-specific (Elasticsearch vs OpenSearch), drop it with --excludeSettings ({what})"
+            ),
+        };
+        Err(e.context(hint))
     } else {
         Err(e)
     }
@@ -688,5 +704,13 @@ mod tests {
             serde_json::to_string(&v).unwrap(),
             r#"{"a":123456789012345678901234567890}"#
         );
+    }
+
+    #[test]
+    fn unknown_setting_key_is_named_in_the_hint() {
+        let m = "HTTP 400: illegal_argument_exception: unknown setting [index.replication.type] please check that any required plugins are installed";
+        assert_eq!(super::unknown_setting(m), Some("index.replication.type"));
+        assert_eq!(super::unknown_setting("unknown setting [] x"), None);
+        assert_eq!(super::unknown_setting("other error"), None);
     }
 }

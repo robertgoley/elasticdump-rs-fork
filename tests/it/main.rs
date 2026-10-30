@@ -19,3 +19,4 @@ mod meta_types;
 mod node_interop;
 mod smoke;
 mod tls_auth;
+mod xmatrix;

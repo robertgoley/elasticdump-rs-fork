@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::harness::*;
 
-const TYPES: [&str; 11] = [
+pub(crate) const TYPES: [&str; 11] = [
     "data",
     "mapping",
     "settings",
@@ -66,20 +66,23 @@ fn fixture_dir(engine: &str, version: &str) -> PathBuf {
         .join(format!("{engine}-{version}"))
 }
 
-struct Names {
-    u: String,
-    ix: String,
-    al: String,
-    lt: String,
-    ct: String,
-    it: String,
-    pol: String,
-    sc: String,
+pub(crate) struct Names {
+    pub(crate) u: String,
+    pub(crate) ix: String,
+    pub(crate) al: String,
+    pub(crate) lt: String,
+    pub(crate) ct: String,
+    pub(crate) it: String,
+    pub(crate) pol: String,
+    pub(crate) sc: String,
 }
 
 impl Names {
-    fn new() -> Self {
-        let u = unique("nx");
+    pub(crate) fn new() -> Self {
+        Self::from_u(unique("nx"))
+    }
+    /// The names a run with unique prefix `u` used (for restoring another run's export).
+    pub(crate) fn from_u(u: String) -> Self {
         Self {
             ix: format!("{u}_ix"),
             al: format!("{u}_al"),
@@ -92,7 +95,7 @@ impl Names {
         }
     }
     /// Path that selects the object of `ty`.
-    fn selector(&self, ty: &str) -> &str {
+    pub(crate) fn selector(&self, ty: &str) -> &str {
         match ty {
             "template" => &self.lt,
             "component_template" => &self.ct,
@@ -104,7 +107,7 @@ impl Names {
     }
 }
 
-async fn seed(c: &Cluster, n: &Names, es: bool) {
+pub(crate) async fn seed(c: &Cluster, n: &Names, es: bool) {
     c.delete_index(&n.ix).await;
     c.ok(
         "PUT",
@@ -146,7 +149,9 @@ async fn seed(c: &Cluster, n: &Names, es: bool) {
         Some(json!({"index_patterns": [format!("{}-it-*", n.u)], "priority": 77, "composed_of": [n.ct.clone()], "template": {"settings": {"number_of_replicas": 0}}})),
     )
     .await;
-    if es {
+    // the ES OSS build has no ILM: no policy is seeded there
+    if es && c.is_oss().await {
+    } else if es {
         c.ok(
             "PUT",
             &format!("_ilm/policy/{}", n.pol),
@@ -169,7 +174,7 @@ async fn seed(c: &Cluster, n: &Names, es: bool) {
     .await;
 }
 
-async fn cleanup(c: &Cluster, n: &Names, es: bool) {
+pub(crate) async fn cleanup(c: &Cluster, n: &Names, es: bool) {
     c.delete_index(&n.ix).await;
     let _ = c.call("DELETE", &format!("_template/{}", n.lt), None).await;
     let _ = c
@@ -394,7 +399,7 @@ async fn reseed_after(c: &Cluster, n: &Names, ty: &str, base: &Path) {
     }
 }
 
-fn restore_target(c: &Cluster, n: &Names, ty: &str) -> String {
+pub(crate) fn restore_target(c: &Cluster, n: &Names, ty: &str) -> String {
     match ty {
         "data" | "mapping" | "settings" | "analyzer" | "alias" | "index" => c.url_with_auth(&n.ix),
         _ => c.url_with_auth(""),
