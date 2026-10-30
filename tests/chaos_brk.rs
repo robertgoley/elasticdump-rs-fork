@@ -897,3 +897,141 @@ async fn l607_html_from_a_proxy_is_named_not_dumped() {
         }
     }
 }
+
+// L-608 (TST-BRK-NET-011): broken response encodings: `Content-Encoding: gzip` on a plain
+// body, a gzip stream cut short (valid HTTP framing), `Content-Length` shorter or longer than
+// the body. With and without --esCompress: always exit 1 within a few seconds, a message that
+// names the problem, nothing committed, never a partial page; transient ones are retried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l608_broken_encodings_fail_clearly_or_are_retried() {
+    use std::time::{Duration, Instant};
+    let docs: Vec<String> = (0..40)
+        .map(|i| hit(&i.to_string(), r#"{"a":"xxxxxxxxxxxxxxxx"}"#))
+        .collect();
+    let body = page("s1", &docs, docs.len());
+    let cases: Vec<(&str, Reply)> = vec![
+        (
+            "gzip header, plain body",
+            Reply::ok(&body).with_fault(Fault::GzipPlainBody),
+        ),
+        ("gzip body nobody asked for", Reply::ok(&body).gzipped()),
+        (
+            "gzip stream cut",
+            Reply::ok(&body)
+                .gzipped()
+                .with_fault(Fault::TruncateBodyBy(30)),
+        ),
+        (
+            "Content-Length short",
+            Reply::ok(&body).with_fault(Fault::WrongContentLength(-40)),
+        ),
+        (
+            "Content-Length long",
+            Reply::ok(&body).with_fault(Fault::WrongContentLength(40)),
+        ),
+    ];
+    for (label, bad) in cases {
+        for compress in [false, true] {
+            for persistent in [true, false] {
+                let tag = format!("{label}, esCompress={compress}, persistent={persistent}");
+                let good = if compress {
+                    Reply::ok(&body).gzipped()
+                } else {
+                    Reply::ok(&body)
+                };
+                let replies = if persistent {
+                    vec![bad.clone()]
+                } else {
+                    vec![bad.clone(), good]
+                };
+                let m = RouterMock::builder()
+                    .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                    .route(Route::contains("POST", "/idx/_search").replies(replies))
+                    .route(
+                        Route::exact("POST", "/_search/scroll").reply(Reply::ok(page(
+                            "s1",
+                            &[],
+                            docs.len(),
+                        ))),
+                    )
+                    .fallback(Reply::ok(CLEARED))
+                    .start()
+                    .await;
+                let dir = tempfile::tempdir().unwrap();
+                let out = dir.path().join("d.json");
+                let mut a = s(&[
+                    "--input",
+                    &format!("{}/idx", m.url()),
+                    "--output",
+                    out.to_str().unwrap(),
+                    "--retryAttempts",
+                    "1",
+                    "--retryDelay",
+                    "1",
+                    "--timeout",
+                    "2000",
+                ]);
+                if compress {
+                    a.push("--esCompress".into());
+                }
+                let t = Instant::now();
+                let o = run_async(a, vec![]).await;
+                let err = stderr(&o);
+                assert!(t.elapsed() < Duration::from_secs(15), "{tag}");
+                if persistent && o.status.success() {
+                    // only acceptable when the body was in fact intact: every doc, byte-exact
+                    let got = std::fs::read_to_string(&out).unwrap();
+                    let ids: Vec<String> = got
+                        .lines()
+                        .map(|l| {
+                            serde_json::from_str::<serde_json::Value>(l).unwrap()["_id"].to_string()
+                        })
+                        .collect();
+                    let want: Vec<String> = (0..docs.len()).map(|i| format!("\"{i}\"")).collect();
+                    assert_eq!(ids, want, "{tag}");
+                    eprintln!("L-608 {tag}: exit 0 with every document (the body was intact)");
+                } else if persistent {
+                    assert_eq!(o.status.code(), Some(1), "{tag}: {err}");
+                    assert!(!out.exists(), "{tag}");
+                    let last = err
+                        .lines()
+                        .rfind(|l| l.starts_with("Error"))
+                        .unwrap_or("")
+                        .to_string();
+                    assert!(
+                        [
+                            "decod",
+                            "malformed",
+                            "end of file",
+                            "gzip",
+                            "invalid",
+                            "not exactly one JSON",
+                            "length",
+                            "EOF"
+                        ]
+                        .iter()
+                        .any(|n| last.contains(n)),
+                        "{tag}: {last}"
+                    );
+                    eprintln!("L-608 {tag}: {}", &last[..last.len().min(300)]);
+                } else {
+                    // the first (bad) answer is either retried, or rejected before any doc
+                    if o.status.success() {
+                        assert_eq!(
+                            std::fs::read_to_string(&out).unwrap().lines().count(),
+                            docs.len(),
+                            "{tag}"
+                        );
+                    } else {
+                        assert!(!out.exists(), "{tag}: {err}");
+                    }
+                    eprintln!(
+                        "L-608 {tag}: exit {:?}, searches {}",
+                        o.status.code(),
+                        count(&m.requests(), "POST", "/idx/_search")
+                    );
+                }
+            }
+        }
+    }
+}

@@ -273,6 +273,23 @@ fn missing_source_error(hit: &LazyValue<'_>) -> anyhow::Error {
     )
 }
 
+/// A response body that is not a search response (TST-BRK-NET-011): say what it looks like.
+fn malformed(body: &Bytes, e: anyhow::Error) -> anyhow::Error {
+    if body.starts_with(&[0x1f, 0x8b]) {
+        return anyhow!(
+            "the search response is gzip-compressed although compression was not requested (a proxy re-encoding responses?); pass --esCompress to accept compressed responses, or fix the proxy"
+        );
+    }
+    let head: String = String::from_utf8_lossy(&body[..body.len().min(60)])
+        .chars()
+        .map(|c| if c.is_control() { '.' } else { c })
+        .collect();
+    e.context(format!(
+        "malformed search response ({} bytes, starting {head:?}); nothing of this page was written",
+        body.len()
+    ))
+}
+
 pub(crate) fn extract_batch(
     response_bytes: &Bytes,
     search_type: &SearchType,
@@ -281,7 +298,8 @@ pub(crate) fn extract_batch(
     // malformed response would become an invalid dump line (L-512 fuzz finding).
     crate::pipeline::bulk::check_escapes(response_bytes)
         .map_err(|e| anyhow!("malformed search response: {e}"))?;
-    let metadata_inputs = extract_metadata_inputs(response_bytes)?;
+    let metadata_inputs =
+        extract_metadata_inputs(response_bytes).map_err(|e| malformed(response_bytes, e))?;
     let iter = metadata_inputs
         .hits
         .into_array_iter()
@@ -293,7 +311,7 @@ pub(crate) fn extract_batch(
 
     let require_source = super::require_source();
     for hit in iter {
-        let hit = hit?;
+        let hit = hit.map_err(|e| malformed(response_bytes, e.into()))?;
         doc_count += 1;
         if require_source && hit.get("_source").is_none() {
             return Err(missing_source_error(&hit));

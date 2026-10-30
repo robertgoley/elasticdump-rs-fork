@@ -63,6 +63,9 @@ pub enum Fault {
     ResetAt(usize),
     /// Send the status line and headers, then FIN (half-close) without the body.
     FinAfterHeaders,
+    /// Drop the last `k` bytes of the (possibly gzipped) body; `Content-Length` matches what is
+    /// sent, so the HTTP framing is valid but the payload (e.g. the gzip stream) is cut.
+    TruncateBodyBy(usize),
     /// Send the response in `chunk`-byte pieces every `every`.
     SlowDrip { chunk: usize, every: Duration },
     /// Advertise `Content-Length` = real length + `delta`, then close.
@@ -628,6 +631,9 @@ fn render_parts(r: &Reply, close: bool) -> (Vec<u8>, usize, bool) {
         body = e.finish().expect("gzip");
         headers.push(("Content-Encoding".into(), "gzip".into()));
     }
+    if let Fault::TruncateBodyBy(k) = r.fault {
+        body.truncate(body.len().saturating_sub(k));
+    }
     if let Fault::GzipPlainBody = r.fault {
         headers.push(("Content-Encoding".into(), "gzip".into()));
     }
@@ -635,7 +641,11 @@ fn render_parts(r: &Reply, close: bool) -> (Vec<u8>, usize, bool) {
     let ends_conn = close
         || !matches!(
             r.fault,
-            Fault::None | Fault::Delay(_) | Fault::GzipPlainBody | Fault::SlowDrip { .. }
+            Fault::None
+                | Fault::Delay(_)
+                | Fault::GzipPlainBody
+                | Fault::SlowDrip { .. }
+                | Fault::TruncateBodyBy(_)
         );
     headers.push((
         "Connection".into(),
