@@ -51,11 +51,12 @@ fn metadata_tree() -> &'static PointerTree {
         let mut tree = PointerTree::new();
         tree.add_path(&["_scroll_id"]);
         tree.add_path(&["pit_id"]);
-        tree.add_path(&["hits", "total", "value"]);
-        tree.add_path(&["hits", "total", "relation"]);
+        // `hits.total` as a whole: `{value, relation}` (ES 7+/OpenSearch) or a bare integer
+        // (`rest_total_hits_as_int=true`, ES 6). Pointing into `.value` would make get_many
+        // fail with a type error on the integer form (TST-API-013).
+        tree.add_path(&["hits", "total"]);
         tree.add_path(&pointer!["hits", "hits"]);
-        // Added AFTER the five above so the existing reverse-add pops stay valid;
-        // these two are popped FIRST in extract_metadata_inputs (see the pop order there).
+        // Popped FIRST in extract_metadata_inputs (see the pop order there).
         tree.add_path(&["_shards", "failed"]);
         tree.add_path(&["timed_out"]);
         tree
@@ -108,16 +109,21 @@ fn extract_metadata_inputs(response_bytes: &Bytes) -> Result<MetadataInputs<'_>>
     let mut values = get_many(response_bytes, metadata_tree())?;
     // INVARIANT: get_many yields values in metadata_tree()'s add order, and pop()
     // returns them in reverse. metadata_tree() adds, in order: _scroll_id, pit_id,
-    // hits.total.value, hits.total.relation, hits.hits, _shards.failed, timed_out.
+    // hits.total, hits.hits, _shards.failed, timed_out.
     // So these pops MUST stay in this exact (reverse) order and adjacent.
     let timed_out = values.pop().flatten().and_then(|value| value.as_bool());
     let shards_failed = values.pop().flatten().and_then(|value| value.as_u64());
     let hits = require_hits_array(values.pop().flatten())?;
-    let relation = values
-        .pop()
-        .flatten()
-        .and_then(|value| value.as_str().map(str::to_owned));
-    let total_value = values.pop().flatten().and_then(|value| value.as_u64());
+    let (total_value, relation) = match values.pop().flatten() {
+        Some(total) if total.is_object() => (
+            total.get("value").and_then(|v| v.as_u64()),
+            total
+                .get("relation")
+                .and_then(|v| v.as_str().map(str::to_owned)),
+        ),
+        Some(total) => (total.as_u64(), None),
+        None => (None, None),
+    };
     let next_pit_id = values
         .pop()
         .flatten()
@@ -368,6 +374,18 @@ mod tests {
             .to_string();
 
         assert!(error.contains("usable sort value"));
+    }
+
+    #[test]
+    fn extract_batch_metadata_reads_integer_total_as_exact() {
+        // rest_total_hits_as_int=true / ES 6: used to fail with "invalid type: integer"
+        let response = Bytes::from_static(
+            br#"{"_scroll_id":"s","hits":{"total":7,"hits":[{"_id":"1","_source":{}}]}}"#,
+        );
+        let metadata = extract_batch_metadata(&response, &SearchType::Scroll).unwrap();
+        assert_eq!(metadata.total_hits.value, 7);
+        assert!(metadata.total_hits.is_exact);
+        assert_eq!(metadata.next_scroll_id.as_deref(), Some("s"));
     }
 
     #[test]

@@ -969,3 +969,63 @@ async fn scroll_id_rotates_and_clear_404_after_expiry_is_ok() {
         reqs[3]
     );
 }
+
+// L-408 (TST-API-013): `hits.total` variants. An int total (`rest_total_hits_as_int`, ES 6
+// style) and `{relation: eq}` are exact and reconciled; `gte`, a missing total and a user
+// `track_total_hits: false` are estimates and never fail the run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hits_total_variants_are_reconciled_only_when_exact() {
+    let sa_hits = r#"[{"_index":"idx","_id":"1","_source":{"a":1},"sort":[1]},{"_index":"idx","_id":"2","_source":{"a":2},"sort":[2]}]"#;
+    let cases: [(&str, &str, Option<i32>, &str); 6] = [
+        ("int exact", r#""total":2,"#, Some(0), ""),
+        ("int short", r#""total":5,"#, Some(1), "retrieved 2 of 5"),
+        (
+            "eq short",
+            r#""total":{"value":3,"relation":"eq"},"#,
+            Some(1),
+            "retrieved 2 of 3",
+        ),
+        (
+            "gte",
+            r#""total":{"value":10000,"relation":"gte"},"#,
+            Some(0),
+            "",
+        ),
+        ("missing", "", Some(0), ""),
+        ("track_total_hits false", "", Some(0), ""),
+    ];
+    for (name, total, code, msg) in cases {
+        let body = format!(
+            r#"{{"took":1,"timed_out":false,"_shards":{{"total":1,"successful":1,"skipped":0,"failed":0}},"hits":{{{total}"hits":{sa_hits}}}}}"#
+        );
+        let mock = MockEs::serve(vec![CannedResponse::ok(body)]).await;
+        let search_body = if name.starts_with("track") {
+            r#"{"query":{"match_all":{}},"sort":[{"a":"asc"}],"track_total_hits":false}"#
+        } else {
+            r#"{"query":{"match_all":{}},"sort":[{"a":"asc"}]}"#
+        };
+        let o = run_async(
+            vec![
+                "--input".into(),
+                mock.input_url("idx"),
+                "--output".into(),
+                "$".into(),
+                "--quiet".into(),
+                "--searchAfter".into(),
+                "--searchBody".into(),
+                search_body.into(),
+            ],
+            vec![],
+        )
+        .await;
+        assert_eq!(o.status.code(), code, "{name}: {}", stderr(&o));
+        assert!(stderr(&o).contains(msg), "{name}: {}", stderr(&o));
+        if name.starts_with("track") {
+            assert!(
+                mock.requests()[0].contains("\"track_total_hits\":false"),
+                "user flag kept: {}",
+                mock.requests()[0]
+            );
+        }
+    }
+}
