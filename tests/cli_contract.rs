@@ -1089,7 +1089,7 @@ async fn bulk_item_429_retry_413_and_item_count_mismatch() {
     let o = run_async(args(mock.input_url("dst")), vec![]).await;
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
     assert!(
-        stderr(&o).contains("1 items for 2 documents"),
+        stderr(&o).contains("has 1 item(s) for 2 document(s)"),
         "{}",
         stderr(&o)
     );

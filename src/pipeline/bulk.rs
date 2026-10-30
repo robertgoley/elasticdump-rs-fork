@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
 use reqwest::Method;
 use sonic_rs::{JsonValueTrait, LazyValue};
@@ -783,21 +783,36 @@ impl BulkSink {
         pending: &[usize],
         resent: bool,
     ) -> Result<Vec<(usize, String)>> {
+        // Never count a document as written without its own item (TST-BRK-SRV-004): an
+        // answer that is not JSON, has no `items`, or has a different number of items fails
+        // the run, whatever `errors` says.
+        let what = |m: &str| {
+            let head: String = String::from_utf8_lossy(&resp[..resp.len().min(120)])
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            anyhow!(
+                "{m} for {} document(s); none of them is counted as written (response starts: {head:?})",
+                pending.len()
+            )
+        };
+        if !resp.trim_ascii_start().starts_with(b"{") {
+            return Err(what("the bulk response is not a JSON object"));
+        }
         let errors = get(resp, &["errors"]).and_then(|v| v.as_bool());
+        let items = get(resp, &["items"]).ok_or_else(|| what("the bulk response has no items"))?;
+        let items: Vec<LazyValue> = sonic_rs::to_array_iter(items.as_raw_str().as_bytes())
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|_| what("the bulk response items are not an array"))?;
+        if items.len() != pending.len() {
+            return Err(what(&format!(
+                "the bulk response has {} item(s)",
+                items.len()
+            )));
+        }
         if errors == Some(false) {
             self.report.written += pending.len() as u64;
             return Ok(vec![]);
-        }
-        let items = get(resp, &["items"]).context("bulk response has no items")?;
-        let items: Vec<LazyValue> = sonic_rs::to_array_iter(items.as_raw_str().as_bytes())
-            .collect::<std::result::Result<_, _>>()
-            .context("bulk response items are not an array")?;
-        if items.len() != pending.len() {
-            bail!(
-                "bulk response has {} items for {} documents",
-                items.len(),
-                pending.len()
-            );
         }
         let mut rejected = Vec::new();
         let mut created_earlier = 0u64;

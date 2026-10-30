@@ -1692,3 +1692,71 @@ async fn l615_mixed_bulk_items_are_classified_one_by_one() {
         "finished with failed writes (Q3): {e}"
     );
 }
+
+// L-616 (TST-BRK-SRV-004): `_bulk` answers that do not account for every document: fewer or
+// more items than documents (with `errors:false` too), `errors:false` without `items`, a body
+// that is not JSON. The run fails clearly and none of those documents counts as written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l616_bulk_answers_that_do_not_match_are_never_counted_as_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, format!("{}\n{}\n", hit("1", "{}"), hit("2", "{}"))).unwrap();
+    for (label, body, want) in [
+        (
+            "one item, errors:false",
+            r#"{"took":1,"errors":false,"items":[{"index":{"status":201}}]}"#,
+            "has 1 item(s) for 2 document(s)",
+        ),
+        (
+            "three items",
+            r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#,
+            "has 3 item(s) for 2 document(s)",
+        ),
+        (
+            "errors:false, no items",
+            r#"{"took":1,"errors":false}"#,
+            "has no items",
+        ),
+        (
+            "items not an array",
+            r#"{"took":1,"errors":false,"items":{"a":1}}"#,
+            "not an array",
+        ),
+        ("not JSON", "OK", "not a JSON object"),
+        ("empty body", "", "not a JSON object"),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(body)))
+            .fallback(Reply::ok(
+                r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+            ))
+            .start()
+            .await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/dst", m.url()),
+                "--noRefresh",
+                "--retryAttempts",
+                "1",
+                "--retryDelay",
+                "1",
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{label}: {err}");
+        assert!(
+            err.contains(want) && err.contains("none of them is counted as written"),
+            "{label}: {err}"
+        );
+        assert!(
+            !err.contains("Total Writes: 2") && !err.contains("Total Writes: 1"),
+            "{label}: {err}"
+        );
+    }
+}
