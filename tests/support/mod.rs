@@ -7,3 +7,4 @@
 
 pub mod es_shim;
 pub mod mock_es;
+pub mod router_mock;
