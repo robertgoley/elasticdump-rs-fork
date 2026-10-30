@@ -51,12 +51,29 @@ fn split_spec(spec: &str, flag: &str) -> Result<(String, String)> {
     Ok((spec[..idx].to_string(), spec[idx + 1..].to_string()))
 }
 
+/// A rename that would merge several source indices into one target
+/// (TST-BRK-CLI-003). Fatal: it never becomes a per-document rejection.
+#[derive(Debug)]
+pub struct MergeRefused(pub String);
+
+impl std::fmt::Display for MergeRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for MergeRefused {}
+
 #[derive(Debug, Default)]
 pub struct IndexRenamer {
     rules: Vec<Rule>,
     pub prefix: String,
     pub suffix: String,
     cache: Mutex<HashMap<String, String>>,
+    /// `--allowMerge`: several source indices may be renamed to one target.
+    allow_merge: bool,
+    /// Target name → the first source index renamed to it.
+    targets: Mutex<HashMap<String, String>>,
 }
 
 impl IndexRenamer {
@@ -92,7 +109,50 @@ impl IndexRenamer {
             prefix: prefix.to_string(),
             suffix: suffix.to_string(),
             cache: Mutex::new(HashMap::new()),
+            allow_merge: false,
+            targets: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// `--allowMerge`: accept several source indices renamed to one target.
+    pub fn with_allow_merge(mut self, allow: bool) -> Self {
+        self.allow_merge = allow;
+        self
+    }
+
+    /// Target name of `name` before validation (rules, then prefix/suffix).
+    fn target_of(&self, name: &str) -> String {
+        let base = self
+            .rename_raw(name)
+            .map_or_else(|| name.to_string(), |(n, _)| n);
+        format!("{}{}{}", self.prefix, base, self.suffix)
+    }
+
+    fn merge_error(&self, target: &str, sources: &[&str]) -> anyhow::Error {
+        anyhow::Error::new(MergeRefused(format!(
+            "renaming would merge source indices {} into one index '{target}' (documents with the same _id would overwrite each other); fix the --renamePrefix/--renameIndex rules, or pass --allowMerge to merge them on purpose",
+            sources
+                .iter()
+                .map(|s| format!("'{s}'"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        )))
+    }
+
+    /// Refuse a many-to-one renaming among `names` (the source indices known
+    /// before anything is written) unless `--allowMerge` was given.
+    pub fn check_merges<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> Result<()> {
+        if self.allow_merge || self.rules.is_empty() {
+            return Ok(());
+        }
+        let mut by_target: std::collections::BTreeMap<String, Vec<&str>> = Default::default();
+        for n in names {
+            by_target.entry(self.target_of(n)).or_default().push(n);
+        }
+        match by_target.iter().find(|(_, v)| v.len() > 1) {
+            Some((t, v)) => Err(self.merge_error(t, v)),
+            None => Ok(()),
+        }
     }
 
     /// Apply the first matching rule (no prefix/suffix, no validation).
@@ -128,6 +188,18 @@ impl IndexRenamer {
                         .unwrap_or_default()
                 )
             })?;
+        }
+        if !self.allow_merge && !self.rules.is_empty() {
+            let mut targets = self.targets.lock().unwrap();
+            match targets.get(&out) {
+                Some(first) if first != name => {
+                    return Err(self.merge_error(&out, &[first, name]));
+                }
+                Some(_) => {}
+                None => {
+                    targets.insert(out.clone(), name.to_string());
+                }
+            }
         }
         if let Some(r) = &rule {
             log::info!("Renaming index '{name}' -> '{out}' ({r})");
@@ -267,6 +339,33 @@ mod tests {
         assert!(IndexRenamer::new(&s(&["nocolon"]), &[], "", "").is_err());
         assert!(IndexRenamer::new(&s(&[":x"]), &[], "", "").is_err());
         assert!(IndexRenamer::new(&[], &s(&["(?=x):y"]), "", "").is_err());
+    }
+
+    #[test]
+    fn many_to_one_renames_are_refused_unless_merging_is_allowed() {
+        let r = IndexRenamer::new(&[], &["^(a|b)-(.*):x-$2".to_string()], "", "").unwrap();
+        let e = r.check_merges(["a-1", "b-1", "c"]).unwrap_err().to_string();
+        assert!(e.contains("'a-1' and 'b-1'") && e.contains("'x-1'"), "{e}");
+        assert!(e.contains("--allowMerge"), "{e}");
+        r.check_merges(["a-1", "b-2", "x-3"]).unwrap();
+        // at write time: the second source mapping to a used target fails
+        assert_eq!(r.index("a-1").unwrap(), "x-1");
+        assert_eq!(r.index("a-1").unwrap(), "x-1");
+        let e = r.index("b-1").unwrap_err().to_string();
+        assert!(e.contains("'a-1' and 'b-1'"), "{e}");
+        // a source keeping its own name that equals another's target also collides
+        let e = r.index("x-1").unwrap_err().to_string();
+        assert!(e.contains("into one index 'x-1'"), "{e}");
+        // --allowMerge
+        let r = IndexRenamer::new(&[], &["^(a|b)-(.*):x-$2".to_string()], "", "")
+            .unwrap()
+            .with_allow_merge(true);
+        r.check_merges(["a-1", "b-1"]).unwrap();
+        assert_eq!(r.index("a-1").unwrap(), "x-1");
+        assert_eq!(r.index("b-1").unwrap(), "x-1");
+        // prefix/suffix only (no rules) never merges
+        let r = IndexRenamer::new(&[], &[], "p-", "").unwrap();
+        r.check_merges(["a", "b"]).unwrap();
     }
 
     #[test]

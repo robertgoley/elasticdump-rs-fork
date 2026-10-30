@@ -408,6 +408,11 @@ pub struct Cli {
     #[arg(long = "maxDocMb", default_value_t = 100)]
     pub max_doc_mb: usize,
 
+    /// Extension: let --renamePrefix/--renameIndex rename several source indices to the same
+    /// target index (merging them; equal _ids overwrite each other). Refused by default
+    #[arg(long = "allowMerge")]
+    pub allow_merge: bool,
+
     // ------------------------------------------------------------ retries
     /// Retries per request (0 = 4 implicit retries unless --noImplicitRetry)
     #[arg(long = "retryAttempts", default_value_t = 0)]

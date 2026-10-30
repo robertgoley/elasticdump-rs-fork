@@ -526,6 +526,12 @@ impl BulkSink {
                 Ok(()) => docs.push((line, at..encoded.len())),
                 Err(e) => {
                     encoded.truncate(at);
+                    if e.downcast_ref::<crate::rename::MergeRefused>().is_some() {
+                        return Err(anyhow!(
+                            "{e:#}. Stopped at document {no} of the input before sending its batch; {} document(s) of earlier batches were already written",
+                            self.report.written
+                        ));
+                    }
                     self.reject_line(line, &format!("{e:#}"), no)?;
                 }
             }

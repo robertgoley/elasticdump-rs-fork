@@ -1175,6 +1175,19 @@ async fn rename_prefix_wildcard_restore_and_copy_across_types() {
         c.delete_index(&rc).await;
     }
 
+    // a rule mapping every day to one index is refused before anything is read (L-452)
+    let o = rs(
+        &c,
+        &c.url_with_auth("logstash-2026*"),
+        &host(&c),
+        "data",
+        &["--renameIndex", "^logstash-.*$:logstash-merged-l452"],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(2), "{}", err(&o));
+    assert!(err(&o).contains("--allowMerge"), "{}", err(&o));
+    assert_eq!(c.call("GET", "logstash-merged-l452", None).await.0, 404);
+
     // templates: index_patterns only with --renamePatterns
     let u = unique("rnt");
     c.ok("PUT", &format!("_index_template/{u}"), Some(json!({"index_patterns": ["logstash-*"], "priority": 911, "template": {"aliases": {"logstash-all": {}}}}))).await;

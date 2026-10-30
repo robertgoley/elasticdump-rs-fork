@@ -2594,3 +2594,117 @@ async fn giant_documents_are_refused_with_a_size_hint() {
     .await;
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
 }
+
+// L-452 (BRK-CLI-003): rename rules that map several source indices to one target
+// are refused (nothing written) unless --allowMerge is given.
+#[tokio::test(flavor = "multi_thread")]
+async fn many_to_one_renames_are_refused_unless_allowed() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let ok2 =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    let dst = || {
+        RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok2)))
+            .fallback(Reply::ok(
+                r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+            ))
+            .start()
+    };
+    let bulks = |m: &RouterMock| {
+        m.requests()
+            .iter()
+            .filter(|r| r.path.ends_with("/_bulk"))
+            .map(|r| r.body_str())
+            .collect::<Vec<_>>()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\"a-1\",\"_id\":\"1\",\"_source\":{\"v\":\"a\"}}\n{\"_index\":\"b-1\",\"_id\":\"1\",\"_source\":{\"v\":\"b\"}}\n",
+    )
+    .unwrap();
+    let rule = "^(a|b)-(.*):x-$2";
+    // file -> cluster: refused before the batch is sent
+    let m = dst().await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            m.url(),
+            "--renameIndex".into(),
+            rule.into(),
+            "--noRefresh".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("'a-1' and 'b-1'") && err.contains("'x-1'"),
+        "{err}"
+    );
+    assert!(err.contains("--allowMerge"), "{err}");
+    assert!(
+        !err.contains("rejected document"),
+        "fatal, not a per-document rejection: {err}"
+    );
+    assert!(bulks(&m).is_empty(), "{err}");
+    // --allowMerge merges on purpose
+    let m = dst().await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            m.url(),
+            "--renameIndex".into(),
+            rule.into(),
+            "--allowMerge".into(),
+            "--noRefresh".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let b = bulks(&m);
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].matches("\"_index\":\"x-1\"").count(), 2, "{}", b[0]);
+    // cluster -> cluster: the source indices are listed and checked before reading
+    let src = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+        .route(Route::exact("GET", "/_all/_alias").reply(Reply::ok(
+            r#"{"a-1":{"aliases":{}},"b-1":{"aliases":{}},"c":{"aliases":{}}}"#,
+        )))
+        .fallback(Reply::json(500, r#"{"error":"unexpected"}"#))
+        .start()
+        .await;
+    let m = dst().await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            src.url(),
+            "--output".into(),
+            m.url(),
+            "--renameIndex".into(),
+            rule.into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(
+        err.contains("'a-1' and 'b-1'") && err.contains("Nothing was written"),
+        "{err}"
+    );
+    assert!(
+        src.requests().iter().all(|r| !r.path.contains("_search")),
+        "nothing read"
+    );
+    assert!(bulks(&m).is_empty());
+}

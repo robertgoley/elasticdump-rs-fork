@@ -466,6 +466,40 @@ async fn es_source_options(
     })
 }
 
+/// Refuse, before anything is written, a cluster copy whose rename rules map
+/// several source indices to one target (TST-BRK-CLI-003). Documents read from
+/// a file are checked as they arrive (`IndexRenamer::index`).
+async fn check_rename_merges(
+    cli: &Cli,
+    src: &http::EsClient,
+    index: Option<&str>,
+    retry: http::RetryPolicy,
+) -> Result<()> {
+    let Some(r) = renamer(cli)? else {
+        return Ok(());
+    };
+    if cli.allow_merge {
+        return Ok(());
+    }
+    let target = index.unwrap_or("_all");
+    match meta::http::get_json(src, retry, &[target, "_alias"], "list the source indices").await {
+        Ok(v) => {
+            let names: Vec<&str> = v
+                .as_object()
+                .map(|o| o.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            r.check_merges(names)
+                .map_err(|e| anyhow::Error::new(UsageError(format!("{e:#}. Nothing was written"))))
+        }
+        Err(e) => {
+            log::warn!(
+                "could not list the source indices to check the rename rules up front ({e:#}); merges are still refused as documents arrive"
+            );
+            Ok(())
+        }
+    }
+}
+
 /// `--renamePrefix`/`--renameIndex` rules (with `--prefix`/`--suffix`), if any.
 fn renamer(cli: &Cli) -> Result<Option<rename::IndexRenamer>> {
     if cli.rename_prefix.is_empty() && cli.rename_index.is_empty() {
@@ -477,7 +511,7 @@ fn renamer(cli: &Cli) -> Result<Option<rename::IndexRenamer>> {
         &cli.prefix,
         &cli.suffix,
     )
-    .map(Some)
+    .map(|r| Some(r.with_allow_merge(cli.allow_merge)))
     .map_err(|e| usage(format!("{e:#}")))
 }
 
@@ -650,6 +684,7 @@ pub async fn run() -> Result<()> {
             match &input {
                 Endpoint::Es(ep) => {
                     let opts = es_source_options(&cli, ep, retry, gate.clone()).await?;
+                    check_rename_merges(&cli, &opts.client, ep.index.as_deref(), retry).await?;
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {
