@@ -31,6 +31,7 @@ async fn async_main() {
         let args: Vec<String> = std::env::args().collect();
         let msg = elasticdump_rs::endpoint::scrub_args(&format!("{error:#}"), &args);
         let msg = elasticdump_rs::secrets::scrub(&msg);
+        let msg = elasticdump_rs::emfile_hint(msg);
         eprintln!("Error: {msg}");
         std::process::exit(elasticdump_rs::exit_code(&error));
     }

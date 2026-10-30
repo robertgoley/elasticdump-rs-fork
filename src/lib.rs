@@ -692,12 +692,46 @@ fn node_alias_url(cli: &Cli, input: &mut Endpoint) {
     ep.doc_type = alias;
 }
 
+/// TST-BRK-RES-004: "Too many open files" gets the limit and the flags that drive it.
+pub fn emfile_hint(msg: String) -> String {
+    if !msg.contains("os error 24") {
+        return msg;
+    }
+    let limit = open_file_limit().map_or_else(|| "?".into(), |n| n.to_string());
+    format!(
+        "{msg} (the open-file limit, ulimit -n = {limit}, is too low for this run: each of --concurrency, --slices and --maxSockets can hold a connection, and split parts and the input hold files; raise it, e.g. ulimit -n 4096, or lower those flags)"
+    )
+}
+
+/// Soft `RLIMIT_NOFILE` from /proc/self/limits.
+fn open_file_limit() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/limits")
+        .ok()
+        .and_then(|l| {
+            l.lines()
+                .find(|x| x.starts_with("Max open files"))
+                .and_then(|x| x.split_whitespace().nth(3)?.parse().ok())
+        })
+}
+
 pub async fn run() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
     let cli = Cli::parse_from(argv);
     init_logging(&cli);
     memplan::set(cli.buffer_size, cli.slices, cli.concurrency, cli.limit);
+    if let Some(limit) = open_file_limit() {
+        // connections (one per concurrent request or slice, input and output side) plus
+        // ~24 for the runtime, logs, input and output files (TST-BRK-RES-004)
+        let need = 2 * (cli.concurrency + cli.slices.max(1)) as u64 + 24;
+        if need > limit {
+            log::warn!(
+                "--concurrency {} and --slices {} may need ~{need} open files but the limit (ulimit -n) is {limit}; expect 'Too many open files' unless it is raised or those flags lowered",
+                cli.concurrency,
+                cli.slices
+            );
+        }
+    }
     signals::install();
     for w in &oos_warnings {
         log::warn!("{w}");

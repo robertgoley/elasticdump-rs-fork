@@ -2841,3 +2841,64 @@ async fn l636_full_or_closed_standard_streams() {
     let o = sh(format!("'{b}' --input '{inp}' --output '$' 1>&-")).await;
     assert!(o.status.success(), "{}", stderr(&o));
 }
+
+// L-637 (TST-BRK-RES-004): a tiny open-file limit (`ulimit -n 32`). --concurrency 4 and a
+// 100+ part split complete (sealed parts hold no handle); --concurrency 64 warns at start that
+// the limit is too low and, when it runs out, the error says "Too many open files" with the
+// limit and the flags to change.
+#[tokio::test]
+async fn l637_fd_limit_is_survived_or_explained() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("d.json");
+    let doc = format!(
+        "{{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{{\"p\":\"{}\"}}}}\n",
+        "y".repeat(50)
+    );
+    std::fs::write(&input, doc.repeat(800)).unwrap();
+    let m = RouterMock::builder()
+        .handler(|req| async move {
+            if req.method == "GET" {
+                return Reply::ok(INFO);
+            }
+            let n = String::from_utf8_lossy(&req.body).lines().count() / 2;
+            let items = vec![r#"{"index":{"status":201}}"#; n].join(",");
+            Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+        })
+        .start()
+        .await;
+    let b = env!("CARGO_BIN_EXE_elasticdump-rs");
+    let inp = input.display().to_string();
+    let url = format!("{}/z", m.url());
+    let sh = |script: String| async move {
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap()
+    };
+    let o = sh(format!(
+        "ulimit -n 32; '{b}' --input '{inp}' --output '{url}' --concurrency 64 --limit 10"
+    ))
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let parts = dir.path().join("parts");
+    std::fs::create_dir(&parts).unwrap();
+    let o = sh(format!(
+        "ulimit -n 32; '{b}' --input '{inp}' --output '{}/o.json' --fileSize 2kb",
+        parts.display()
+    ))
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(std::fs::read_dir(&parts).unwrap().count() >= 30);
+    let o = sh(format!("ulimit -n 12; '{b}' --input '{inp}' --output '{url}' --concurrency 64 --limit 10 --retryAttempts 0 --noImplicitRetry")).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("Too many open files") && err.contains("ulimit -n = 12"),
+        "{err}"
+    );
+}
