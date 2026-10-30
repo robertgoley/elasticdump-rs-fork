@@ -45,6 +45,8 @@ jobs:
       - run: scripts/sup/native-code-check.py
       # L-312 / INF-012: every IT/tool image pinned by digest and recorded in TESTING-MATRIX.md.
       - run: scripts/it/check-pins.sh
+      # L-311 / INF-011: generated TESTING-MATRIX.md blocks (digests, goldens, expectation table) are current.
+      - run: scripts/it/matrix-md.py --check
       # L-203 / SUP-006: unsafe inventory; a rise against the baseline fails.
       - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly (cargo-geiger 0.14 needs >= 1.97)
         with: { toolchain: nightly }

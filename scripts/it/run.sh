@@ -65,7 +65,7 @@ run_profile() {
   heap=$(mb_of "${ES_HEAP:-${OS_HEAP:-512m}}")
   need="${IT_MIN_MB:-$(( heap * 2 + 600 ))}"
   if ! guard_mem "$need" "profile $p" || ! guard_disk "$IT_DIR" "${IT_MIN_DISK_MB:-1500}" "profile $p"; then
-    echo "IT-SUMMARY profile=$p SKIPPED (resource guard)"
+    echo "IT-SUMMARY profile=$p SKIPPED (resource guard)" | tee -a "$IT_DIR/it-summary.log"
     skip_or_fail IT_REQUIRED
     return
   fi
@@ -78,7 +78,8 @@ run_profile() {
     | tee "$IT_DIR/last-it.log" | grep -vE '^\[[0-9TZ:-]+ (DEBUG|INFO|TRACE)' || true
   local skips
   skips=$(grep -cE '^SKIP' "$IT_DIR/last-it.log" || true)
-  echo "IT-SUMMARY profile=$p image=${ES_IMAGE:-}${OS_IMAGE:+ os=$OS_IMAGE} $(grep -E '^test result' "$IT_DIR/last-it.log" | tail -1) skipped-by-reason=${skips}"
+  echo "IT-SUMMARY profile=$p image=${ES_IMAGE:-}${OS_IMAGE:+ os=$OS_IMAGE} $(grep -E '^test result' "$IT_DIR/last-it.log" | tail -1) skipped-by-reason=${skips}" \
+    | tee -a "$IT_DIR/it-summary.log"  # INF-011: scripts/it/matrix-md.py --summary
   grep -E '^SKIP' "$IT_DIR/last-it.log" | sort | uniq -c || true
   grep -qE '^test result: ok' "$IT_DIR/last-it.log"
   if [[ "$p" == *-plain && "${IT_LEGACY:-1}" == 1 ]]; then
