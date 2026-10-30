@@ -23,6 +23,18 @@ fn bin(args: &[String]) -> Output {
         .expect("spawn elasticdump-rs")
 }
 
+/// Without `--quiet`, so server warnings reach stderr (TST-API-041).
+async fn run_loud(args: Vec<String>) -> Output {
+    tokio::task::spawn_blocking(move || {
+        Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"))
+            .args(&args)
+            .output()
+            .expect("spawn elasticdump-rs")
+    })
+    .await
+    .unwrap()
+}
+
 async fn run(args: Vec<String>) -> Output {
     tokio::task::spawn_blocking(move || bin(&args))
         .await
@@ -218,7 +230,7 @@ async fn committed_goldens_replay() {
         let rp = Replay::start(dir).await;
         let t = tmpdir("replay");
         let out = t.path().join("out");
-        let o = run(meta.expand(&rp.url(), &out, dir)).await;
+        let o = run_loud(meta.expand(&rp.url(), &out, dir)).await;
         let mut problems = rp.problems();
         if o.status.code() != Some(meta.exit_code) {
             problems.push(format!(
@@ -227,6 +239,15 @@ async fn committed_goldens_replay() {
                 meta.exit_code,
                 String::from_utf8_lossy(&o.stderr)
             ));
+        }
+        // TST-API-041: recorded deprecation `Warning` headers are tolerated and each distinct
+        // text is logged exactly once (X-Elastic-Product is recorded too and must be ignored).
+        let err = String::from_utf8_lossy(&o.stderr);
+        for w in recorded_warnings(dir) {
+            let n = err.matches(&format!("server warning: {w}")).count();
+            if n != 1 {
+                problems.push(format!("Warning {w:?} logged {n} times, want 1"));
+            }
         }
         if meta.has_output {
             let want = std::fs::read(dir.join("expected.out")).unwrap_or_default();
@@ -357,4 +378,35 @@ fn endpoint_inventory_matches_known_requests() {
     assert!(check_read(&body, "hits.hits[*]._id:string").is_err());
     assert!(check_read(&body, "pit_id?:string").is_ok());
     assert!(check_read(&body, "pit_id:string").is_err());
+}
+
+/// Distinct quoted texts of every `warning` response header recorded for a case.
+fn recorded_warnings(dir: &Path) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.to_string_lossy().ends_with(".resp.json") {
+            continue;
+        }
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap_or_default();
+        let Some(raw) = v.pointer("/headers/warning").and_then(|w| w.as_str()) else {
+            continue;
+        };
+        let Some(start) = raw.find('"') else { continue };
+        let mut text = String::new();
+        let mut chars = raw[start + 1..].chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => text.extend(chars.next()),
+                '"' => break,
+                c => text.push(c),
+            }
+        }
+        out.insert(text);
+    }
+    out
 }

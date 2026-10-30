@@ -1397,3 +1397,50 @@ async fn cluster_info_variants_never_fall_back_silently() {
     );
     assert!(!m.requests().iter().any(|r| r.path.starts_with("/_ilm")));
 }
+
+// L-425 (TST-API-041): `X-Elastic-Product` missing or unexpected is tolerated (the tool does not
+// enforce the official client's product check); a `Warning` on `GET /` is logged once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn x_elastic_product_is_tolerated_on_meta_paths() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    for product in [None, Some("Elasticsearch"), Some("SomethingElse")] {
+        let w = r#"299 Elasticsearch-8.19.23-abc "[ignore_throttled] parameter is deprecated""#;
+        let mut root = Reply::ok(
+            r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+        )
+        .with_header("Warning", w);
+        let mut mapping =
+            Reply::ok(r#"{"idx":{"mappings":{"properties":{"a":{"type":"keyword"}}}}}"#)
+                .with_header("Warning", w);
+        if let Some(p) = product {
+            root = root.with_header("X-Elastic-Product", p);
+            mapping = mapping.with_header("X-Elastic-Product", p);
+        }
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(root))
+            .route(Route::exact("GET", "/idx/_mapping").reply(mapping))
+            .start()
+            .await;
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                "$".into(),
+                "--type".into(),
+                "mapping".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "{product:?}: {err}");
+        assert!(stdout(&o).contains("keyword"), "{}", stdout(&o));
+        assert_eq!(
+            err.matches("server warning: [ignore_throttled] parameter is deprecated")
+                .count(),
+            1,
+            "{err}"
+        );
+    }
+}
