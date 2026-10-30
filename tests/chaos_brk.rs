@@ -2261,3 +2261,61 @@ async fn l627_duplicate_keys_inside_source_are_forwarded_verbatim() {
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(std::fs::read_to_string(&out).unwrap(), format!("{line}\n"));
 }
+
+// L-628 (TST-BRK-IN-010): duplicate `_id`s across lines: last write wins on the engine, and the
+// summary says how many writes replaced an existing document (item status 200 vs 201), both
+// when the response has `errors:false` and when other items failed.
+#[tokio::test]
+async fn l628_overwrites_are_counted_in_the_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("dup.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\"x\",\"_id\":\"a\",\"_source\":{\"v\":1}}\n{\"_index\":\"x\",\"_id\":\"a\",\"_source\":{\"v\":2}}\n{\"_index\":\"x\",\"_id\":\"b\",\"_source\":{}}\n",
+    )
+    .unwrap();
+    for (resp, overwritten, ok) in [
+        (
+            r#"{"errors":false,"items":[{"index":{"status":201,"result":"created"}},{"index":{"status":200,"result":"updated"}},{"index":{"status":201,"result":"created"}}]}"#,
+            1,
+            true,
+        ),
+        (
+            r#"{"errors":true,"items":[{"index":{"status":201}},{"index":{"status":200}},{"index":{"status":400,"error":{"type":"mapper_parsing_exception"}}}]}"#,
+            1,
+            false,
+        ),
+        (
+            r#"{"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#,
+            0,
+            true,
+        ),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(resp)))
+            .fallback(Reply::ok("{}"))
+            .start()
+            .await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/z", m.url()),
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.success(), ok, "{err}");
+        if overwritten > 0 {
+            assert!(
+                err.contains(&format!("Overwritten: {overwritten} (")),
+                "{err}"
+            );
+        } else {
+            assert!(!err.contains("Overwritten"), "{err}");
+        }
+    }
+}

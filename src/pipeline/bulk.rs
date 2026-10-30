@@ -112,10 +112,14 @@ pub struct WriteReport {
     /// JSON object (INJ-F1). Also counted in `failed`; any rejection makes
     /// the run exit non-zero.
     pub rejected: u64,
+    /// Written documents that replaced an existing one with the same `_id` (item status 200
+    /// for `index`; TST-BRK-IN-010). Included in `written`.
+    pub overwritten: u64,
 }
 
 impl WriteReport {
     fn add(&mut self, other: WriteReport) {
+        self.overwritten += other.overwritten;
         self.written += other.written;
         self.failed += other.failed;
         self.rejected += other.rejected;
@@ -952,6 +956,12 @@ impl BulkSink {
         }
         if errors == Some(false) {
             self.report.written += pending.len() as u64;
+            if self.opts.action == BulkAction::Index {
+                self.report.overwritten += items
+                    .iter()
+                    .filter(|i| item_status_any_key(i.as_raw_str().as_bytes()) == Some(200))
+                    .count() as u64;
+            }
             return Ok(vec![]);
         }
         let mut rejected = Vec::new();
@@ -967,6 +977,9 @@ impl BulkSink {
                 .unwrap_or(0);
             if (200..400).contains(&status) {
                 self.report.written += 1;
+                if status == 200 && self.opts.action == BulkAction::Index {
+                    self.report.overwritten += 1;
+                }
             } else if status == 409 && resent && self.opts.action == BulkAction::Create {
                 // the request was sent again after a failure; the first attempt most likely
                 // created the document (TST-BRK-NET-003)

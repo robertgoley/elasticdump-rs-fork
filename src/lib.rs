@@ -761,6 +761,14 @@ pub async fn run() -> Result<()> {
     if !cli.quiet() {
         let mut err = std::io::stderr().lock();
         let _ = writeln!(err, "Total Writes: {}", report.written);
+        if report.overwritten > 0 {
+            // TST-BRK-IN-010: duplicate _ids (in the input, or already in the index)
+            let _ = writeln!(
+                err,
+                "Overwritten: {} (documents that replaced one with the same _id; included in Total Writes)",
+                report.overwritten
+            );
+        }
         if report.failed > 0 {
             let _ = writeln!(err, "Failed Writes: {}", report.failed);
         }
