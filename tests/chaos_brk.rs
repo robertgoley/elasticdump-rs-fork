@@ -2979,3 +2979,63 @@ async fn l638_extreme_numeric_flags_never_panic() {
         }
     }
 }
+
+// L-639 (TST-BRK-RES-006): a tiny split size. `--fileSize 1b` (below the 256b minimum) is a
+// usage error before anything is read; `--maxRows 1` is honoured (one part per document) and
+// warns once the split passes 10,000 parts, since every part stays staged until the end.
+#[tokio::test]
+async fn l639_tiny_split_sizes_are_refused_or_warned() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("d.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n".repeat(10_050),
+    )
+    .unwrap();
+    let parts = dir.path().join("p");
+    std::fs::create_dir(&parts).unwrap();
+    let out = parts.join("o.json");
+    for size in ["1b", "255b"] {
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+                "--fileSize",
+                size,
+            ]),
+            vec![],
+        )
+        .await;
+        assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+        assert!(
+            stderr(&o).contains("below the 256b minimum"),
+            "{}",
+            stderr(&o)
+        );
+        assert_eq!(std::fs::read_dir(&parts).unwrap().count(), 0);
+    }
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--maxRows",
+            "1",
+            "--limit",
+            "1000",
+        ]),
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert_eq!(
+        err.matches("the split has reached 10000 parts").count(),
+        1,
+        "{err}"
+    );
+    assert_eq!(std::fs::read_dir(&parts).unwrap().count(), 10_050);
+}

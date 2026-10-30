@@ -134,6 +134,9 @@ pub fn parse_size(raw: &str) -> Result<u64> {
     Ok(v as u64)
 }
 
+/// Part count that triggers the "many parts" warning (TST-BRK-RES-006).
+const MANY_PARTS: u64 = 10_000;
+
 /// `{dir}/{base}.split-{n}{ext}[.gz|.zst]`, as Node's
 /// `StreamSplitter.generateFilePath` (`.zst` for the zstd extension).
 pub fn part_path(root: &Path, n: u64, codec: Option<Codec>) -> PathBuf {
@@ -326,6 +329,11 @@ impl FileSink {
                 let root = self.opts.path.clone().expect("split output has a path");
                 let path = part_path(&root, self.next_part, self.opts.codec);
                 self.next_part += 1;
+                if self.next_part == MANY_PARTS {
+                    log::warn!(
+                        "the split has reached {MANY_PARTS} parts; every part stays staged until the run ends, so a very small --fileSize/--maxRows costs one file (and inode) per part and a long commit at the end; consider a larger split size"
+                    );
+                }
                 self.current = Some(self.open(Some(path)).await?);
             }
             let part = self.current.as_mut().unwrap();

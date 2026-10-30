@@ -255,9 +255,16 @@ fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::Fil
         log::info!("compression does not apply to stdout output (elasticdump behaviour)");
     }
     let split = match (&cli.file_size, cli.max_rows) {
-        (Some(s), _) if s.trim() != "-1" => Some(SplitBy::Bytes(
-            parse_size(s).map_err(|e| usage(format!("--fileSize: {e:#}")))?,
-        )),
+        (Some(s), _) if s.trim() != "-1" => {
+            let bytes = parse_size(s).map_err(|e| usage(format!("--fileSize: {e:#}")))?;
+            // TST-BRK-RES-006: below this every document becomes its own file
+            if bytes < MIN_FILE_SIZE {
+                return Err(usage(format!(
+                    "--fileSize {s} is below the 256b minimum: nearly every document would become its own file (use --maxRows 1 if that is really wanted)"
+                )));
+            }
+            Some(SplitBy::Bytes(bytes))
+        }
         (_, Some(n)) if n > 0 => Some(SplitBy::Rows(n)),
         _ => None,
     };
@@ -717,6 +724,9 @@ fn open_file_limit() -> Option<u64> {
             })
     })
 }
+
+/// Smallest accepted `--fileSize` (TST-BRK-RES-006).
+const MIN_FILE_SIZE: u64 = 256;
 
 pub async fn run() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
