@@ -7,6 +7,8 @@ mod support;
 
 mod golden;
 
+mod api;
+
 mod concurrency;
 mod cross;
 mod data;

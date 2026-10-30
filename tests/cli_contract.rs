@@ -926,3 +926,46 @@ async fn rename_rules_apply_to_data_and_conflict_with_an_output_index() {
     );
     assert!(bulk.contains(r#""_index":"other_r""#), "{bulk}");
 }
+
+// L-405 (TST-API-010): the scroll id is rotated from every page, and a clear that returns
+// 404 (contexts already expired) is not an error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scroll_id_rotates_and_clear_404_after_expiry_is_ok() {
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(page("s1", &[hit("1", "{\"a\":1}")], 2)),
+        CannedResponse::ok(page("s2", &[hit("2", "{\"a\":2}")], 2)),
+        CannedResponse::ok(page("s3", &[], 2)),
+        CannedResponse::new(404, r#"{"succeeded":true,"num_freed":0}"#),
+    ])
+    .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+            "--quiet".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(stdout(&o).lines().count(), 2, "{}", stdout(&o));
+    let reqs = mock.requests();
+    assert_eq!(reqs.len(), 4, "{reqs:#?}");
+    assert!(
+        reqs[1].contains("\"s1\""),
+        "continuation 1 uses s1: {}",
+        reqs[1]
+    );
+    assert!(
+        reqs[2].contains("\"s2\""),
+        "continuation 2 uses the rotated s2: {}",
+        reqs[2]
+    );
+    assert!(
+        reqs[3].starts_with("DELETE") && reqs[3].contains("s3"),
+        "clear the latest id: {}",
+        reqs[3]
+    );
+}

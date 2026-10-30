@@ -264,6 +264,16 @@ impl Cluster {
         loop {
             let hits = v["hits"]["hits"].as_array().cloned().unwrap_or_default();
             if hits.is_empty() {
+                // release the context so open-context assertions (API-010/011) see only the tool's
+                if let Some(sid) = v["_scroll_id"].as_str() {
+                    let _ = self
+                        .call(
+                            "DELETE",
+                            "_search/scroll",
+                            Some(json!({"scroll_id": [sid]})),
+                        )
+                        .await;
+                }
                 break;
             }
             for h in hits {
