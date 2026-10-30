@@ -413,10 +413,78 @@ async fn read_capped(
     Ok(buf.freeze())
 }
 
+/// Hosts that answered at least once in this run (any HTTP status): their names resolved.
+static ANSWERED_HOSTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn note_host_answered(url: &url::Url) {
+    if let Some(h) = url.host_str() {
+        let mut g = ANSWERED_HOSTS.lock().unwrap_or_else(|p| p.into_inner());
+        if !g.iter().any(|x| x == h) {
+            g.push(h.to_string());
+        }
+    }
+}
+
+/// A failed DNS lookup (TST-BRK-NET-008): `Some((permanent, message))`. "No such host" for a
+/// host that never answered in this run is permanent (a typo or a wrong URL: fail fast, no
+/// retries); a temporary resolver failure, or any lookup failure for a host that answered
+/// before (DNS failing mid-run), is retried. The message names the host, never credentials.
+fn dns_failure(error: &reqwest::Error, chain: &str) -> Option<(bool, String)> {
+    if !chain.contains("dns error") {
+        return None;
+    }
+    let host = error
+        .url()
+        .and_then(|u| u.host_str())
+        .unwrap_or("?")
+        .to_string();
+    let answered = ANSWERED_HOSTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|h| *h == host);
+    let no_such_host = [
+        "Name or service not known",
+        "No address associated",
+        "nodename nor servname",
+        "No such host",
+        "not known",
+    ]
+    .iter()
+    .any(|n| chain.contains(n));
+    let cause = chain.rsplit("dns error: ").next().unwrap_or(chain);
+    Some(if no_such_host && !answered {
+        (
+            true,
+            format!(
+                "cannot resolve host '{host}' ({cause}); check the host name in the URL (not retried)"
+            ),
+        )
+    } else if answered {
+        (
+            false,
+            format!(
+                "DNS lookup of '{host}' failed ({cause}); the host resolved earlier in this run, so this is retried"
+            ),
+        )
+    } else {
+        (
+            false,
+            format!(
+                "DNS lookup of '{host}' failed ({cause}); retried as a temporary resolver failure"
+            ),
+        )
+    })
+}
+
 /// Which limit a timeout hit (TST-BRK-NET-004).
 fn timeout_hint(error: &reqwest::Error) -> &'static str {
     if error.is_timeout() {
-        " (timed out: no data from the server within --timeout ms / --idleTimeout seconds, default 300, or the whole request exceeded --requestTimeout)"
+        if error.is_connect() {
+            " (timed out while connecting: the DNS lookup or TCP connect took longer than --timeout ms / --idleTimeout seconds, default 300)"
+        } else {
+            " (timed out: no data from the server within --timeout ms / --idleTimeout seconds, default 300, or the whole request exceeded --requestTimeout)"
+        }
     } else {
         ""
     }
@@ -518,6 +586,7 @@ where
         let mut retry_after: Option<Duration> = None;
         let (outcome, error) = match build_and_send().await {
             Ok(response) => {
+                note_host_answered(response.url());
                 let status = response.status();
                 let endpoint = public_endpoint(response.url());
                 if matches!(status.as_u16(), 429 | 503) {
@@ -558,20 +627,28 @@ where
             }
             Err(SendError::Http(e)) => {
                 let chain = error_chain(&e);
-                let http = e.url().is_some_and(|u| u.scheme() == "http");
-                let hint = tls_hint(&chain, http);
-                let outcome = if hint.is_some_and(|(permanent, _)| permanent) {
-                    RetryOutcome::Tls
+                if let Some((permanent, msg)) = dns_failure(&e, &chain) {
+                    let error = anyhow!("{prefix}Elasticsearch {operation} request failed: {msg}");
+                    if permanent {
+                        return Err(error);
+                    }
+                    (RetryOutcome::ConnectError, error)
                 } else {
-                    classify(&e)
-                };
-                let hint = hint
-                    .map(|(_, h)| format!(" ({h})"))
-                    .unwrap_or_else(|| timeout_hint(&e).to_string());
-                (
-                    outcome,
-                    anyhow!("{prefix}Elasticsearch {operation} request failed: {chain}{hint}"),
-                )
+                    let http = e.url().is_some_and(|u| u.scheme() == "http");
+                    let hint = tls_hint(&chain, http);
+                    let outcome = if hint.is_some_and(|(permanent, _)| permanent) {
+                        RetryOutcome::Tls
+                    } else {
+                        classify(&e)
+                    };
+                    let hint = hint
+                        .map(|(_, h)| format!(" ({h})"))
+                        .unwrap_or_else(|| timeout_hint(&e).to_string());
+                    (
+                        outcome,
+                        anyhow!("{prefix}Elasticsearch {operation} request failed: {chain}{hint}"),
+                    )
+                }
             }
         };
 

@@ -577,3 +577,186 @@ async fn l604_half_closed_sockets_are_retried_or_fail_clearly() {
         }
     }
 }
+
+/// Run the binary in an unprivileged user+mount namespace with `/etc/hosts`,
+/// `/etc/nsswitch.conf` and `/etc/resolv.conf` replaced by the given files (L-605). `None` when
+/// unprivileged namespaces are not available on this machine.
+fn in_dns_sandbox(
+    hosts: &std::path::Path,
+    nsswitch: &std::path::Path,
+    resolv: &std::path::Path,
+) -> Option<Command> {
+    let ok = Command::new("unshare")
+        .args(["-rm", "true"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        return None;
+    }
+    let mut c = Command::new("unshare");
+    c.args(["-rm", "sh", "-c"]).arg(format!(
+        "mount --bind '{}' /etc/hosts && mount --bind '{}' /etc/nsswitch.conf && mount --bind '{}' /etc/resolv.conf && exec \"$@\"",
+        hosts.display(),
+        nsswitch.display(),
+        resolv.display()
+    ));
+    c.arg("sh").arg(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    for v in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "RUST_LOG",
+    ] {
+        c.env_remove(v);
+    }
+    Some(c)
+}
+
+// L-605 (TST-BRK-NET-008): DNS failures, offline, in a private mount namespace.
+// NXDOMAIN at start (`hosts: files` with no entry): fails fast, not retried, names the host and
+// never the password. A black-holed resolver (TEST-NET nameserver, 30 s resolver timeout): bounded
+// by --timeout per attempt. DNS failing mid-run (the hosts entry disappears for ~0.6 s while every
+// request opens a new connection): retried, the dump completes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l605_dns_failures_fail_fast_are_bounded_or_retried() {
+    use std::time::{Duration, Instant};
+    let d = tempfile::tempdir().unwrap();
+    let hosts = d.path().join("hosts");
+    let nss = d.path().join("nsswitch.conf");
+    let resolv = d.path().join("resolv.conf");
+    std::fs::write(&hosts, "127.0.0.1 localhost\n").unwrap();
+    std::fs::write(&nss, "hosts: files\n").unwrap();
+    std::fs::write(&resolv, "nameserver 127.0.0.1\n").unwrap();
+    let Some(_) = in_dns_sandbox(&hosts, &nss, &resolv) else {
+        eprintln!("SKIP: unprivileged user namespaces are not available");
+        return;
+    };
+    let out = d.path().join("d.json");
+
+    // NXDOMAIN at start
+    let t = Instant::now();
+    let o = in_dns_sandbox(&hosts, &nss, &resolv)
+        .unwrap()
+        .args(s(&[
+            "--input",
+            "http://admin:Sup3rSecret@edrs-nx.invalid:9200/idx",
+            "--output",
+            out.to_str().unwrap(),
+        ]))
+        .output()
+        .unwrap();
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "fails fast: {:?}",
+        t.elapsed()
+    );
+    assert!(
+        err.contains("cannot resolve host 'edrs-nx.invalid'") && err.contains("not retried"),
+        "{err}"
+    );
+    assert!(!err.contains("retrying"), "{err}");
+    assert!(!err.contains("Sup3rSecret"), "{err}");
+
+    // black-holed resolver: DNS through a TEST-NET address nobody answers
+    std::fs::write(&nss, "hosts: files dns\n").unwrap();
+    std::fs::write(
+        &resolv,
+        "nameserver 192.0.2.1\noptions timeout:30 attempts:1\n",
+    )
+    .unwrap();
+    let t = Instant::now();
+    let o = in_dns_sandbox(&hosts, &nss, &resolv)
+        .unwrap()
+        .args(s(&[
+            "--input",
+            "http://admin:Sup3rSecret@edrs-blackhole.example:9200/idx",
+            "--output",
+            out.to_str().unwrap(),
+            "--timeout",
+            "1500",
+            "--retryAttempts",
+            "1",
+            "--retryDelay",
+            "1",
+        ]))
+        .output()
+        .unwrap();
+    let err = stderr(&o);
+    let took = t.elapsed();
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        took < Duration::from_secs(8),
+        "bounded by 2 x --timeout: {took:?}"
+    );
+    assert!(
+        err.contains("edrs-blackhole.example") && err.contains("timed out"),
+        "{err}"
+    );
+    assert!(!err.contains("Sup3rSecret"), "{err}");
+
+    // mid-run: the name stops resolving for a moment
+    std::fs::write(&nss, "hosts: files\n").unwrap();
+    std::fs::write(&hosts, "127.0.0.1 localhost\n127.0.0.1 edrs-dns-test\n").unwrap();
+    const N: usize = 6;
+    let m = RouterMock::builder()
+        .close_always()
+        .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+        .route(
+            Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
+                "s1",
+                &[hit("1", "{}")],
+                N,
+            ))),
+        )
+        .route(
+            Route::exact("POST", "/_search/scroll").replies(
+                (2..=N)
+                    .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), "{}")], N)))
+                    .chain([Reply::ok(page("s1", &[], N))]),
+            ),
+        )
+        .fallback(Reply::ok(CLEARED))
+        .start()
+        .await;
+    let port = m.addr().rsplit(':').next().unwrap().to_string();
+    let mut cmd = in_dns_sandbox(&hosts, &nss, &resolv).unwrap();
+    cmd.args(s(&[
+        "--input",
+        &format!("http://edrs-dns-test:{port}/idx"),
+        "--output",
+        out.to_str().unwrap(),
+        "--limit",
+        "1",
+        "--throttleInterval",
+        "200",
+        "--bufferSize",
+        "1",
+        "--retryAttempts",
+        "8",
+        "--retryDelay",
+        "200",
+    ]));
+    let child = tokio::task::spawn_blocking(move || cmd.output().unwrap());
+    // wait for the first continuation, then take the name away for ~600 ms
+    let t = Instant::now();
+    while count(&m.requests(), "POST", "/_search/scroll") < 1 {
+        assert!(t.elapsed() < Duration::from_secs(10), "no continuation");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    std::fs::write(&hosts, "127.0.0.1 localhost\n").unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    std::fs::write(&hosts, "127.0.0.1 localhost\n127.0.0.1 edrs-dns-test\n").unwrap();
+    let o = child.await.unwrap();
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        err.contains("DNS lookup of 'edrs-dns-test' failed") && err.contains("retried"),
+        "the outage was seen and retried: {err}"
+    );
+    assert_eq!(std::fs::read_to_string(&out).unwrap().lines().count(), N);
+}
