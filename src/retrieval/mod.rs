@@ -65,6 +65,9 @@ pub struct EsSourceOptions {
     pub retry: RetryPolicy,
     /// `--scrollId`
     pub resume_scroll_id: Option<String>,
+    /// Compare the documents retrieved with the server's exact `hits.total` at the end
+    /// (false with `--size`/`--offset` or `--scrollId`, where fewer documents are expected).
+    pub reconcile_total: bool,
 }
 
 /// Aborts the wrapped task when dropped, so the Ctrl+C listener dies with
@@ -472,6 +475,13 @@ pub async fn dump_data(
         }
     }
 
+    if retrieval_error.is_none() && opts.reconcile_total && total_hits_are_exact {
+        let retrieved = retrieved_count.load(Ordering::Relaxed);
+        if let Some(e) = reconcile_total(&opts.search_type, retrieved, estimated_total_hits) {
+            retrieval_error = Some(e);
+        }
+    }
+
     // Final update of progress bar total
     if let Some(ib) = &input_bar {
         debug!(
@@ -645,8 +655,41 @@ pub async fn dump_data(
     Ok(report)
 }
 
+/// BRK-SRV-009 / TST-API-012: the documents retrieved against the server's exact total.
+/// `search_after` without a PIT is not a snapshot, so only a shortfall is an error there (the
+/// usual cause is a sort without a unique tiebreaker: documents tied on the sort values at a
+/// page boundary are skipped); more documents than the total is a concurrent-write warning.
+fn reconcile_total(search_type: &SearchType, retrieved: u64, total: u64) -> Option<anyhow::Error> {
+    match search_type {
+        SearchType::SearchAfter if retrieved < total => Some(anyhow::anyhow!(
+            "--searchAfter retrieved {retrieved} of {total} documents: the sort in --searchBody is \
+             probably not unique (documents with equal sort values at a page boundary are skipped); \
+             end the sort with a unique field, or use --searchType pit"
+        )),
+        SearchType::SearchAfter => {
+            if retrieved > total {
+                log::warn!(
+                    "--searchAfter retrieved {retrieved} documents but the index reported {total} \
+                     (documents were written during the dump)"
+                );
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn search_after_shortfall_is_an_error_and_surplus_only_a_warning() {
+        let sa = crate::cli::SearchType::SearchAfter;
+        let e = super::reconcile_total(&sa, 100, 1000).expect("shortfall is an error");
+        assert!(format!("{e}").contains("retrieved 100 of 1000"), "{e}");
+        assert!(super::reconcile_total(&sa, 1000, 1000).is_none());
+        assert!(super::reconcile_total(&sa, 1001, 1000).is_none());
+    }
+
     use super::{create_output_target_and_shared_pit, select_root_cause};
     use anyhow::anyhow;
     use std::sync::{

@@ -149,3 +149,80 @@ async fn pit_unsliced_and_sliced_digest_and_no_open_pits() {
     }
     c.delete_index(&src).await;
 }
+
+// L-407 (TST-API-012): `--searchAfter` without a PIT needs a sort (usage error, exit 2); with a
+// non-unique sort (1,000 docs sharing one timestamp) the tool used to stop after the first page
+// and exit 0 with 100 of 1,000 documents. It now fails (exit 1, nothing written) naming the
+// cause; with a unique tiebreaker it returns every document.
+#[tokio::test]
+async fn search_after_needs_sort_and_refuses_silent_loss_on_ties() {
+    let c = Cluster::from_env();
+    let src = unique("api_sa_ties");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &src,
+        Some(serde_json::json!({
+            "settings": {"number_of_shards": 2, "number_of_replicas": 0},
+            "mappings": {"properties": {"d": {"type": "date"}, "k": {"type": "keyword"}}}
+        })),
+    )
+    .await;
+    let mut nd = String::new();
+    for i in 0..1000 {
+        nd.push_str(&format!(
+            "{{\"index\":{{\"_index\":\"{src}\",\"_id\":\"{i}\"}}}}\n"
+        ));
+        nd.push_str(&format!(
+            "{{\"d\":\"2026-01-01T00:00:00Z\",\"k\":\"k{i:04}\"}}\n"
+        ));
+    }
+    c.bulk_raw(nd).await;
+    let want = c.docs(&src).await;
+
+    let (f, o) = dump(&c, &src, &["--searchAfter"]).await;
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(!f.exists());
+
+    let (f, o) = dump(
+        &c,
+        &src,
+        &[
+            "--searchAfter",
+            "--limit",
+            "100",
+            "--searchBody",
+            r#"{"sort":[{"d":"asc"}]}"#,
+        ],
+    )
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("retrieved 100 of 1000") && err.contains("not unique"),
+        "{err}"
+    );
+    assert!(!f.exists(), "nothing committed on a shortfall");
+
+    let (f, o) = dump(
+        &c,
+        &src,
+        &[
+            "--searchAfter",
+            "--limit",
+            "100",
+            "--searchBody",
+            r#"{"sort":[{"d":"asc"},{"k":"asc"}]}"#,
+        ],
+    )
+    .await;
+    assert_success(&o);
+    assert_eq!(file_docs(&f), want);
+    let _ = std::fs::remove_file(f);
+    c.delete_index(&src).await;
+}

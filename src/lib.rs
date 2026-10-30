@@ -442,6 +442,7 @@ async fn es_source_options(
         quiet: cli.quiet(),
         retry,
         resume_scroll_id: cli.scroll_id.clone(),
+        reconcile_total: cli.size < 0 && cli.offset == 0 && cli.scroll_id.is_none(),
     })
 }
 
