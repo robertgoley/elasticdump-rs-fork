@@ -193,6 +193,8 @@ mod tests {
             br#"{"_index":"golden_dst","_id":"r4","_source":{"k":"d","n":4}}"#,
             // a trailing fragment after the object: rejected before encoding
             br#"{"_index":"golden_src","_type":"_scoreGdoc 9"}}"#,
+            // an invalid \u escape inside a string value: rejected before encoding
+            br#"{"_index":"golden_dst","_source":{"k":"a","n":"%%_i\u%%%%"}}"#,
         ];
         for s in samples {
             super::json_split(s);

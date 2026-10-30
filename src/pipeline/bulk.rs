@@ -202,8 +202,38 @@ pub(crate) fn check_doc_line(line: &[u8]) -> std::result::Result<(), String> {
         return Err("contains a line break".to_string());
     }
     sonic_rs::from_slice::<serde::de::IgnoredAny>(line)
-        .map(|_| ())
-        .map_err(|e| format!("not exactly one JSON object: {e}"))
+        .map_err(|e| format!("not exactly one JSON object: {e}"))?;
+    check_escapes(line)
+}
+
+/// sonic-rs skips string *values* without decoding them, so an invalid
+/// escape such as `"\u%%%%"` passed the check above and then failed the
+/// whole bulk request on the cluster (L-505 fuzz finding). Backslashes only
+/// occur inside strings in a line that parsed, so a linear scan is exact.
+fn check_escapes(line: &[u8]) -> std::result::Result<(), String> {
+    let mut i = 0;
+    while let Some(off) = memchr::memchr(b'\\', &line[i..]) {
+        let at = i + off;
+        let ok = match line.get(at + 1) {
+            Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => {
+                i = at + 2;
+                true
+            }
+            Some(b'u') => {
+                i = at + 6;
+                line.get(at + 2..at + 6)
+                    .is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit))
+            }
+            _ => false,
+        };
+        if !ok {
+            return Err(format!(
+                "not exactly one JSON object: invalid escape at byte {}",
+                at + 1
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `_id`, `routing` and `parent` must be JSON strings; numbers are converted
@@ -1106,6 +1136,30 @@ mod inj_f1_tests {
         assert!(check_doc_line(b"{\"a\":\"x\x01y\"}").is_err());
         assert!(check_doc_line(b"{\"a\":\"x\x00y\"}").is_err());
         assert!(check_doc_line(b"{\"a\":\"x\\u0001y\"}").is_ok());
+        // L-505 fuzz finding: invalid escapes inside string values
+        for bad in [
+            &br#"{"a":"\u%%%%"}"#[..],
+            br#"{"a":"\u12"}"#,
+            br#"{"a":["x\q"]}"#,
+            br#"{"a":{"b":"\u00zz"}}"#,
+        ] {
+            assert!(
+                check_doc_line(bad).is_err(),
+                "{}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+        for good in [
+            &br#"{"a":"\\u%%"}"#[..],
+            br#"{"a":"\u00e9\n\t\"\/\\"}"#,
+            br#"{"a\u0062":"\uD83D\uDE00"}"#,
+        ] {
+            assert!(
+                check_doc_line(good).is_ok(),
+                "{}",
+                String::from_utf8_lossy(good)
+            );
+        }
     }
 
     /// TST-INJ-008: duplicate top-level keys are found.

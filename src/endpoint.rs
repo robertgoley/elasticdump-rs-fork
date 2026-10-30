@@ -211,6 +211,10 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
     if url.host_str().is_none_or(str::is_empty) {
         bail!("--{flag} URL has no host");
     }
+    // `@` without a recognised password: possibly a password with `/`, `?`
+    // or `#` that spilled into the path or query (`http://u:/pw?x@h`), so no
+    // message may quote path or query text (L-505, url_props finding).
+    let quiet = url.password().is_none() && raw.contains('@');
 
     let segments: Vec<&str> = url
         .path_segments()
@@ -222,10 +226,13 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
     };
 
     let (mut index, base_segments) = match segments.split_last() {
-        Some((last, rest)) => (Some(decode_component(last, "index name", false)?), rest),
+        Some((last, rest)) => (Some(decode_component(last, "index name", quiet)?), rest),
         None => (None, segments),
     };
     if let Some(i) = &index {
+        if i.starts_with('_') && quiet {
+            bail!("--{flag} URL must point to an index (or the cluster root), not an API endpoint");
+        }
         if i.starts_with('_') {
             bail!(
                 "--{flag} URL must point to an index (or the cluster root), not an API endpoint ('{i}')"
@@ -248,7 +255,9 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         None => None,
     };
 
-    if let Some(query) = url.query() {
+    if quiet && url.query().is_some() {
+        log::warn!("Ignoring the query string in --{flag} URL; use --{flag}-params");
+    } else if let Some(query) = url.query() {
         let names = query
             .split('&')
             .map(|p| p.split('=').next().unwrap_or(p))
@@ -461,6 +470,18 @@ mod redaction_tests {
     use super::*;
 
     /// F-06: unparseable or scheme-less endpoints are still masked.
+    #[test]
+    fn errors_never_quote_a_password_that_spilled_into_the_path() {
+        // L-505: url_props minimal failing input
+        let raw = "http://a:/Qz%E5?\\\u{e9}K#@ziclmqln/us";
+        for dir in [Direction::Input, Direction::Output] {
+            let e = parse(raw, dir, None).unwrap_err();
+            assert!(!format!("{e:#}").contains("Qz"), "{e:#}");
+        }
+        let e = parse("http://a:/_Qz?x@h/i", Direction::Input, None).unwrap_err();
+        assert!(!format!("{e:#}").contains("Qz"), "{e:#}");
+    }
+
     #[test]
     fn redacted_endpoint_masks_userinfo_without_a_valid_url() {
         assert_eq!(
