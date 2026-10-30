@@ -188,6 +188,8 @@ mod tests {
             b"^(a|b)-(.*):x-$2\na-1\nb-1",
             b"user=u\npassword=p\n",
             b"\xff\xfe",
+            // L-507 regression: lenient conversion of a policy without phases panicked
+            br#"{"phases":{}}"#,
             // L-505 regression: ASan heap-buffer-overflow in sonic-rs string serialisation
             // (fixed by its `sanitize` feature; only visible in an ASan release build).
             br#"{"_index":"golden_dst","_id":"r4","_source":{"k":"d","n":4}}"#,

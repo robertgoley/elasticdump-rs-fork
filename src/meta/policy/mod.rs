@@ -212,7 +212,10 @@ pub async fn write(
             let mut converted = Vec::new();
             let mut failed = 0u64;
             for (name, p) in list {
-                match ilm_to_ism::convert(&name, &p, opts.lenient_policy_conversion) {
+                let caps = ilm_to_ism::IsmCaps {
+                    shrink: info.has_ism_shrink(),
+                };
+                match ilm_to_ism::convert_for(&name, &p, opts.lenient_policy_conversion, caps) {
                     Ok(c) => {
                         for n in &c.notes {
                             log::warn!("ILM → ISM '{name}': {n}");

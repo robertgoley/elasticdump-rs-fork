@@ -61,8 +61,22 @@ pub struct Converted {
     pub notes: Vec<String>,
 }
 
+/// What the target ISM supports, where it differs between OpenSearch versions.
+#[derive(Debug, Clone, Copy)]
+pub struct IsmCaps {
+    /// `shrink` (OpenSearch >= 2.0).
+    pub shrink: bool,
+}
+
+impl Default for IsmCaps {
+    fn default() -> Self {
+        Self { shrink: true }
+    }
+}
+
 struct Ctx {
     lenient: bool,
+    caps: IsmCaps,
     notes: Vec<String>,
     refused: Vec<String>,
 }
@@ -87,8 +101,14 @@ fn is_zero_age(age: &str) -> bool {
 
 /// Translate the ILM policy object (`{"phases":{..},"_meta":{..}}`).
 pub fn convert(name: &str, ilm: &Value, lenient: bool) -> Result<Converted> {
+    convert_for(name, ilm, lenient, IsmCaps::default())
+}
+
+/// [`convert`] for a target with the given ISM capabilities.
+pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Result<Converted> {
     let mut cx = Ctx {
         lenient,
+        caps,
         notes: Vec::new(),
         refused: Vec::new(),
     };
@@ -178,7 +198,16 @@ pub fn convert(name: &str, ilm: &Value, lenient: bool) -> Result<Converted> {
         states.push(state);
     }
     if states.is_empty() {
-        cx.problem("the policy has no convertible phases".into());
+        // Not droppable: an ISM policy needs at least one state (L-507: lenient
+        // mode used to panic here on `{"phases":{}}` or a frozen-only policy).
+        cx.refused
+            .push("the policy has no convertible phases".into());
+        if cx.lenient {
+            bail!(
+                "ILM policy '{name}' cannot be converted to ISM: {}",
+                cx.refused.join("; ")
+            );
+        }
     }
 
     let mut description =
@@ -306,6 +335,12 @@ fn convert_action(
                     "allow_write_after_shrink",
                 ],
             );
+            if !cx.caps.shrink {
+                cx.problem(format!(
+                    "phase '{phase}' action 'shrink': the target OpenSearch has no ISM shrink action (added in 2.0)"
+                ));
+                return;
+            }
             if c.get("allow_write_after_shrink").and_then(Value::as_bool) == Some(true) {
                 cx.problem(format!(
                     "phase '{phase}' action 'shrink' allow_write_after_shrink: no ISM equivalent"
@@ -341,6 +376,34 @@ fn convert_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shrink_is_refused_for_targets_without_ism_shrink() {
+        let ilm = json!({"phases": {"hot": {"actions": {"shrink": {"number_of_shards": 1}, "readonly": {}}}}});
+        let old = IsmCaps { shrink: false };
+        let e = convert_for("p", &ilm, false, old).unwrap_err().to_string();
+        assert!(
+            e.contains("phase 'hot' action 'shrink'") && e.contains("2.0"),
+            "{e}"
+        );
+        let c = convert_for("p", &ilm, true, old).unwrap();
+        assert_eq!(c.policy["states"][0]["actions"], json!([{"read_only": {}}]));
+        assert!(convert("p", &ilm, false).is_ok());
+    }
+
+    #[test]
+    fn policies_without_a_convertible_phase_are_refused_in_both_modes() {
+        for ilm in [
+            json!({"phases": {}}),
+            json!({"phases": {"frozen": {"actions": {"searchable_snapshot": {"snapshot_repository": "r"}}}}}),
+            json!({"phases": {"bogus": {"actions": {}}}}),
+        ] {
+            for lenient in [false, true] {
+                let e = convert("p", &ilm, lenient).unwrap_err();
+                assert!(format!("{e:#}").contains("no convertible phases"), "{e:#}");
+            }
+        }
+    }
 
     #[test]
     fn hot_warm_delete_with_rollover() {

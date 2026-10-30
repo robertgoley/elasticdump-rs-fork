@@ -209,7 +209,7 @@ dropped or approximated feature is logged as a warning. Unsafe features fail the
 | `rollover` `max_age`/`max_docs`/`max_size`/`max_primary_shard_size` | `min_index_age`/`min_doc_count`/`min_size`/`min_primary_shard_size` | ISM needs `plugins.index_state_management.rollover_alias` on the index (warned) |
 | `allocate` | `replica_count` + `allocation` (`require`/`include`/`exclude`, `wait_for: false`) | |
 | `forcemerge` | `force_merge` | |
-| `shrink` | `shrink` (`num_new_shards` / `max_shard_size`) | |
+| `shrink` | `shrink` (`num_new_shards` / `max_shard_size`) | OpenSearch 1.x has no ISM `shrink`: refused there unless `--lenientPolicyConversion` |
 | `readonly` | `read_only` | |
 | `delete` | `delete` | `delete_searchable_snapshot` dropped (warned) |
 | `migrate`, implicit tier migration | — | dropped with a warning (OpenSearch has no data tiers) |
@@ -218,7 +218,9 @@ dropped or approximated feature is logged as a warning. Unsafe features fail the
 
 Converted policies are not attached to indices (ILM attaches through `index.lifecycle.name`, ISM through
 `ism_template` or `POST _plugins/_ism/add/<index>`); the tool says so after converting. Tested on OpenSearch 1.3,
-2.x and 3.x, from ES 7.17, 8.6, 8.19 and 9.1 exports and cluster to cluster.
+2.x and 3.x, from ES 7.17, 8.6, 8.19 and 9.1 exports and cluster to cluster. A policy with no convertible phase
+(empty `phases`, `frozen` only) is refused even with `--lenientPolicyConversion`. Property oracle (L-507): 150 random
+ILM policies × strict/lenient on OpenSearch 1.3.20, 2.19.7 and 3.9.0; every converted policy was accepted.
 
 ## Renaming indices
 

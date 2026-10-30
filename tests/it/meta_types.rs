@@ -1435,3 +1435,186 @@ async fn xv_index_name_validation_agrees_with_the_cluster() {
         disagreements.join("\n")
     );
 }
+
+/// L-507 (TST-API-086): ILM -> ISM property oracle. Seeded random ILM policies (phases x actions x
+/// options x `min_age` units, valid and invalid parts mixed) go through `convert` in strict and
+/// lenient mode. A refusal must name the phase (and action); every converted policy must be
+/// accepted by the live OpenSearch ISM API. IT_ILM_ORACLE_N policies (default 150; more nightly).
+#[tokio::test]
+async fn xv_ilm_to_ism_oracle_converted_policies_are_accepted() {
+    let c = Cluster::from_env();
+    if c.engine != Engine::OpenSearch {
+        eprintln!("SKIP: ISM is OpenSearch only");
+        return;
+    }
+    use elasticdump_rs::meta::policy::ilm_to_ism::{IsmCaps, convert_for};
+    let caps = IsmCaps {
+        shrink: !c.version().await.starts_with("1."),
+    };
+    let n: usize = std::env::var("IT_ILM_ORACLE_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(150);
+    let mut seed: u64 = 0x5eed_1507;
+    let mut next = |m: usize| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as usize) % m
+    };
+    let ages = [
+        "0ms",
+        "0",
+        "0d",
+        "30s",
+        "5m",
+        "12h",
+        "1d",
+        "7d",
+        "1000d",
+        "250ms",
+        "500micros",
+        "100nanos",
+    ];
+    let actions: &[(&str, &[Value])] = &[
+        (
+            "rollover",
+            &[
+                json!({"max_age": "1d"}),
+                json!({"max_docs": 1000}),
+                json!({"max_size": "50gb", "max_primary_shard_size": "10gb"}),
+                json!({"max_age": "30d", "max_docs": 5}),
+                json!({"min_docs": 1}),
+                json!({"max_primary_shard_docs": 10}),
+                json!({}),
+            ],
+        ),
+        (
+            "set_priority",
+            &[
+                json!({"priority": 100}),
+                json!({"priority": 0}),
+                json!({"priority": null}),
+            ],
+        ),
+        (
+            "allocate",
+            &[
+                json!({"number_of_replicas": 0}),
+                json!({"number_of_replicas": 2, "include": {"box_type": "warm"}}),
+                json!({"require": {"zone": "a"}, "exclude": {"rack": "r1,r2"}}),
+                json!({"include": {}}),
+                json!({"total_shards_per_node": 2}),
+            ],
+        ),
+        (
+            "forcemerge",
+            &[
+                json!({"max_num_segments": 1}),
+                json!({"max_num_segments": 1, "index_codec": "best_compression"}),
+            ],
+        ),
+        (
+            "shrink",
+            &[
+                json!({"number_of_shards": 1}),
+                json!({"max_primary_shard_size": "5gb"}),
+                json!({"number_of_shards": 1, "allow_write_after_shrink": true}),
+                json!({"number_of_shards": 1, "allow_write_after_shrink": false}),
+                json!({}),
+            ],
+        ),
+        ("readonly", &[json!({})]),
+        (
+            "delete",
+            &[json!({}), json!({"delete_searchable_snapshot": true})],
+        ),
+        ("migrate", &[json!({"enabled": false}), json!({})]),
+        (
+            "searchable_snapshot",
+            &[json!({"snapshot_repository": "r"})],
+        ),
+        ("freeze", &[json!({})]),
+        ("unfollow", &[json!({})]),
+        ("downsample", &[json!({"fixed_interval": "1h"})]),
+        ("wait_for_snapshot", &[json!({"policy": "p"})]),
+    ];
+    let phases = ["hot", "warm", "cold", "frozen", "delete", "unknownphase"];
+    let tag = unique("ilmo");
+    let (mut converted, mut refused, mut put) = (0, 0, 0);
+    let mut problems = Vec::new();
+    for i in 0..n {
+        let mut ph = serde_json::Map::new();
+        for p in phases {
+            // unknown phases are rare; delete-only and empty policies happen
+            let keep = if p == "unknownphase" {
+                next(20) == 0
+            } else {
+                next(2) == 0
+            };
+            if !keep {
+                continue;
+            }
+            let mut acts = serde_json::Map::new();
+            for _ in 0..next(4) {
+                let (a, cfgs) = &actions[next(actions.len())];
+                acts.insert((*a).into(), cfgs[next(cfgs.len())].clone());
+            }
+            let mut def = json!({"actions": acts});
+            if next(4) > 0 {
+                def["min_age"] = json!(ages[next(ages.len())]);
+            }
+            ph.insert(p.into(), def);
+        }
+        let mut ilm = json!({"phases": ph});
+        if next(3) == 0 {
+            ilm["_meta"] = json!({"description": format!("d{i} é"), "owner": "x"});
+        }
+        for lenient in [false, true] {
+            let name = format!("{tag}-{i}-{}", if lenient { "l" } else { "s" });
+            match convert_for(&name, &ilm, lenient, caps) {
+                Err(e) => {
+                    refused += 1;
+                    let m = format!("{e:#}");
+                    let named = m.contains("phase '")
+                        || m.contains("unknown phase")
+                        || m.contains("no phases")
+                        || m.contains("no convertible phases");
+                    if !named {
+                        problems.push(format!("refusal names nothing: {m}\n  {ilm}"));
+                    }
+                }
+                Ok(conv) => {
+                    converted += 1;
+                    let path = format!("_plugins/_ism/policies/{name}");
+                    let (status, body) = c
+                        .call("PUT", &path, Some(json!({"policy": conv.policy})))
+                        .await;
+                    if status < 300 {
+                        put += 1;
+                        let _ = c.call("DELETE", &path, None).await;
+                    } else {
+                        problems.push(format!(
+                            "OpenSearch rejected a converted policy ({status}): {}\n  ILM: {ilm}\n  ISM: {}",
+                            body["error"]["reason"], conv.policy
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "ILM->ISM oracle on {}: {n} policies x 2 modes: {converted} converted ({put} accepted), {refused} refused",
+        c.version().await
+    );
+    assert!(
+        converted > n / 4,
+        "generator too hostile: {converted} converted"
+    );
+    assert!(
+        problems.is_empty(),
+        "{} problem(s):\n{}",
+        problems.len(),
+        problems[..problems.len().min(8)].join("\n")
+    );
+}

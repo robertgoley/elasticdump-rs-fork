@@ -135,6 +135,12 @@ impl ClusterInfo {
         self.flavor == Flavor::Elastic && self.version.major < 7
     }
 
+    /// The ISM `shrink` action (OpenSearch >= 2.0; 1.3 answers "Invalid field:
+    /// [shrink] found in Actions", found by the L-507 oracle).
+    pub fn has_ism_shrink(&self) -> bool {
+        self.flavor == Flavor::OpenSearch && self.version >= Version::new(2, 0, 0)
+    }
+
     /// `_timestamp` / `_ttl` bulk metadata (Elasticsearch < 5 only).
     pub fn supports_ttl_meta(&self) -> bool {
         self.flavor == Flavor::Elastic && self.version.major < 5
