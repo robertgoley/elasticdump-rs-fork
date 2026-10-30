@@ -61,6 +61,9 @@ pub(crate) fn spawn_worker_task(
 
     thread::Builder::new()
         .name(format!("retrieval-worker-{id}"))
+        // deeply nested documents recurse in the JSON parsers (TST-BRK-IN-008); reserved,
+        // not committed, memory
+        .stack_size(64 << 20)
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_worker_loop(

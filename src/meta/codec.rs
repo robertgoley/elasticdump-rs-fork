@@ -37,7 +37,18 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
         }
         while let Some(v) = splitter.next_value(n == 0).map_err(|e| anyhow!(e))? {
             if first.is_none() {
-                first = Some(serde_json::from_slice(&v).context("Invalid JSON in input")?);
+                first = Some(serde_json::from_slice(&v).map_err(|e| {
+                    let name = path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "stdin".into());
+                    let hint = if e.to_string().contains("recursion limit") {
+                        " (nested more than 128 levels deep; Elasticsearch and OpenSearch refuse mappings deeper than index.mapping.depth.limit, 20 by default)"
+                    } else {
+                        ""
+                    };
+                    anyhow!("Invalid JSON in input {name}: {e}{hint}")
+                })?);
             } else {
                 log::warn!(
                     "Input holds more than one JSON value; only the first is used (elasticdump behaviour)"

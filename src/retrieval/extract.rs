@@ -245,10 +245,23 @@ fn finalize_metadata(
     })
 }
 
+/// Refuse a page nested deeper than any document the engines accept before the recursive
+/// parse can overflow the stack (TST-BRK-IN-008); +8 covers the response's own levels.
+fn check_depth(body: &Bytes) -> Result<()> {
+    use crate::pipeline::bulk::{MAX_DOC_DEPTH, too_deep};
+    match too_deep(body, MAX_DOC_DEPTH + 8) {
+        Some(at) => Err(anyhow!(
+            "the search response nests more than {MAX_DOC_DEPTH} levels deep (at byte {at}); nothing of this page was written"
+        )),
+        None => Ok(()),
+    }
+}
+
 pub(crate) fn extract_batch_metadata(
     response_bytes: &Bytes,
     search_type: &SearchType,
 ) -> Result<BatchMetadata> {
+    check_depth(response_bytes)?;
     let metadata_inputs = extract_metadata_inputs(response_bytes)?;
     let (doc_count, last_sort_raw) =
         count_hits_and_last_sort_raw(metadata_inputs.hits, search_type)?;
@@ -298,6 +311,7 @@ pub(crate) fn extract_batch(
     // malformed response would become an invalid dump line (L-512 fuzz finding).
     crate::pipeline::bulk::check_escapes(response_bytes)
         .map_err(|e| anyhow!("malformed search response: {e}"))?;
+    check_depth(response_bytes)?;
     let metadata_inputs =
         extract_metadata_inputs(response_bytes).map_err(|e| malformed(response_bytes, e))?;
     let iter = metadata_inputs

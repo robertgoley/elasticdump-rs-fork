@@ -2063,3 +2063,146 @@ async fn l625_text_encoding_problems_are_named() {
         }
     }
 }
+
+// L-626 (TST-BRK-IN-008): deeply nested JSON (990, 1k, 10k, 100k levels of `[` and `{`). A
+// data file copies byte-exact to a file; sent to `_bulk`, a document up to the engines' 1000
+// levels is written and a deeper one is rejected by name (it overflowed the stack before);
+// a meta file fails with a clear depth message. Never a signal death.
+#[tokio::test]
+async fn l626_deep_nesting_never_crashes() {
+    let dir = tempfile::tempdir().unwrap();
+    for n in [990usize, 1_000, 10_000, 100_000] {
+        let arr = format!(
+            "{{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{{\"a\":{}{}}}}}\n",
+            "[".repeat(n),
+            "]".repeat(n)
+        );
+        let obj = format!(
+            "{{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{{\"a\":{}1{}}}}}\n",
+            "{\"b\":".repeat(n),
+            "}".repeat(n)
+        );
+        for (k, doc) in [("arr", &arr), ("obj", &obj)] {
+            let input = dir.path().join(format!("{k}{n}.json"));
+            std::fs::write(&input, doc).unwrap();
+            let out = dir.path().join(format!("{k}{n}.out"));
+            let o = run_async(
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    out.to_str().unwrap(),
+                ]),
+                vec![],
+            )
+            .await;
+            assert!(o.status.success(), "{k}{n}: {}", stderr(&o));
+            assert_eq!(&std::fs::read_to_string(&out).unwrap(), doc, "{k}{n}");
+            let m = RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                .route(Route::contains("POST", "/_bulk").reply(Reply::ok(
+                    r#"{"errors":false,"items":[{"index":{"status":201}}]}"#,
+                )))
+                .fallback(Reply::ok("{}"))
+                .start()
+                .await;
+            let o = run_async(
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    &format!("{}/x", m.url()),
+                ]),
+                vec![],
+            )
+            .await;
+            assert!(o.status.code().is_some(), "{k}{n}: killed by a signal");
+            if n + 2 <= 1000 {
+                assert!(o.status.success(), "{k}{n}: {}", stderr(&o));
+            } else {
+                assert_eq!(o.status.code(), Some(1), "{k}{n}: {}", stderr(&o));
+                assert!(
+                    stderr(&o).contains("nested more than 1000 levels deep"),
+                    "{k}{n}: {}",
+                    stderr(&o)
+                );
+            }
+        }
+        let meta = dir.path().join(format!("meta{n}.json"));
+        std::fs::write(
+            &meta,
+            format!(
+                "{{\"x\":{{\"mappings\":{{\"properties\":{}1{}}}}}}}\n",
+                "{\"b\":".repeat(n),
+                "}".repeat(n)
+            ),
+        )
+        .unwrap();
+        let o = run_async(
+            s(&[
+                "--input",
+                meta.to_str().unwrap(),
+                "--output",
+                "http://127.0.0.1:9/x",
+                "--type",
+                "mapping",
+            ]),
+            vec![],
+        )
+        .await;
+        assert_eq!(o.status.code(), Some(1), "meta{n}: {}", stderr(&o));
+        assert!(
+            stderr(&o).contains("nested more than 128 levels deep"),
+            "meta{n}: {}",
+            stderr(&o)
+        );
+    }
+}
+
+// L-626, dump side: a search page holding a document nested 1000 levels deep is dumped (the
+// retrieval workers overflowed their 2 MiB stacks at ~50 levels before); a deeper page is
+// refused by name instead of crashing.
+#[tokio::test]
+async fn l626_deep_documents_in_search_pages_never_crash() {
+    for (n, ok) in [(990usize, true), (5_000, false)] {
+        let src = format!("{{\"a\":{}{}}}", "[".repeat(n), "]".repeat(n));
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(
+                Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
+                    "s1",
+                    &[hit("1", &src)],
+                    1,
+                ))),
+            )
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(page("s1", &[], 1))))
+            .fallback(Reply::ok(CLEARED))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("{}/idx", m.url()),
+                "--output",
+                out.to_str().unwrap(),
+            ]),
+            vec![],
+        )
+        .await;
+        assert!(o.status.code().is_some(), "{n}: killed by a signal");
+        if ok {
+            assert!(o.status.success(), "{n}: {}", stderr(&o));
+            assert!(std::fs::read_to_string(&out).unwrap().contains(&src));
+        } else {
+            assert_eq!(o.status.code(), Some(1), "{n}: {}", stderr(&o));
+            assert!(
+                stderr(&o).contains("nests more than 1000 levels deep"),
+                "{}",
+                stderr(&o)
+            );
+            assert!(!out.exists());
+        }
+    }
+}

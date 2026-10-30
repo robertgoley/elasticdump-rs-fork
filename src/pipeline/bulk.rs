@@ -208,9 +208,50 @@ pub(crate) fn check_doc_line(line: &[u8]) -> std::result::Result<(), String> {
     if memchr::memchr2(b'\n', b'\r', line).is_some() {
         return Err("contains a line break".to_string());
     }
+    // before any recursive parse: a 1k+ deep document overflowed the stack (TST-BRK-IN-008)
+    if let Some(at) = too_deep(line, MAX_DOC_DEPTH) {
+        return Err(format!(
+            "nested more than {MAX_DOC_DEPTH} levels deep (at byte {at}); Elasticsearch and OpenSearch refuse such documents too"
+        ));
+    }
     sonic_rs::from_slice::<serde::de::IgnoredAny>(line)
         .map_err(|e| format!("not exactly one JSON object: {e}"))?;
     check_escapes(line)
+}
+
+/// Deepest `[`/`{` nesting a document line may have (TST-BRK-IN-008). Elasticsearch and
+/// OpenSearch stop at 1000 levels (object fields at index.mapping.depth.limit, 20); the
+/// recursive parses need the large stacks set in main.rs.
+pub(crate) const MAX_DOC_DEPTH: usize = 1000;
+
+/// Byte offset where `line` first nests deeper than `max`, scanning linearly (strings
+/// skipped), so the check itself cannot overflow the stack.
+pub(crate) fn too_deep(line: &[u8], max: usize) -> Option<usize> {
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, &b) in line.iter().enumerate() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > max {
+                    return Some(i);
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// sonic-rs skips string *values* without decoding them, so an invalid
