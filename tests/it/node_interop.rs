@@ -831,3 +831,180 @@ async fn split_names_non_ascii_boundary_difference() {
     }
     c.delete_index(&src).await;
 }
+
+// L-436 (TST-API-063): data file variants accepted, each restoring to the same digest:
+// `--sourceOnly` files, `_type`, `fields`, `_routing` / `routing` / `fields._routing`,
+// `--format human` pretty files, concatenated JSON, CRLF and a UTF-8 BOM.
+#[tokio::test]
+async fn data_file_variants_restore_to_the_same_digest() {
+    let c = Cluster::from_env();
+    let src = unique("variants_src");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &src,
+        Some(json!({"settings": {"number_of_shards": 2, "number_of_replicas": 0}})),
+    )
+    .await;
+    let docs: Vec<(String, Option<String>, Value)> = (0..12)
+        .map(|i| {
+            (
+                format!("d{i:02}"),
+                (i % 3 != 0).then(|| format!("r{}", i % 3)),
+                json!({"n": i, "t": format!("text {i} ü"), "nested": {"a": [i, i + 1]}}),
+            )
+        })
+        .collect();
+    let line = |style: &str, (id, r, src_doc): &(String, Option<String>, Value)| -> Value {
+        let mut v = json!({"_index": "x", "_id": id, "_source": src_doc});
+        if let Some(r) = r {
+            match style {
+                "_routing" => v["_routing"] = json!(r),
+                "routing" => v["routing"] = json!(r),
+                "fields" => v["fields"] = json!({"_routing": r}),
+                _ => unreachable!(),
+            }
+        }
+        v
+    };
+    let ndjson = |vals: &[Value], sep: &str| {
+        vals.iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(sep)
+            + sep
+    };
+    let canonical: Vec<Value> = docs.iter().map(|d| line("_routing", d)).collect();
+    let mut variants: Vec<(&str, String, bool)> = vec![
+        ("_routing", ndjson(&canonical, "\n"), false),
+        (
+            "routing",
+            ndjson(
+                &docs.iter().map(|d| line("routing", d)).collect::<Vec<_>>(),
+                "\n",
+            ),
+            false,
+        ),
+        (
+            "fields._routing",
+            ndjson(
+                &docs.iter().map(|d| line("fields", d)).collect::<Vec<_>>(),
+                "\n",
+            ),
+            false,
+        ),
+        (
+            "_type",
+            ndjson(
+                &canonical
+                    .iter()
+                    .cloned()
+                    .map(|mut v| {
+                        v["_type"] = json!("_doc");
+                        v
+                    })
+                    .collect::<Vec<_>>(),
+                "\n",
+            ),
+            false,
+        ),
+        ("concatenated", ndjson(&canonical, ""), false),
+        ("CRLF", ndjson(&canonical, "\r\n"), false),
+        (
+            "BOM",
+            format!("\u{feff}{}", ndjson(&canonical, "\n")),
+            false,
+        ),
+        (
+            "human",
+            canonical
+                .iter()
+                .map(|v| serde_json::to_string_pretty(v).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+            false,
+        ),
+        (
+            "sourceOnly",
+            ndjson(&docs.iter().map(|d| d.2.clone()).collect::<Vec<_>>(), "\n"),
+            true,
+        ),
+    ];
+    // a real --format human dump and a real --sourceOnly dump from the tool itself
+    let mut bulk = String::new();
+    for d in &docs {
+        let mut meta = json!({"index": {"_index": src, "_id": d.0}});
+        if let Some(r) = &d.1 {
+            meta["index"]["routing"] = json!(r);
+        }
+        bulk.push_str(&format!("{meta}\n{}\n", d.2));
+    }
+    c.bulk_raw(bulk).await;
+    c.ok("POST", &format!("{src}/_refresh"), None).await;
+    let want = c.docs(&src).await;
+    for (flag, label, source_only) in [
+        ("--format", "tool human dump", false),
+        ("--sourceOnly", "tool sourceOnly dump", true),
+    ] {
+        let f = tmp_path("variants_tool", "json");
+        let mut a = s(&[
+            "--input",
+            &c.url_with_auth(&src),
+            "--output",
+            f.to_str().unwrap(),
+        ]);
+        a.extend(c.tls_args("input"));
+        if flag == "--format" {
+            a.extend(s(&["--format", "human"]));
+        } else {
+            a.push("--sourceOnly".into());
+        }
+        assert_success(&run(a).await);
+        variants.push((label, std::fs::read_to_string(&f).unwrap(), source_only));
+        let _ = std::fs::remove_file(f);
+    }
+    let sources = |m: &std::collections::BTreeMap<String, (Option<String>, Value)>| {
+        let mut v: Vec<String> = m.values().map(|(_, s)| s.to_string()).collect();
+        v.sort();
+        v
+    };
+    let mut failures = vec![];
+    for (name, body, source_only) in variants {
+        let f = tmp_path("variant", "json");
+        std::fs::write(&f, &body).unwrap();
+        let dst = unique("variants_dst");
+        c.copy_shape(&src, &dst).await;
+        let mut a = s(&[
+            "--input",
+            f.to_str().unwrap(),
+            "--output",
+            &c.url_with_auth(&dst),
+        ]);
+        a.extend(c.tls_args("output"));
+        let o = run(a).await;
+        if !o.status.success() {
+            failures.push(format!(
+                "{name}: exit {:?}: {}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        } else {
+            let got = c.docs(&dst).await;
+            let ok = if source_only {
+                sources(&got) == sources(&want)
+            } else {
+                got == want
+            };
+            if !ok {
+                failures.push(format!(
+                    "{name}: digest differs:\n  got:  {got:?}\n  want: {want:?}"
+                ));
+            }
+        }
+        c.delete_index(&dst).await;
+        let _ = std::fs::remove_file(f);
+    }
+    c.delete_index(&src).await;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
