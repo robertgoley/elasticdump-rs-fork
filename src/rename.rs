@@ -266,7 +266,9 @@ fn check_name(name: &str, illegal: &[char]) -> Result<()> {
     if name.starts_with(['-', '_', '+']) {
         bail!("index names must not start with '-', '_' or '+'");
     }
-    if name.chars().any(|c| c.is_uppercase()) {
+    // Elasticsearch/OpenSearch: `!name.toLowerCase(Locale.ROOT).equals(name)`,
+    // which also refuses titlecase letters such as 'ǅ' (found by L-504).
+    if name.to_lowercase() != name {
         bail!("index names must be lowercase");
     }
     if let Some(c) = name.chars().find(|c| illegal.contains(c)) {
@@ -325,6 +327,13 @@ mod tests {
     }
 
     #[test]
+    fn titlecase_letters_are_not_lowercase() {
+        assert!(validate_index_name("aǅ").is_err());
+        assert!(validate_index_name("aǆ").is_ok());
+        assert!(validate_index_name("éß😀").is_ok());
+    }
+
+    #[test]
     fn invalid_results_and_specs_fail_clearly() {
         let n = r(&["logs-:Logs-"], &[], "", "");
         let e = n.index("logs-1").unwrap_err().to_string();
@@ -374,5 +383,94 @@ mod tests {
         assert_eq!(n.alias("logstash-all").unwrap(), "logstash-srctag-all");
         assert_eq!(n.pattern("logstash-*").unwrap(), "logstash-srctag-*");
         assert_eq!(n.pattern("other-*").unwrap(), "other-*");
+    }
+}
+
+/// L-504 (TST-API-083): rename rules against an independent model.
+#[cfg(test)]
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000)
+    }
+
+    #[derive(Debug, Clone)]
+    enum M {
+        Prefix(String, String),
+        /// `^<lit>(.*)$` -> `<new>$1`
+        Anchored(String, String),
+        /// `<lit>` -> `<new>` (first occurrence)
+        Literal(String, String),
+    }
+
+    fn lit() -> impl Strategy<Value = String> {
+        "[a-c.-]{1,3}"
+    }
+
+    fn rule() -> impl Strategy<Value = M> {
+        prop_oneof![
+            (lit(), "[a-z]{0,3}-?").prop_map(|(a, b)| M::Prefix(a, b)),
+            (lit(), "[a-z]{0,3}-?").prop_map(|(a, b)| M::Anchored(a, b)),
+            (lit(), "[x-z]{0,2}").prop_map(|(a, b)| M::Literal(a, b)),
+        ]
+    }
+
+    /// The model: prefix rules first, then regex rules, each in order; the
+    /// first that matches wins; then --prefix/--suffix.
+    fn model(rules: &[M], name: &str, pre: &str, suf: &str) -> String {
+        let prefixes = rules.iter().filter(|r| matches!(r, M::Prefix(..)));
+        let regexes = rules.iter().filter(|r| !matches!(r, M::Prefix(..)));
+        let hit = prefixes.chain(regexes).find_map(|r| match r {
+            M::Prefix(a, b) | M::Anchored(a, b) => name
+                .strip_prefix(a.as_str())
+                .map(|rest| format!("{b}{rest}")),
+            M::Literal(a, b) => name
+                .find(a.as_str())
+                .map(|i| format!("{}{b}{}", &name[..i], &name[i + a.len()..])),
+        });
+        format!("{pre}{}{suf}", hit.unwrap_or_else(|| name.to_string()))
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
+
+        #[test]
+        fn renames_agree_with_the_model(
+            rules in proptest::collection::vec(rule(), 0..5),
+            names in proptest::collection::vec("[a-c.-]{1,8}", 1..6),
+            pre in prop_oneof![Just(""), Just("p-")],
+            suf in prop_oneof![Just(""), Just("-s")],
+        ) {
+            let mut prefix_specs = Vec::new();
+            let mut regex_specs = Vec::new();
+            for r in &rules {
+                match r {
+                    M::Prefix(a, b) => prefix_specs.push(format!("{a}:{b}")),
+                    M::Anchored(a, b) => regex_specs.push(format!("^{}(.*)$:{b}${{1}}", regex::escape(a))),
+                    M::Literal(a, b) => regex_specs.push(format!("{}:{b}", regex::escape(a))),
+                }
+            }
+            let r = IndexRenamer::new(&prefix_specs, &regex_specs, pre, suf)
+                .unwrap()
+                .with_allow_merge(true);
+            for n in &names {
+                let want = model(&rules, n, pre, suf);
+                match r.index(n) {
+                    Ok(got) => prop_assert_eq!(&got, &want),
+                    Err(e) => prop_assert!(
+                        validate_index_name(&want).is_err(),
+                        "{n}: refused ({e}) but the model gives the valid '{want}'"
+                    ),
+                }
+                if validate_index_name(&want).is_err() {
+                    prop_assert!(r.index(n).is_err(), "{n} -> invalid '{want}' accepted");
+                }
+            }
+        }
     }
 }

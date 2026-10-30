@@ -1366,3 +1366,72 @@ async fn full_backup_and_restore_in_documented_order() {
     c.call("DELETE", &policy_path, None).await;
     c.call("DELETE", &format!("_scripts/{u}-s"), None).await;
 }
+
+/// L-504 (TST-API-083): `validate_index_name` agrees with the live cluster on generated
+/// names (IT_NAME_ORACLE_N, default 300 here; 5,000 nightly in B). Every name the cluster
+/// creates is deleted again.
+#[tokio::test]
+async fn xv_index_name_validation_agrees_with_the_cluster() {
+    let c = Cluster::from_env();
+    let n: usize = std::env::var("IT_NAME_ORACLE_N")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let alphabet: Vec<char> = "abcxyz0189.-_+:#*?\"<>|/\\, AZǅİéß😀".chars().collect();
+    let mut seed: u64 = 0x5eed_1504;
+    let mut next = |m: usize| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as usize) % m
+    };
+    let tag = unique("nv");
+    let mut names: Vec<String> = vec![
+        ".".into(),
+        "..".into(),
+        "".into(),
+        "a".repeat(255),
+        "é".repeat(128),
+        format!("{tag}-ok"),
+    ];
+    while names.len() < n {
+        let len = 1 + next(8);
+        let mut s: String = (0..len).map(|_| alphabet[next(alphabet.len())]).collect();
+        if next(3) > 0 {
+            s = format!("{tag}{s}"); // mostly unique, valid-start names
+        }
+        names.push(s);
+    }
+    let mut disagreements = Vec::new();
+    for name in &names {
+        let ours = elasticdump_rs::rename::validate_index_name(name).is_ok();
+        let path = percent_encoding::utf8_percent_encode(name, percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+        if path.is_empty() {
+            continue; // PUT / is not an index request
+        }
+        let (status, body) = c
+            .call(
+                "PUT",
+                &format!("{path}?wait_for_active_shards=0"),
+                Some(json!({"settings": {"number_of_replicas": 0}})),
+            )
+            .await;
+        let kind = body["error"]["type"].as_str().unwrap_or("").to_string();
+        let theirs = status < 300 || kind == "resource_already_exists_exception";
+        if status < 300 {
+            let _ = c.call("DELETE", &path, None).await;
+        }
+        if ours != theirs {
+            disagreements.push(format!("{name:?}: ours={ours} cluster={status} {kind}"));
+        }
+    }
+    assert!(
+        disagreements.is_empty(),
+        "{} of {} names disagree on {}:\n{}",
+        disagreements.len(),
+        names.len(),
+        c.version().await,
+        disagreements.join("\n")
+    );
+}
