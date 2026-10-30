@@ -728,3 +728,106 @@ async fn compression_interop_gzip_both_ways_zstd_refused_by_node() {
     }
     c.delete_index(&src).await;
 }
+
+// L-435 (TST-API-062): split naming interop. `--fileSize` counts UTF-8 bytes in Rust and
+// UTF-16 code units in Node (README "Intentional differences"): ASCII data gives identical part
+// names (asserted in files::node_interop_split_names_and_gzip); for non-ASCII text Node's parts
+// hold more bytes, so Rust writes more parts. Both sets restore to the same documents.
+#[tokio::test]
+async fn split_names_non_ascii_boundary_difference() {
+    if node_bin().is_none() {
+        println!("SKIP: node elasticdump not installed");
+        return;
+    }
+    let c = Cluster::from_env();
+    let src = unique("nsplit_u");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &src,
+        Some(json!({"settings": {"number_of_shards": 1, "number_of_replicas": 0}})),
+    )
+    .await;
+    let mut nd = String::new();
+    for i in 0..1500 {
+        nd.push_str(&json!({"index": {"_index": src, "_id": format!("{i:06}")}}).to_string());
+        nd.push('\n');
+        nd.push_str(&json!({"t": "é".repeat(60 + i % 40), "k": format!("κλειδί{i}")}).to_string());
+        nd.push('\n');
+    }
+    c.bulk_raw(nd).await;
+    c.ok("POST", &format!("{src}/_refresh"), None).await;
+    let parts = |d: &Path| -> Vec<(String, u64)> {
+        let mut v: Vec<(String, u64)> = std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    e.metadata().unwrap().len(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let (rdir, ndir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut a = s(&[
+        "--input",
+        &c.url_with_auth(&src),
+        "--output",
+        rdir.path().join("out.json").to_str().unwrap(),
+        "--fileSize",
+        "64kb",
+    ]);
+    a.extend(c.tls_args("input"));
+    assert_success(&run(a).await);
+    let o = run_node(&s(&[
+        "--input",
+        &c.url_with_auth(&src),
+        "--output",
+        ndir.path().join("out.json").to_str().unwrap(),
+        "--fileSize",
+        "64kb",
+    ]))
+    .await;
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let (rp, np) = (parts(rdir.path()), parts(ndir.path()));
+    println!("rust parts: {}, node parts: {}", rp.len(), np.len());
+    let max_line = 600u64;
+    // Rust: byte-bounded parts; Node: UTF-16-bounded parts, so more bytes each and fewer parts
+    assert!(rp.iter().all(|(_, b)| *b <= 65_536 + max_line), "{rp:?}");
+    assert!(np.iter().any(|(_, b)| *b > 65_536 + max_line), "{np:?}");
+    assert!(
+        rp.len() > np.len(),
+        "rust {} vs node {}",
+        rp.len(),
+        np.len()
+    );
+    // same naming scheme: Node's names are a prefix of Rust's list
+    let rn: Vec<&String> = rp.iter().map(|(n, _)| n).collect();
+    let nn: Vec<&String> = np.iter().map(|(n, _)| n).collect();
+    assert!(
+        nn.iter().all(|n| rn.contains(n)),
+        "node {nn:?} vs rust {rn:?}"
+    );
+    // both restore to the same documents
+    let want = c.docs(&src).await;
+    for (label, dir) in [("rust", rdir.path()), ("node", ndir.path())] {
+        let dst = unique("nsplit_ud");
+        c.copy_shape(&src, &dst).await;
+        for (n, _) in parts(dir) {
+            let mut a = s(&[
+                "--input",
+                dir.join(&n).to_str().unwrap(),
+                "--output",
+                &c.url_with_auth(&dst),
+            ]);
+            a.extend(c.tls_args("output"));
+            assert_success(&run(a).await);
+        }
+        assert_eq!(c.docs(&dst).await, want, "{label} parts");
+        c.delete_index(&dst).await;
+    }
+    c.delete_index(&src).await;
+}
