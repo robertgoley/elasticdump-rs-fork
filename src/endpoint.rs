@@ -83,7 +83,15 @@ pub fn redacted_url(url: &Url) -> String {
 /// Mask `user:pass@` in an arbitrary endpoint string.
 pub fn redacted_endpoint(raw: &str) -> String {
     match Url::parse(raw) {
-        Ok(url) if matches!(url.scheme(), "http" | "https") => redacted_url(&url),
+        // A password with `/`, `?` or `#` can make a URL parse with the
+        // password inside the host:port/path (`http://u:12/x@h`): mask the
+        // raw text whenever userinfo was not recognised but `@` is present.
+        Ok(url)
+            if matches!(url.scheme(), "http" | "https")
+                && (url.password().is_some() || !raw.contains('@')) =>
+        {
+            redacted_url(&url)
+        }
         // Not a parseable http(s) URL (a typo, a scheme-less
         // `user:pw@host:9200/idx` that became a file path, ...): still mask
         // anything that looks like `user:password@` (F-06).
@@ -95,9 +103,14 @@ pub fn redacted_endpoint(raw: &str) -> String {
 /// Everything between the first `:` of the authority and the LAST `@` is
 /// masked, so a password containing `@`, `/` or spaces never leaks.
 fn mask_userinfo(raw: &str) -> String {
+    let is_scheme = |s: &str| {
+        let mut c = s.chars();
+        c.next().is_some_and(|f| f.is_ascii_alphabetic())
+            && c.all(|ch| ch.is_ascii_alphanumeric() || "+.-".contains(ch))
+    };
     let (scheme, rest) = match raw.find("://") {
-        Some(i) => raw.split_at(i + 3),
-        None => ("", raw),
+        Some(i) if is_scheme(&raw[..i]) => raw.split_at(i + 3),
+        _ => ("", raw),
     };
     let Some(at) = rest.rfind('@') else {
         return raw.to_string();
@@ -461,5 +474,85 @@ mod redaction_tests {
         assert!(looks_like_url_without_scheme("localhost:9200/idx"));
         assert!(!looks_like_url_without_scheme("/tmp/x.json"));
         assert!(!looks_like_url_without_scheme("dump.json"));
+    }
+}
+
+/// L-503 (TST-API-082): URL parsing and redaction properties.
+#[cfg(test)]
+mod url_props {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000)
+    }
+
+    /// Passwords start with a marker that appears nowhere else in the URL.
+    fn password() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                Just(':'),
+                Just('@'),
+                Just('%'),
+                Just('#'),
+                Just('/'),
+                Just('?'),
+                Just(' '),
+                Just('é'),
+                Just('\\'),
+                proptest::char::range('0', '9'),
+                proptest::char::range('A', 'Z'),
+            ],
+            0..10,
+        )
+        .prop_map(|v| format!("Qz{}", v.into_iter().collect::<String>()))
+        .prop_flat_map(|p| ("[0-9]{0,3}/?", Just(p)).prop_map(|(d, p)| format!("{d}{p}")))
+    }
+
+    fn pct(s: &str) -> String {
+        percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
+
+        /// No redacted rendering ever contains the password, raw or
+        /// percent-encoded, whatever the URL looks like; parsing never panics
+        /// and its errors never quote the password either.
+        #[test]
+        fn redaction_never_shows_the_password(
+            scheme in prop_oneof![Just("http://"), Just("https://"), Just("HTTP://"), Just(""), Just("http:/")],
+            user in "[a-z]{0,6}",
+            pass in password(),
+            encode in any::<bool>(),
+            host in prop_oneof![Just("localhost".to_string()), Just("10.0.0.1".to_string()), Just("[::1]".to_string()), "[a-z]{1,8}", Just("bad host".to_string())],
+            port in prop_oneof![Just(String::new()), (1u16..65535).prop_map(|p| format!(":{p}"))],
+            path in prop_oneof![Just(String::new()), "/[a-z]{1,6}", "/[a-z]{1,4}/[a-z]{1,4}", Just("/i?x=1".to_string())],
+        ) {
+            let p = if encode { pct(&pass) } else { pass.clone() };
+            let raw = format!("{scheme}{user}:{p}@{host}{port}{path}");
+            let red = redacted_endpoint(&raw);
+            for secret in [pass.as_str(), pct(&pass).as_str(), "Qz"] {
+                prop_assert!(!red.contains(secret), "{raw} -> {red}");
+            }
+            for dir in [Direction::Input, Direction::Output] {
+                if let Err(e) = parse(&raw, dir, None) {
+                    let msg = scrub_args(&format!("{e:#}"), std::slice::from_ref(&raw));
+                    prop_assert!(!msg.contains("Qz"), "{raw} -> {msg}");
+                }
+            }
+        }
+
+        /// Arbitrary strings never make parsing or redaction panic.
+        #[test]
+        fn arbitrary_endpoints_never_panic(raw in "\\PC{0,40}", idx in proptest::option::of("\\PC{0,10}")) {
+            let _ = redacted_endpoint(&raw);
+            let _ = parse(&raw, Direction::Input, idx.as_deref());
+            let _ = parse(&raw, Direction::Output, idx.as_deref());
+            let _ = scrub_args(&raw, std::slice::from_ref(&raw));
+        }
     }
 }
