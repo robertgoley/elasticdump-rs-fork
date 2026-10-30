@@ -1272,3 +1272,48 @@ async fn ism_second_409_is_reported() {
             .any(|(k, v)| k == "if_primary_term" && v == "2")
     );
 }
+
+// L-423 (TST-API-039): a 403 on the version check or on `_cluster/state/metadata` names the
+// 'monitor' cluster privilege and never echoes the password.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn script_403_names_the_monitor_privilege() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let denied = r#"{"error":{"type":"security_exception","reason":"action [cluster:monitor/main] is unauthorized"},"status":403}"#;
+    for root_denied in [true, false] {
+        let mut b = RouterMock::builder();
+        b = if root_denied {
+            b.route(Route::exact("GET", "/").reply(Reply::json(403, denied)))
+        } else {
+            b.route(Route::exact("GET", "/").reply(Reply::ok(
+                r#"{"version":{"number":"8.19.0","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+            )))
+            .route(Route::exact("GET", "/_cluster/state/metadata").reply(Reply::json(403, denied)))
+        };
+        let m = b.start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("s.json");
+        let url = m.url().replacen("http://", "http://low:s3cr3t-pw@", 1);
+        let o = run_async(
+            vec![
+                "--input".into(),
+                url,
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--type".into(),
+                "script".into(),
+                "--retryAttempts".into(),
+                "0".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains("403") && err.contains("'monitor' cluster privilege"),
+            "{err}"
+        );
+        assert!(!err.contains("s3cr3t-pw"), "{err}");
+        assert!(!out.exists());
+    }
+}

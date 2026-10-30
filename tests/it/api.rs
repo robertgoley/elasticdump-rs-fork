@@ -1459,3 +1459,160 @@ async fn os13_legacy_opendistro_policies_are_read_via_plugins() {
     c.ok("DELETE", &format!("_plugins/_ism/policies/{id}"), None)
         .await;
 }
+
+// L-423 (TST-API-039): stored scripts (painless and mustache) round trip; an empty
+// `stored_scripts` restores nothing and succeeds; on secured profiles a user without the
+// `monitor` cluster privilege gets a 403 whose message names `monitor`.
+#[tokio::test]
+async fn scripts_round_trip_empty_and_monitor_privilege() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let p = unique("api_scr");
+    let (pl, mu) = (format!("{p}_painless"), format!("{p}_mustache"));
+    c.ok(
+        "PUT",
+        &format!("_scripts/{pl}"),
+        Some(json!({"script": {"lang": "painless", "source": "doc['n'].value * params.f"}})),
+    )
+    .await;
+    c.ok(
+        "PUT",
+        &format!("_scripts/{mu}"),
+        Some(
+            json!({"script": {"lang": "mustache", "source": {"query": {"term": {"k": "{{k}}"}}}}}),
+        ),
+    )
+    .await;
+    let want_pl = c.ok("GET", &format!("_scripts/{pl}"), None).await;
+    let want_mu = c.ok("GET", &format!("_scripts/{mu}"), None).await;
+    let file = tmp_path("api_scr", "json");
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&format!("{p}_*")),
+            file.to_str().unwrap(),
+            &["--type", "script"],
+        ))
+        .await,
+    );
+    for id in [&pl, &mu] {
+        c.ok("DELETE", &format!("_scripts/{id}"), None).await;
+    }
+    assert_success(
+        &run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &["--type", "script"],
+        ))
+        .await,
+    );
+    assert_eq!(c.ok("GET", &format!("_scripts/{pl}"), None).await, want_pl);
+    assert_eq!(c.ok("GET", &format!("_scripts/{mu}"), None).await, want_mu);
+    // empty stored_scripts
+    let empty = tmp_path("api_scr_empty", "json");
+    std::fs::write(&empty, "{\"stored_scripts\":[]}\n").unwrap();
+    let o = run_loud(io(
+        &c,
+        empty.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "script"],
+    ))
+    .await;
+    assert_success(&o);
+    for f in [&file, &empty] {
+        let _ = std::fs::remove_file(f);
+    }
+    for id in [&pl, &mu] {
+        c.ok("DELETE", &format!("_scripts/{id}"), None).await;
+    }
+
+    if !is_secure() {
+        println!("SKIP: monitor-privilege check needs a secured profile");
+        return;
+    }
+    let user = format!("{p}_low");
+    let pass = "Lowpriv-Pass-12345!x";
+    let role = format!("{p}_role");
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    if es {
+        c.ok(
+            "PUT",
+            &format!("_security/role/{role}"),
+            Some(json!({"indices": [{"names": ["*"], "privileges": ["read"]}]})),
+        )
+        .await;
+        c.ok(
+            "PUT",
+            &format!("_security/user/{user}"),
+            Some(json!({"password": pass, "roles": [role]})),
+        )
+        .await;
+    } else {
+        c.ok("PUT", &format!("_plugins/_security/api/roles/{role}"), Some(json!({"index_permissions": [{"index_patterns": ["*"], "allowed_actions": ["read"]}]}))).await;
+        c.ok(
+            "PUT",
+            &format!("_plugins/_security/api/internalusers/{user}"),
+            Some(json!({"password": pass})),
+        )
+        .await;
+        c.ok(
+            "PUT",
+            &format!("_plugins/_security/api/rolesmapping/{role}"),
+            Some(json!({"users": [user]})),
+        )
+        .await;
+    }
+    let mut u = url::Url::parse(&c.index_url("")).unwrap();
+    u.set_username(&user).unwrap();
+    u.set_password(Some(pass)).unwrap();
+    let f = tmp_path("api_scr_low", "json");
+    let mut a = s(&[
+        "--input",
+        u.as_str(),
+        "--output",
+        f.to_str().unwrap(),
+        "--type",
+        "script",
+    ]);
+    a.extend(c.tls_args("input"));
+    let o = run(a).await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("403") && err.contains("'monitor' cluster privilege"),
+        "{err}"
+    );
+    assert!(!err.contains(pass), "password leaked: {err}");
+    assert!(!f.exists());
+    if es {
+        let _ = c
+            .call("DELETE", &format!("_security/user/{user}"), None)
+            .await;
+        let _ = c
+            .call("DELETE", &format!("_security/role/{role}"), None)
+            .await;
+    } else {
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/rolesmapping/{role}"),
+                None,
+            )
+            .await;
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/internalusers/{user}"),
+                None,
+            )
+            .await;
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/roles/{role}"),
+                None,
+            )
+            .await;
+    }
+}
