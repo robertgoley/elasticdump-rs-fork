@@ -257,6 +257,7 @@ fi
   echo "export IT_ENGINE=${PROFILE%%-*}"
   echo "export IT_ES_URL=${URL}"
   echo "export IT_CONTAINER=${NAME}"
+  if [[ "$PROFILE" == opensearch* ]]; then echo "export IT_IMAGE=${OS_IMAGE}"; else echo "export IT_IMAGE=${ES_IMAGE}"; fi
 } > "$IT_DIR/env"
 
 if [[ "$PROFILE" == opensearch-secure ]]; then

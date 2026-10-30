@@ -2,6 +2,10 @@
 //! environment written by `scripts/it/up.sh`.
 
 mod harness;
+#[path = "../support/mod.rs"]
+mod support;
+
+mod golden;
 
 mod concurrency;
 mod cross;

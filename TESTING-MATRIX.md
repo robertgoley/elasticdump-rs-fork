@@ -112,7 +112,9 @@ machine-maintained list, and CI runs `matrix-md.py --check`.
 ### Golden recordings (generated)
 
 <!-- BEGIN generated:goldens -->
-_No recordings yet (`IT_RECORD=1`, INF-003)._
+| Engine-version | Cases | Exchanges |
+|---|---|---|
+| opensearch-2.19.7 | 4 | 15 |
 <!-- END generated:goldens -->
 
 ### Cross-version expectation table (API-071, generated)

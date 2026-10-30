@@ -186,6 +186,13 @@ impl Recorded {
 
 type BodyPred = Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
 
+/// Dynamic reply for requests no route matched (recording proxy, golden replay).
+pub type Handler = Arc<
+    dyn Fn(Recorded) -> std::pin::Pin<Box<dyn std::future::Future<Output = Reply> + Send>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 enum PathMatch {
     Any,
@@ -303,6 +310,7 @@ impl Route {
 struct Shared {
     routes: Vec<Route>,
     fallback: Reply,
+    handler: Option<Handler>,
     recorded: Mutex<Vec<Recorded>>,
     conns: AtomicUsize,
     /// Force `Connection: close` on every reply (the old MockEs behaviour).
@@ -320,12 +328,22 @@ pub struct RouterMock {
 pub struct RouterMockBuilder {
     routes: Vec<Route>,
     fallback: Reply,
+    handler: Option<Handler>,
     close_always: bool,
 }
 
 impl RouterMockBuilder {
     pub fn route(mut self, r: Route) -> Self {
         self.routes.push(r);
+        self
+    }
+    /// Compute the reply for unmatched requests asynchronously (instead of the fallback).
+    pub fn handler<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(Recorded) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Reply> + Send + 'static,
+    {
+        self.handler = Some(Arc::new(move |r| Box::pin(f(r))));
         self
     }
     pub fn fallback(mut self, r: Reply) -> Self {
@@ -347,6 +365,7 @@ impl RouterMockBuilder {
         let shared = Arc::new(Shared {
             routes: self.routes,
             fallback: self.fallback,
+            handler: self.handler,
             recorded: Mutex::new(vec![]),
             conns: AtomicUsize::new(0),
             close_always: self.close_always,
@@ -376,6 +395,7 @@ impl RouterMock {
         RouterMockBuilder {
             routes: vec![],
             fallback: Reply::json(404, r#"{"error":"router-mock: no route"}"#),
+            handler: None,
             close_always: false,
         }
     }
@@ -419,9 +439,10 @@ async fn serve_conn(mut sock: TcpStream, conn: usize, shared: Arc<Shared>) {
         req.conn = conn;
         let route = shared.routes.iter().position(|r| r.matches(&req));
         req.route = route;
-        let reply = match route {
-            Some(i) => shared.routes[i].next_reply(),
-            None => shared.fallback.clone(),
+        let reply = match (route, &shared.handler) {
+            (Some(i), _) => shared.routes[i].next_reply(),
+            (None, Some(h)) => h(req.clone()).await,
+            (None, None) => shared.fallback.clone(),
         };
         shared.recorded.lock().unwrap().push(req);
         if let Fault::Reset = reply.fault {

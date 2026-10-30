@@ -1,0 +1,96 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "_scroll_id": "<scroll:1>",
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": 1.0,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_id": "g00",
+          "_score": 1.0,
+          "_source": {
+            "k": "key0",
+            "n": 0,
+            "t": "golden doc 0"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g01",
+          "_score": 1.0,
+          "_source": {
+            "k": "key1",
+            "n": 1,
+            "t": "golden doc 1"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g02",
+          "_score": 1.0,
+          "_source": {
+            "k": "key2",
+            "n": 2,
+            "t": "golden doc 2"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g03",
+          "_score": 1.0,
+          "_source": {
+            "k": "key3",
+            "n": 3,
+            "t": "golden doc 3"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g04",
+          "_score": 1.0,
+          "_source": {
+            "k": "key4",
+            "n": 4,
+            "t": "golden doc 4"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g05",
+          "_score": 1.0,
+          "_source": {
+            "k": "key5",
+            "n": 5,
+            "t": "golden doc 5"
+          }
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g06",
+          "_score": 1.0,
+          "_source": {
+            "k": "key6",
+            "n": 6,
+            "t": "golden doc 6"
+          }
+        }
+      ]
+    }
+  }
+}
