@@ -1,0 +1,879 @@
+{
+ "_comment": "SUP-019 publisher snapshot: crate -> crates.io owner logins. Regenerate: cargo supply-chain json > sc.json && scripts/sup/publishers.py snapshot sc.json",
+ "crates": {
+  "adler2": [
+   "oyvindln"
+  ],
+  "aes": [
+   "github:rustcrypto:block-ciphers",
+   "newpavlov"
+  ],
+  "ahash": [
+   "tkaitchuck"
+  ],
+  "aho-corasick": [
+   "BurntSushi"
+  ],
+  "anstream": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "anstyle": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "anstyle-parse": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "anstyle-query": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "anyhow": [
+   "dtolnay"
+  ],
+  "async-compression": [
+   "Nemo157",
+   "NobodyXu",
+   "robjtede",
+   "yoshuawuyts"
+  ],
+  "atomic-waker": [
+   "github:smol-rs:admins",
+   "taiki-e"
+  ],
+  "base64": [
+   "alicemaz",
+   "marshallpierce"
+  ],
+  "base64ct": [
+   "github:rustcrypto:formats",
+   "tarcieri"
+  ],
+  "bitflags": [
+   "KodrAus",
+   "rust-lang-owner"
+  ],
+  "block-buffer": [
+   "github:rustcrypto:utils",
+   "newpavlov"
+  ],
+  "block-padding": [
+   "github:rustcrypto:utils",
+   "newpavlov"
+  ],
+  "bumpalo": [
+   "alexcrichton",
+   "fitzgen"
+  ],
+  "bytes": [
+   "Darksonn",
+   "carllerche",
+   "github:tokio-rs:core"
+  ],
+  "bytesize": [
+   "hyunsik",
+   "robjtede"
+  ],
+  "cbc": [
+   "github:rustcrypto:block-ciphers",
+   "newpavlov"
+  ],
+  "cc": [
+   "rust-lang-owner"
+  ],
+  "cfg-if": [
+   "rust-lang-owner"
+  ],
+  "cfg_aliases": [
+   "github:katharostech:crates-io-publishers",
+   "zicklag"
+  ],
+  "chacha20": [
+   "github:rustcrypto:stream-ciphers",
+   "newpavlov"
+  ],
+  "cipher": [
+   "github:rustcrypto:traits",
+   "newpavlov"
+  ],
+  "clap": [
+   "github:clap-rs:admins",
+   "github:rust-cli:maintainers",
+   "kbknapp"
+  ],
+  "clap_builder": [
+   "epage",
+   "github:clap-rs:admins",
+   "github:rust-cli:maintainers"
+  ],
+  "clap_derive": [
+   "github:clap-rs:admins",
+   "kbknapp"
+  ],
+  "clap_lex": [
+   "epage",
+   "github:clap-rs:admins",
+   "github:rust-cli:maintainers"
+  ],
+  "colorchoice": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "compression-codecs": [
+   "NobodyXu",
+   "robjtede",
+   "yoshuawuyts"
+  ],
+  "compression-core": [
+   "NobodyXu",
+   "robjtede",
+   "yoshuawuyts"
+  ],
+  "console": [
+   "djc",
+   "mitsuhiko"
+  ],
+  "const-oid": [
+   "github:rustcrypto:formats",
+   "tarcieri"
+  ],
+  "const-random": [
+   "tkaitchuck"
+  ],
+  "const-random-macro": [
+   "tkaitchuck"
+  ],
+  "cpufeatures": [
+   "github:rustcrypto:utils",
+   "tarcieri"
+  ],
+  "crc32fast": [
+   "srijs"
+  ],
+  "crunchy": [
+   "eira-fransham"
+  ],
+  "crypto-common": [
+   "github:rustcrypto:traits",
+   "newpavlov"
+  ],
+  "defmt": [
+   "github:knurling-rs:crate-owners",
+   "japaric",
+   "jonathanpallant",
+   "knurling-infra"
+  ],
+  "defmt-macros": [
+   "github:knurling-rs:crate-owners",
+   "japaric",
+   "jonathanpallant",
+   "knurling-infra"
+  ],
+  "defmt-parser": [
+   "github:knurling-rs:crate-owners",
+   "japaric",
+   "jonathanpallant",
+   "knurling-infra"
+  ],
+  "der": [
+   "github:rustcrypto:formats",
+   "tarcieri"
+  ],
+  "digest": [
+   "github:rustcrypto:traits",
+   "newpavlov"
+  ],
+  "displaydoc": [
+   "Manishearth",
+   "yaahc"
+  ],
+  "dlv-list": [
+   "sgodwincs"
+  ],
+  "env_filter": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
+  "env_logger": [
+   "github:env-logger-rs:publishers",
+   "github:rust-lang-nursery:log-owners",
+   "huonw",
+   "sebasmagri",
+   "sfackler"
+  ],
+  "equivalent": [
+   "cuviper"
+  ],
+  "errno": [
+   "lambda-fairy",
+   "sunfishcode"
+  ],
+  "faststr": [
+   "PureWhiteWu"
+  ],
+  "find-msvc-tools": [
+   "rust-lang-owner"
+  ],
+  "flate2": [
+   "Byron",
+   "joshtriplett",
+   "rust-lang-owner"
+  ],
+  "fnv": [
+   "SimonSapin",
+   "github:servo:cargo-publish"
+  ],
+  "foldhash": [
+   "orlp"
+  ],
+  "form_urlencoded": [
+   "SimonSapin",
+   "github:servo:cargo-publish",
+   "github:servo:rust-url"
+  ],
+  "futures-channel": [
+   "cramertj",
+   "rust-lang-owner",
+   "taiki-e"
+  ],
+  "futures-core": [
+   "cramertj",
+   "rust-lang-owner",
+   "taiki-e"
+  ],
+  "futures-sink": [
+   "cramertj",
+   "rust-lang-owner",
+   "taiki-e"
+  ],
+  "futures-task": [
+   "cramertj",
+   "rust-lang-owner",
+   "taiki-e"
+  ],
+  "futures-util": [
+   "cramertj",
+   "rust-lang-owner",
+   "taiki-e"
+  ],
+  "generic-array": [
+   "fizyk20",
+   "novacrazy"
+  ],
+  "getrandom": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "h2": [
+   "carllerche",
+   "olix0r",
+   "seanmonstar"
+  ],
+  "hashbrown": [
+   "rust-lang-owner"
+  ],
+  "heck": [
+   "jplatte",
+   "withoutboats"
+  ],
+  "hmac": [
+   "github:rustcrypto:macs",
+   "newpavlov"
+  ],
+  "http": [
+   "carllerche",
+   "seanmonstar"
+  ],
+  "http-body": [
+   "carllerche",
+   "github:hyperium:http-util",
+   "seanmonstar"
+  ],
+  "http-body-util": [
+   "seanmonstar"
+  ],
+  "httparse": [
+   "seanmonstar"
+  ],
+  "hyper": [
+   "github:hyperium:core",
+   "seanmonstar"
+  ],
+  "hyper-rustls": [
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "hyper-util": [
+   "seanmonstar"
+  ],
+  "icu_collections": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "icu_locale_core": [
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "icu_normalizer": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "icu_normalizer_data": [
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "icu_properties": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "icu_properties_data": [
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "icu_provider": [
+   "github:unicode-org:icu4x-release",
+   "zbraniecki"
+  ],
+  "idna": [
+   "SimonSapin",
+   "github:servo:cargo-publish",
+   "github:servo:rust-url"
+  ],
+  "idna_adapter": [
+   "Manishearth",
+   "hsivonen",
+   "valenting"
+  ],
+  "indexmap": [
+   "bluss",
+   "cuviper"
+  ],
+  "indicatif": [
+   "djc",
+   "mitsuhiko"
+  ],
+  "inout": [
+   "github:rustcrypto:utils",
+   "newpavlov"
+  ],
+  "ipnet": [
+   "krisprice"
+  ],
+  "is_terminal_polyfill": [
+   "epage"
+  ],
+  "itoa": [
+   "dtolnay"
+  ],
+  "jiff": [
+   "BurntSushi"
+  ],
+  "jiff-core": [
+   "BurntSushi"
+  ],
+  "jobserver": [
+   "rust-lang-owner"
+  ],
+  "libc": [
+   "rust-lang-owner"
+  ],
+  "linux-raw-sys": [
+   "sunfishcode"
+  ],
+  "litemap": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "lock_api": [
+   "Amanieu",
+   "faern"
+  ],
+  "log": [
+   "rust-lang-owner"
+  ],
+  "lru-slab": [
+   "Ralith"
+  ],
+  "memchr": [
+   "BurntSushi"
+  ],
+  "miniz_oxide": [
+   "Frommi",
+   "oyvindln"
+  ],
+  "mio": [
+   "carllerche",
+   "github:tokio-rs:mio-core"
+  ],
+  "munge": [
+   "djkoloski"
+  ],
+  "munge_macro": [
+   "djkoloski"
+  ],
+  "once_cell": [
+   "matklad",
+   "vorner"
+  ],
+  "openssl-probe": [
+   "alexcrichton",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "ordered-multimap": [
+   "sgodwincs"
+  ],
+  "parking_lot": [
+   "Amanieu",
+   "faern"
+  ],
+  "parking_lot_core": [
+   "Amanieu",
+   "faern"
+  ],
+  "pbkdf2": [
+   "github:rustcrypto:kdfs",
+   "newpavlov"
+  ],
+  "pem-rfc7468": [
+   "github:rustcrypto:formats",
+   "tarcieri"
+  ],
+  "percent-encoding": [
+   "SimonSapin",
+   "github:servo:cargo-publish",
+   "github:servo:rust-url"
+  ],
+  "pin-project-lite": [
+   "taiki-e"
+  ],
+  "pkcs5": [
+   "github:rustcrypto:formats",
+   "newpavlov",
+   "tarcieri"
+  ],
+  "pkcs8": [
+   "github:rustcrypto:formats",
+   "newpavlov",
+   "tarcieri"
+  ],
+  "pkg-config": [
+   "joshtriplett",
+   "rust-lang-owner",
+   "sdroege"
+  ],
+  "portable-atomic": [
+   "taiki-e"
+  ],
+  "potential_utf": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "ppv-lite86": [
+   "kazcw"
+  ],
+  "proc-macro2": [
+   "dtolnay"
+  ],
+  "ptr_meta": [
+   "djkoloski"
+  ],
+  "ptr_meta_derive": [
+   "djkoloski"
+  ],
+  "quinn": [
+   "Ralith",
+   "djc"
+  ],
+  "quinn-proto": [
+   "Ralith",
+   "djc"
+  ],
+  "quinn-udp": [
+   "Ralith",
+   "djc",
+   "mxinden"
+  ],
+  "quote": [
+   "dtolnay"
+  ],
+  "rancor": [
+   "djkoloski"
+  ],
+  "rand": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "rand_chacha": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "rand_core": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "rand_pcg": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "ref-cast": [
+   "dtolnay"
+  ],
+  "ref-cast-impl": [
+   "dtolnay"
+  ],
+  "regex": [
+   "BurntSushi",
+   "github:rust-lang-nursery:regex-owners",
+   "rust-lang-owner"
+  ],
+  "regex-automata": [
+   "BurntSushi",
+   "rust-lang-owner"
+  ],
+  "regex-syntax": [
+   "BurntSushi",
+   "github:rust-lang-nursery:regex-owners",
+   "rust-lang-owner"
+  ],
+  "rend": [
+   "djkoloski"
+  ],
+  "reqwest": [
+   "seanmonstar"
+  ],
+  "ring": [
+   "briansmith"
+  ],
+  "rkyv": [
+   "djkoloski"
+  ],
+  "rkyv_derive": [
+   "djkoloski"
+  ],
+  "rust-ini": [
+   "zonyitoo"
+  ],
+  "rustc-hash": [
+   "rust-lang-owner"
+  ],
+  "rustix": [
+   "sunfishcode"
+  ],
+  "rustls": [
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "rustls-native-certs": [
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "rustls-pki-types": [
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "rustls-webpki": [
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "ryu": [
+   "dtolnay"
+  ],
+  "salsa20": [
+   "github:rustcrypto:stream-ciphers",
+   "newpavlov"
+  ],
+  "scopeguard": [
+   "Amanieu",
+   "bluss"
+  ],
+  "scrypt": [
+   "github:rustcrypto:kdfs",
+   "newpavlov"
+  ],
+  "semver": [
+   "dtolnay"
+  ],
+  "serde": [
+   "dtolnay",
+   "github:serde-rs:publish"
+  ],
+  "serde_core": [
+   "dtolnay",
+   "github:serde-rs:publish"
+  ],
+  "serde_derive": [
+   "dtolnay",
+   "github:serde-rs:publish"
+  ],
+  "serde_json": [
+   "dtolnay",
+   "github:serde-rs:publish"
+  ],
+  "serde_urlencoded": [
+   "nox"
+  ],
+  "sha2": [
+   "github:rustcrypto:hashes",
+   "newpavlov",
+   "tarcieri"
+  ],
+  "shlex": [
+   "comex",
+   "fenhl"
+  ],
+  "signal-hook-registry": [
+   "github:rust-bus:maintainers",
+   "vorner"
+  ],
+  "simd-adler32": [
+   "mcountryman"
+  ],
+  "simdutf8": [
+   "hkratz"
+  ],
+  "slab": [
+   "carllerche",
+   "github:tokio-rs:core"
+  ],
+  "smallvec": [
+   "Ms2ger",
+   "SimonSapin",
+   "alejandro-vaz",
+   "github:servo:cargo-publish"
+  ],
+  "socket2": [
+   "Thomasdezeeuw",
+   "github:tokio-rs:socket2",
+   "rust-lang-owner",
+   "sfackler"
+  ],
+  "sonic-number": [
+   "github:cloudwego:volo-team",
+   "liuq19",
+   "shenyj3"
+  ],
+  "sonic-rs": [
+   "github:cloudwego:volo-team",
+   "liuq19",
+   "shenyj3"
+  ],
+  "sonic-simd": [
+   "github:cloudwego:volo-team",
+   "liuq19",
+   "shenyj3"
+  ],
+  "spki": [
+   "github:rustcrypto:formats",
+   "tarcieri"
+  ],
+  "stable_deref_trait": [
+   "Kimundi",
+   "Storyyeller",
+   "jpernst"
+  ],
+  "strsim": [
+   "dguo",
+   "maxbachmann"
+  ],
+  "subtle": [
+   "github:dalek-cryptography:subtle-maintainers",
+   "isislovecruft"
+  ],
+  "syn": [
+   "dtolnay"
+  ],
+  "sync_wrapper": [
+   "github:actyx:developers",
+   "rkuhn"
+  ],
+  "synstructure": [
+   "mystor"
+  ],
+  "terminal_size": [
+   "eminence"
+  ],
+  "thiserror": [
+   "dtolnay"
+  ],
+  "thiserror-impl": [
+   "dtolnay"
+  ],
+  "tiny-keccak": [
+   "debris"
+  ],
+  "tinystr": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release",
+   "raphlinus",
+   "zbraniecki"
+  ],
+  "tinyvec": [
+   "Lokathor",
+   "github:rust-bus:maintainers"
+  ],
+  "tokio": [
+   "Darksonn",
+   "carllerche",
+   "github:tokio-rs:core"
+  ],
+  "tokio-macros": [
+   "carllerche",
+   "github:tokio-rs:core"
+  ],
+  "tokio-rustls": [
+   "djc",
+   "github:rustls:publishers",
+   "quininer"
+  ],
+  "tokio-util": [
+   "Darksonn",
+   "carllerche",
+   "github:tokio-rs:core"
+  ],
+  "tower": [
+   "carllerche",
+   "github:tower-rs:publish",
+   "seanmonstar"
+  ],
+  "tower-http": [
+   "carllerche",
+   "github:tower-rs:publish"
+  ],
+  "tower-layer": [
+   "carllerche",
+   "github:tower-rs:publish"
+  ],
+  "tower-service": [
+   "carllerche",
+   "github:tower-rs:publish",
+   "seanmonstar"
+  ],
+  "tracing": [
+   "carllerche",
+   "github:tokio-rs:publish-tracing",
+   "hawkw"
+  ],
+  "tracing-core": [
+   "github:tokio-rs:publish-tracing",
+   "hawkw"
+  ],
+  "try-lock": [
+   "seanmonstar"
+  ],
+  "typenum": [
+   "paholg"
+  ],
+  "unicode-ident": [
+   "dtolnay"
+  ],
+  "unicode-width": [
+   "Manishearth",
+   "SimonSapin",
+   "huonw",
+   "kwantam",
+   "sujayakar"
+  ],
+  "unit-prefix": [
+   "decathorpe"
+  ],
+  "untrusted": [
+   "briansmith"
+  ],
+  "url": [
+   "Hoverbear",
+   "SimonSapin",
+   "github:servo:cargo-publish",
+   "github:servo:rust-url",
+   "seanmonstar"
+  ],
+  "utf8_iter": [
+   "hsivonen"
+  ],
+  "utf8parse": [
+   "chrisduerr",
+   "github:alacritty:publishers",
+   "jwilm"
+  ],
+  "uuid": [
+   "KodrAus",
+   "rust-lang-owner"
+  ],
+  "version_check": [
+   "SergioBenitez"
+  ],
+  "want": [
+   "seanmonstar"
+  ],
+  "webpki-roots": [
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "writeable": [
+   "github:unicode-org:icu4x-release",
+   "zbraniecki"
+  ],
+  "yoke": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "yoke-derive": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "zerocopy": [
+   "joshlf",
+   "jswrenn"
+  ],
+  "zerofrom": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "zerofrom-derive": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "zeroize": [
+   "github:rustcrypto:utils",
+   "tarcieri"
+  ],
+  "zerotrie": [
+   "github:unicode-org:icu4x-release",
+   "sffc"
+  ],
+  "zerovec": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "zerovec-derive": [
+   "Manishearth",
+   "github:unicode-org:icu4x-release"
+  ],
+  "zlib-rs": [
+   "folkertdev",
+   "rnijveld"
+  ],
+  "zmij": [
+   "dtolnay"
+  ],
+  "zstd": [
+   "gyscos"
+  ],
+  "zstd-safe": [
+   "gyscos"
+  ],
+  "zstd-sys": [
+   "gyscos"
+  ]
+ }
+}

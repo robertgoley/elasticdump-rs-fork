@@ -121,6 +121,29 @@ jobs:
       - run: cargo +nightly install --locked --version 0.1.61 cargo-udeps
       - run: cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load
 
+  # L-212 / SUP-019: weekly crate publisher/ownership diff against supply-chain/publishers.json.
+  # Exit 10 (job fails) when an existing crate gains or loses an owner; the report is an artefact.
+  publishers:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - run: cargo install --locked --version 0.3.8 cargo-supply-chain
+      # no `update`: without the db-dump cache it queries the crates.io API (~2 s/crate, ~8 min)
+      - run: cargo supply-chain json > sc.json
+      - run: scripts/sup/publishers.py diff supply-chain/publishers.json sc.json --markdown | tee publishers-report.md >> "$GITHUB_STEP_SUMMARY"; exit "${PIPESTATUS[0]}"
+        shell: bash
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: publishers-report
+          path: |
+            publishers-report.md
+            sc.json
+
   # L-205 / SUP-008: coverage (T0+T1 here; T2 via scripts/sup/coverage.sh locally) and the
   # never-executed function list reviewed into docs/UNCOVERED-FUNCTIONS.md each release.
   coverage:

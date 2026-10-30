@@ -191,3 +191,12 @@ The executable baselines were reviewed on 2026-10-29 from images rebuilt at L-21
 All four variants pass. Negative check: testing the old dhi-debian image against the dhi-alpine baseline fails, both on undocumented executables and on a base that is not pinned by digest.
 
 After a reviewed base change, refresh a baseline with `scripts/test-image.sh <image> <variant> --update`.
+
+## Publisher monitoring (SUP-019)
+
+`supply-chain/publishers.json` records the crates.io owners of every dependency (220 crates, 142 distinct
+publishers at the 2026-10-30 snapshot, `cargo supply-chain` 0.3.8). The weekly `publishers` job in
+`security.yml` re-queries crates.io and runs `scripts/sup/publishers.py diff`; it fails (exit 10) when an
+existing crate gains or loses an owner, so a takeover or hand-over gets a human look before the next release.
+New or removed crates are listed but do not fail the job; the SBOM diff (SUP-020) covers them. After review,
+refresh the snapshot with `cargo supply-chain json > sc.json && scripts/sup/publishers.py snapshot sc.json`.
