@@ -657,6 +657,7 @@ The table in `cli/deprecated.rs` holds `(name, takes_value, Warn|Error, message)
     * for `index` without `_id`, retrying after an ambiguous failure can duplicate docs. Retry anyway (Node does), and warn once.
 * **Backoff.** Fixed by default. `--retryBackoff exponential` (30 s cap, full jitter) is the setting recommended in the docs.
 * **`Retry-After`.** On a 429/503 that carries `Retry-After: <seconds>`, the delay before the next attempt is at least that value, capped at 30 s (L-426). The HTTP-date form is ignored.
+* **Bulk requests that may have been applied (L-441).** A batch with `index`/`create` documents without `_id` (auto ids, e.g. a `--sourceOnly` dump) is re-sent only when the cluster provably did not apply it (HTTP 429 or a failed connect); after a reset or timeout the run fails and says the documents may already be indexed, instead of duplicating them. Batches with ids are re-sent as before. For `create`, 409 items in a re-sent request are counted as written by the earlier attempt, with a warning.
 
 ### 6.9 Concurrency and throttling
 * **`--concurrency N`:** a `JoinSet` with at most N in-flight sink writes. File sinks force N = 1 and warn.

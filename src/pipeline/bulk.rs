@@ -463,21 +463,36 @@ impl BulkSink {
         Ok(Body::NdjsonGzip(Bytes::from(enc.finish()?)))
     }
 
-    async fn send_bulk(&self, body: Vec<u8>) -> Result<Bytes> {
+    /// Send one bulk body. Returns the response and whether the request was sent more than
+    /// once (a retry after a failure that may have happened after the cluster applied it).
+    async fn send_bulk(&self, body: Vec<u8>, mode: RetryMode) -> Result<(Bytes, bool)> {
         let segments = self.bulk_segments();
         let seg_refs: Vec<&str> = segments.iter().map(String::as_str).collect();
         let seg_refs = &seg_refs;
         let body = self.compress(body)?;
         let body = &body;
         let client = &self.client;
-        send_with_retry(
-            self.opts.retry,
-            &self.cancel,
-            RetryMode::Idempotent,
-            "bulk",
-            move || client.send(Method::POST, seg_refs, &[], true, body.clone()),
-        )
-        .await
+        let sends = std::sync::atomic::AtomicUsize::new(0);
+        let sends = &sends;
+        let resp = send_with_retry(self.opts.retry, &self.cancel, mode, "bulk", move || {
+            sends.fetch_add(1, Ordering::Relaxed);
+            client.send(Method::POST, seg_refs, &[], true, body.clone())
+        })
+        .await?;
+        Ok((resp, sends.load(Ordering::Relaxed) > 1))
+    }
+
+    /// Documents of `pending` that the cluster would give a generated id (`index`/`create`
+    /// without `_id`, e.g. a `--sourceOnly` dump). Re-sending a bulk request that may have been
+    /// applied would duplicate them (TST-BRK-NET-003).
+    fn auto_id_docs(&self, chunk: &[&[u8]], pending: &[usize]) -> usize {
+        if !matches!(self.opts.action, BulkAction::Index | BulkAction::Create) {
+            return 0;
+        }
+        pending
+            .iter()
+            .filter(|&&i| get(chunk[i], &["_id"]).is_none())
+            .count()
     }
 
     /// Write one batch of document lines; returns once every item was
@@ -549,8 +564,28 @@ impl BulkSink {
         let mut body = body;
         let mut attempt = 0usize;
         loop {
-            let resp = self.send_bulk(body).await?;
-            let rejected = self.handle_response(&resp, chunk, &pending)?;
+            // Auto-id batches are not idempotent: they are re-sent only when the cluster
+            // provably did not apply them (HTTP 429, or the connection was never made).
+            let auto = self.auto_id_docs(chunk, &pending);
+            let mode = if auto > 0 {
+                RetryMode::RejectionOnly
+            } else {
+                RetryMode::Idempotent
+            };
+            let (resp, resent) = match self.send_bulk(body, mode).await {
+                Ok(r) => r,
+                Err(e)
+                    if auto > 0
+                        && !crate::http::is_cancelled(&e)
+                        && e.downcast_ref::<crate::http::EsHttpError>().is_none() =>
+                {
+                    return Err(e.context(format!(
+                        "the bulk request was not re-sent: it holds {auto} document(s) without _id and the connection failed after it was sent, so the cluster may already have indexed them and a retry would duplicate them under new ids. Check the target's document count before re-running; dumps that keep _id (no --sourceOnly) restore retry-safely"
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
+            let rejected = self.handle_response(&resp, chunk, &pending, resent)?;
             if rejected.is_empty() {
                 return Ok(());
             }
@@ -623,6 +658,7 @@ impl BulkSink {
         resp: &[u8],
         chunk: &[&[u8]],
         pending: &[usize],
+        resent: bool,
     ) -> Result<Vec<usize>> {
         let errors = get(resp, &["errors"]).and_then(|v| v.as_bool());
         if errors == Some(false) {
@@ -641,6 +677,7 @@ impl BulkSink {
             );
         }
         let mut rejected = Vec::new();
+        let mut created_earlier = 0u64;
         for (item, &doc_idx) in items.iter().zip(pending) {
             let raw = item.as_raw_str().as_bytes();
             let action = self.opts.action.as_str();
@@ -649,11 +686,21 @@ impl BulkSink {
                 .unwrap_or(0);
             if (200..400).contains(&status) {
                 self.report.written += 1;
+            } else if status == 409 && resent && self.opts.action == BulkAction::Create {
+                // the request was sent again after a failure; the first attempt most likely
+                // created the document (TST-BRK-NET-003)
+                self.report.written += 1;
+                created_earlier += 1;
             } else if (status == 429 || status == 503) && self.opts.retry.attempts > 0 {
                 rejected.push(doc_idx);
             } else {
                 self.report_failure(chunk[doc_idx], item.as_raw_str())?;
             }
+        }
+        if created_earlier > 0 {
+            log::warn!(
+                "{created_earlier} `create` item(s) answered 409 after the bulk request was re-sent; counted as written by the earlier attempt (a document that existed before the run would be counted the same way)"
+            );
         }
         Ok(rejected)
     }
@@ -844,7 +891,12 @@ mod tests {
         let mut s = sink(os(), |o| o.ignore_es_write_errors = true);
         let docs: Vec<&[u8]> = vec![b"{}", b"{}", b"{}"];
         let r = s
-            .handle_response(br#"{"errors":false,"items":[{},{},{}]}"#, &docs, &[0, 1, 2])
+            .handle_response(
+                br#"{"errors":false,"items":[{},{},{}]}"#,
+                &docs,
+                &[0, 1, 2],
+                false,
+            )
             .unwrap();
         assert!(r.is_empty());
         assert_eq!(s.report.written, 3);
@@ -853,6 +905,7 @@ mod tests {
                 br#"{"errors":true,"items":[{"index":{"status":201}},{"index":{"status":400,"error":{"type":"mapper_parsing_exception"}}},{"index":{"status":429}}]}"#,
                 &docs,
                 &[0, 1, 2],
+                false,
             )
             .unwrap();
         assert!(r.is_empty(), "no retries configured");
@@ -872,7 +925,8 @@ mod tests {
             s.handle_response(
                 br#"{"errors":true,"items":[{"index":{"status":400}}]}"#,
                 &docs[..1],
-                &[0]
+                &[0],
+                false
             )
             .is_err()
         );
@@ -883,9 +937,42 @@ mod tests {
                 br#"{"errors":true,"items":[{"index":{"status":201}},{"index":{"status":429}},{"index":{"status":503}}]}"#,
                 &docs,
                 &[0, 1, 2],
+                false,
             )
             .unwrap();
         assert_eq!(r, vec![1, 2]);
+    }
+
+    #[test]
+    fn create_409_after_a_resend_counts_as_written() {
+        let docs: Vec<&[u8]> = vec![
+            br#"{"_id":"1","_source":{}}"#,
+            br#"{"_id":"2","_source":{}}"#,
+        ];
+        let conflict = br#"{"errors":true,"items":[{"create":{"status":201}},{"create":{"status":409,"error":{"type":"version_conflict_engine_exception"}}}]}"#;
+        let mut s = sink(os(), |o| {
+            o.action = BulkAction::Create;
+            o.ignore_es_write_errors = true;
+        });
+        s.handle_response(conflict, &docs, &[0, 1], true).unwrap();
+        assert_eq!((s.report.written, s.report.failed), (2, 0));
+        // without a re-send a 409 is a real conflict
+        s.handle_response(conflict, &docs, &[0, 1], false).unwrap();
+        assert_eq!((s.report.written, s.report.failed), (3, 1));
+    }
+
+    #[test]
+    fn auto_id_docs_are_counted_for_index_and_create_only() {
+        let docs: Vec<&[u8]> = vec![
+            br#"{"a":1}"#,
+            br#"{"_id":"x","_source":{}}"#,
+            br#"{"_source":{"b":2}}"#,
+        ];
+        let s = sink(os(), |_| {});
+        assert_eq!(s.auto_id_docs(&docs, &[0, 1, 2]), 2);
+        assert_eq!(s.auto_id_docs(&docs, &[1]), 0);
+        let s = sink(os(), |o| o.action = BulkAction::Delete);
+        assert_eq!(s.auto_id_docs(&docs, &[0, 2]), 0);
     }
 }
 

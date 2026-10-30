@@ -1901,3 +1901,107 @@ async fn tls_failures_have_one_clear_message() {
     }
     drop(servers);
 }
+
+// L-441 (TST-BRK-NET-003): the connection is reset after the cluster read (and applied) a
+// `_bulk` request. Explicit ids: re-sent, harmless. Auto-id documents: never re-sent, the run
+// fails and says why (a re-send would duplicate them). `create`: the re-sent request's 409s are
+// counted as written by the first attempt, not as failures.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_reset_after_apply_is_never_a_silent_duplicate() {
+    use support::router_mock::{Fault, Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let with_ids = dir.path().join("ids.json");
+    std::fs::write(
+        &with_ids,
+        format!("{}\n{}\n", hit("1", "{\"a\":1}"), hit("2", "{\"a\":2}")),
+    )
+    .unwrap();
+    let no_ids = dir.path().join("src.json");
+    std::fs::write(&no_ids, "{\"a\":1}\n{\"a\":2}\n").unwrap();
+    let mock = |second: &str| {
+        let second = second.to_string();
+        async move {
+            RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+                .route(
+                    Route::contains("POST", "/_bulk")
+                        .replies([Reply::ok("{}").with_fault(Fault::Reset), Reply::ok(second)]),
+                )
+                .fallback(Reply::ok(
+                    r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+                ))
+                .start()
+                .await
+        }
+    };
+    let args = |input: &std::path::Path, url: String, extra: &[&str]| -> Vec<String> {
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            url,
+            "--noRefresh".into(),
+            "--retryDelay".into(),
+            "1".into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    };
+    let bulks = |m: &RouterMock| {
+        m.requests()
+            .iter()
+            .filter(|r| r.path.ends_with("/_bulk"))
+            .count()
+    };
+
+    // explicit ids: the whole batch is re-sent once and the run succeeds
+    let m = mock(
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":200}},{"index":{"status":200}}]}"#,
+    )
+    .await;
+    let o = run_async(args(&with_ids, format!("{}/dst", m.url()), &[]), vec![]).await;
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert_eq!(bulks(&m), 2, "{err}");
+    assert!(err.contains("Total Writes: 2"), "{err}");
+
+    // auto ids: sent once, never re-sent, exit 1 with the reason
+    let m = mock(
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#,
+    )
+    .await;
+    let o = run_async(args(&no_ids, format!("{}/dst", m.url()), &[]), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert_eq!(bulks(&m), 1, "an auto-id batch must not be re-sent: {err}");
+    assert!(
+        err.contains("not re-sent") && err.contains("2 document(s) without _id"),
+        "{err}"
+    );
+
+    // create: the re-sent request answers 409 for what the first attempt created
+    let m = mock(r#"{"took":1,"errors":true,"items":[{"create":{"status":409,"error":{"type":"version_conflict_engine_exception","reason":"document already exists"}}},{"create":{"status":409,"error":{"type":"version_conflict_engine_exception","reason":"document already exists"}}}]}"#).await;
+    let o = run_async(
+        args(
+            &with_ids,
+            format!("{}/dst", m.url()),
+            &[
+                "--bulkAction",
+                "create",
+                "--ignore-es-write-errors",
+                "false",
+            ],
+        ),
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert_eq!(bulks(&m), 2, "{err}");
+    assert!(err.contains("Total Writes: 2"), "{err}");
+    assert!(
+        err.contains("counted as written by the earlier attempt"),
+        "{err}"
+    );
+}
