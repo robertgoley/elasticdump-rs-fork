@@ -313,9 +313,13 @@ where
             return Err(anyhow::Error::new(DumpCancelled));
         }
 
+        let mut retry_after: Option<Duration> = None;
         let (outcome, error) = match build_and_send().await {
             Ok(response) => {
                 let status = response.status();
+                if matches!(status.as_u16(), 429 | 503) {
+                    retry_after = parse_retry_after(response.headers());
+                }
                 match response.bytes().await {
                     Ok(bytes) if status.is_success() => return Ok(bytes),
                     Ok(bytes) => {
@@ -349,7 +353,11 @@ where
             return Err(error);
         }
 
-        let delay = retry.delay_for(attempt);
+        // A server-sent `Retry-After` (seconds) on 429/503 is honoured as a
+        // minimum delay, capped at MAX_RETRY_DELAY.
+        let delay = retry
+            .delay_for(attempt)
+            .max(retry_after.unwrap_or_default().min(MAX_RETRY_DELAY));
         warn!(
             "{prefix}{operation} failed (attempt {} of {}), retrying in {:?}: {:#}",
             attempt + 1,
@@ -364,6 +372,12 @@ where
         }
         attempt += 1;
     }
+}
+
+/// `Retry-After` in delay-seconds form (the HTTP-date form is ignored).
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let v = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    v.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
 
 pub fn validate_response_bytes(
@@ -461,6 +475,110 @@ mod tests {
         p.backoff = Backoff::Exponential;
         assert_eq!(p.delay_for(3), Duration::from_millis(800));
         assert_eq!(p.delay_for(30), MAX_RETRY_DELAY);
+    }
+
+    /// Scripted responses: each call pops the next (status, Retry-After) and
+    /// records the (virtual) instant of the attempt.
+    struct Script {
+        replies: std::sync::Mutex<std::collections::VecDeque<(u16, Option<&'static str>)>>,
+        at: std::sync::Mutex<Vec<tokio::time::Instant>>,
+    }
+
+    impl Script {
+        fn new(replies: &[(u16, Option<&'static str>)]) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                replies: std::sync::Mutex::new(replies.iter().copied().collect()),
+                at: std::sync::Mutex::new(vec![]),
+            })
+        }
+        fn gaps(&self) -> Vec<Duration> {
+            let at = self.at.lock().unwrap();
+            at.windows(2).map(|w| w[1] - w[0]).collect()
+        }
+    }
+
+    async fn drive(
+        p: RetryPolicy,
+        mode: RetryMode,
+        script: &std::sync::Arc<Script>,
+    ) -> Result<Bytes> {
+        let cancel = CancellationToken::new();
+        send_with_retry(p, &cancel, mode, "op", || {
+            let s = script.clone();
+            async move {
+                s.at.lock().unwrap().push(tokio::time::Instant::now());
+                let (status, ra) = s
+                    .replies
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("unexpected attempt");
+                let mut b = http::Response::builder().status(status);
+                if let Some(ra) = ra {
+                    b = b.header("Retry-After", ra);
+                }
+                Ok(reqwest::Response::from(b.body("{}").unwrap()))
+            }
+        })
+        .await
+    }
+
+    // L-426 (TST-API-050): exact attempt counts and delays per request kind.
+    #[tokio::test(start_paused = true)]
+    async fn attempts_and_delays_per_request_kind() {
+        // Idempotent kinds (initial search, PIT, whole _bulk, meta PUTs): 429 twice then 200.
+        let s = Script::new(&[(429, None), (429, None), (200, None)]);
+        drive(policy(), RetryMode::Idempotent, &s).await.unwrap();
+        assert_eq!(s.gaps(), vec![Duration::from_millis(100); 2]);
+        // Exponential backoff: 100, 200, 400 ms; then attempts exhausted (1 + 3).
+        let mut p = policy();
+        p.backoff = Backoff::Exponential;
+        let s = Script::new(&[(503, None), (502, None), (500, None), (504, None)]);
+        let e = drive(p, RetryMode::Idempotent, &s).await.unwrap_err();
+        assert!(e.to_string().contains("HTTP 504"), "{e}");
+        assert_eq!(
+            s.gaps(),
+            [100, 200, 400].map(Duration::from_millis).to_vec()
+        );
+        // Scroll continuation: 429 is retried ...
+        let s = Script::new(&[(429, None), (200, None)]);
+        drive(policy(), RetryMode::RejectionOnly, &s).await.unwrap();
+        assert_eq!(s.gaps().len(), 1);
+        // ... 5xx is not (one attempt only).
+        let s = Script::new(&[(503, None)]);
+        assert!(drive(policy(), RetryMode::RejectionOnly, &s).await.is_err());
+        assert_eq!(s.at.lock().unwrap().len(), 1);
+        // --retryAttempts 0: exactly one attempt.
+        let mut p = policy();
+        p.attempts = 0;
+        let s = Script::new(&[(429, None)]);
+        assert!(drive(p, RetryMode::Idempotent, &s).await.is_err());
+        assert_eq!(s.at.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_after_is_a_capped_minimum() {
+        let s = Script::new(&[
+            (429, Some("7")),
+            (503, Some("600")),
+            (429, Some("Wed, 21 Oct 2015 07:28:00 GMT")),
+            (200, None),
+        ]);
+        drive(policy(), RetryMode::Idempotent, &s).await.unwrap();
+        assert_eq!(
+            s.gaps(),
+            vec![
+                Duration::from_secs(7),
+                MAX_RETRY_DELAY,
+                Duration::from_millis(100)
+            ]
+        );
+        // Retry-After below the configured delay does not shorten it.
+        let mut p = policy();
+        p.base_delay = Duration::from_secs(5);
+        let s = Script::new(&[(429, Some("1")), (200, None)]);
+        drive(p, RetryMode::RejectionOnly, &s).await.unwrap();
+        assert_eq!(s.gaps(), vec![Duration::from_secs(5)]);
     }
 
     #[test]

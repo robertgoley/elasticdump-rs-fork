@@ -656,6 +656,7 @@ The table in `cli/deprecated.rs` holds `(name, takes_value, Warn|Error, message)
     * for `create`, a 409 on a replay counts as success only when that replay came from our own retry, tracked per batch;
     * for `index` without `_id`, retrying after an ambiguous failure can duplicate docs. Retry anyway (Node does), and warn once.
 * **Backoff.** Fixed by default. `--retryBackoff exponential` (30 s cap, full jitter) is the setting recommended in the docs.
+* **`Retry-After`.** On a 429/503 that carries `Retry-After: <seconds>`, the delay before the next attempt is at least that value, capped at 30 s (L-426). The HTTP-date form is ignored.
 
 ### 6.9 Concurrency and throttling
 * **`--concurrency N`:** a `JoinSet` with at most N in-flight sink writes. File sinks force N = 1 and warn.
