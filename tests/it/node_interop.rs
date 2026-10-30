@@ -589,3 +589,142 @@ async fn node_interop_every_type() {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+// L-434 (TST-API-061): compression interop on single files (split parts are covered by
+// files::node_interop_split_names_and_gzip). Node gzip -> Rust (auto-detected, with and without
+// --fsCompress); Rust gzip -> Node (--fsCompress); Rust zstd -> Node is refused: Node cannot
+// read .zst (README "zstd"), so it must fail or write nothing, never import garbage.
+#[tokio::test]
+async fn compression_interop_gzip_both_ways_zstd_refused_by_node() {
+    if node_bin().is_none() {
+        println!("SKIP: node elasticdump not installed");
+        return;
+    }
+    let c = Cluster::from_env();
+    let src = unique("ncomp_src");
+    seed_index(&c, &src, 500).await;
+    // The big-integer documents of seed_index are left out of the comparison: Node's
+    // --support-big-int writes integers >= 1e21 in exponent form (value-equal, not byte-equal;
+    // byte equality is L-437's subject with Node's own fixtures).
+    let digest = |m: std::collections::BTreeMap<String, (Option<String>, Value)>| {
+        m.into_iter()
+            .filter(|(_, (_, v))| v["k"] != "bigint")
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let want = digest(c.docs(&src).await);
+    let dir = tempfile::tempdir().unwrap();
+    // Node gzip -> Rust
+    let ngz = dir.path().join("node.json.gz");
+    let o = run_node(&s(&[
+        "--input",
+        &c.url_with_auth(&src),
+        "--output",
+        ngz.to_str().unwrap(),
+        "--fsCompress",
+        "--support-big-int",
+    ]))
+    .await;
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(
+        &std::fs::read(&ngz).unwrap()[..2],
+        &[0x1f, 0x8b],
+        "Node wrote gzip"
+    );
+    for extra in [&[][..], &["--fsCompress"][..]] {
+        let dst = unique("ncomp_r");
+        c.copy_shape(&src, &dst).await;
+        let mut a = s(&[
+            "--input",
+            ngz.to_str().unwrap(),
+            "--output",
+            &c.url_with_auth(&dst),
+        ]);
+        a.extend(c.tls_args("output"));
+        a.extend(s(extra));
+        assert_success(&run(a).await);
+        let got = digest(c.docs(&dst).await);
+        let diff: Vec<_> = want
+            .iter()
+            .filter(|(k, v)| got.get(*k) != Some(v))
+            .map(|(k, v)| format!("{k}: want {v:?} got {:?}", got.get(k)))
+            .take(3)
+            .collect();
+        assert!(
+            diff.is_empty(),
+            "node gzip -> rust {extra:?} ({} vs {} docs): {diff:?}",
+            got.len(),
+            want.len()
+        );
+        c.delete_index(&dst).await;
+    }
+    // (seed_index holds big integers: Node needs --support-big-int to keep them)
+    // Rust gzip -> Node
+    let rgz = dir.path().join("rust.json.gz");
+    let mut a = s(&[
+        "--input",
+        &c.url_with_auth(&src),
+        "--output",
+        rgz.to_str().unwrap(),
+        "--fsCompress",
+        "--overwrite",
+    ]);
+    a.extend(c.tls_args("input"));
+    assert_success(&run(a).await);
+    let dst = unique("ncomp_n");
+    c.copy_shape(&src, &dst).await;
+    let o = run_node(&s(&[
+        "--input",
+        rgz.to_str().unwrap(),
+        "--output",
+        &c.url_with_auth(&dst),
+        "--fsCompress",
+        "--support-big-int",
+    ]))
+    .await;
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    c.ok("POST", &format!("{dst}/_refresh"), None).await;
+    assert_eq!(digest(c.docs(&dst).await), want, "rust gzip -> node");
+    c.delete_index(&dst).await;
+    // Rust zstd -> Node: refused (error or nothing written), with or without --fsCompress
+    let zst = dir.path().join("rust.json.zst");
+    let mut a = s(&[
+        "--input",
+        &c.url_with_auth(&src),
+        "--output",
+        zst.to_str().unwrap(),
+        "--compressionType",
+        "zstd",
+    ]);
+    a.extend(c.tls_args("input"));
+    assert_success(&run(a).await);
+    assert_eq!(
+        &std::fs::read(&zst).unwrap()[..4],
+        &[0x28, 0xb5, 0x2f, 0xfd],
+        "zstd magic"
+    );
+    for extra in [&[][..], &["--fsCompress"][..]] {
+        let dst = unique("ncomp_z");
+        c.copy_shape(&src, &dst).await;
+        let mut a = s(&[
+            "--input",
+            zst.to_str().unwrap(),
+            "--output",
+            &c.url_with_auth(&dst),
+        ]);
+        a.extend(s(extra));
+        let o = run_node(&a).await;
+        c.ok("POST", &format!("{dst}/_refresh"), None).await;
+        let n = c.count(&dst).await;
+        println!(
+            "zstd -> node {extra:?}: exit {:?}, {n} docs",
+            o.status.code()
+        );
+        assert!(
+            !o.status.success() || n == 0,
+            "Node imported a zstd file: exit 0 with {n} docs"
+        );
+        assert_eq!(n, 0, "Node must not import anything from a zstd file");
+        c.delete_index(&dst).await;
+    }
+    c.delete_index(&src).await;
+}
