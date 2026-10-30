@@ -26,9 +26,13 @@ fn continuation_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error 
     // 4xx answers (other than 408) are not something a retry would fix, so
     // the "not retried" explanation would only mislead (e.g. a 403 because
     // OpenSearch needs a cluster permission for scroll).
-    if crate::http::is_cancelled(&error)
-        || status.is_some_and(|s| (400..500).contains(&s) && s != 408)
-    {
+    if crate::http::is_cancelled(&error) {
+        return error;
+    }
+    if super::retrieval_task::search_context_lost(&error) {
+        return super::retrieval_task::context_lost_error(error, slice_id, "scroll");
+    }
+    if status.is_some_and(|s| (400..500).contains(&s) && s != 408) {
         return error;
     }
     error.context(format!(

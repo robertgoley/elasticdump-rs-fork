@@ -1,0 +1,29 @@
+{
+ "task": "L-606",
+ "req": "BRK-NET-009",
+ "date": "2026-10-30T13:40-04:00",
+ "engine": "OpenSearch 2.19.7 single node (opensearch-plain OS_TAG=2)",
+ "script": "scripts/res/restart.sh",
+ "docs": 20000,
+ "log": [
+  "clean digest: 11757b3d5da583d11754b6cc06113c8e42aedc9cea0cc2cd4d308c5073219b84 20000",
+  "dump-scroll: rc=1 down=13s msg: Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resumes only from a still-open scroll and the page in flight may be missing): Slice 0: Elasticsearch con",
+  "RESULT dump-scroll: OK (exit 1, nothing committed, context-lost/rerun message)",
+  "RESULT dump-scroll-rerun: OK (digest equal)",
+  "dump-pit: rc=1 down=11s msg: Error: Retrieval task failed: Slice 0: a point-in-time page failed after its retries; nothing was committed. Re-run the dump (if the cluster restarted, its point-in-time context is gone; a larger --retryAttempts/--retryDelay rides out a short outage only while the cluster keeps the context): Slice 0: Elasticsearch continuation search request failed: error sending request for url (http://127.0.0.1:",
+  "RESULT dump-pit: OK (exit 1, nothing committed, context-lost/rerun message)",
+  "RESULT dump-pit-rerun: OK (digest equal)",
+  "dump-scroll-long: rc=1 down=11s msg: Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resumes only from a still-open scroll and the page in flight may be missing): Slice 0: Elasticsearch con",
+  "RESULT dump-scroll-long: OK (exit 1, nothing committed, context-lost/rerun message)",
+  "RESULT dump-scroll-long-rerun: OK (digest equal)",
+  "dump-pit-long: rc=1 down=11s msg: Error: Retrieval task failed: Slice 0: the point-in-time context no longer exists on the cluster: it expired (raise --pitKeepAlive when pages are slow to write) or the node holding it restarted; nothing was committed. Re-run the dump: Slice 0: Elasticsearch continuation search failed with HTTP 404: search_phase_execution_exception: all shards failed (caused by search_context_missing_exception: No ",
+  "RESULT dump-pit-long: OK (exit 1, nothing committed, context-lost/rerun message)",
+  "RESULT dump-pit-long-rerun: OK (digest equal)",
+  "restore-covered: rc=0 down=10s count=20000 msg: ",
+  "RESULT restore-covered: OK (survived the restart, 20000 docs)",
+  "restore-short: rc=1 down=11s count=3600 msg: Error: Elasticsearch bulk request failed: error sending request for url (http://127.0.0.1:19200/rr/_bulk): client error (Connect): tcp connect error: Connection refused (os error 111) (connection refused: the cluster is down or restarting, or the URL's port is wrong; --retryAttempts/--retryDelay set how long to wait for it)",
+  "RESULT restore-short: OK (exit 1: clear error)",
+  "RESULT restore-short-rerun: OK (rerun restored 20000 docs (explicit _ids: idempotent))",
+  "OVERALL: PASS"
+ ]
+}

@@ -126,6 +126,7 @@ pub(crate) async fn run_pit_slice(
     {
         Ok(bytes) => bytes,
         Err(error) => {
+            let error = super::retrieval_task::pit_page_failure(error, state.slice_id);
             abort_shared_pit(&Some(shared_pit.clone()), &error);
             return Err(error);
         }
@@ -241,6 +242,7 @@ pub(crate) async fn run_pit_slice(
         {
             Ok(bytes) => bytes,
             Err(error) => {
+                let error = super::retrieval_task::pit_page_failure(error, state.slice_id);
                 abort_shared_pit(&Some(shared_pit.clone()), &error);
                 return Err(error);
             }

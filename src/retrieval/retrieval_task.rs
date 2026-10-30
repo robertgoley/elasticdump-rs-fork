@@ -52,6 +52,54 @@ pub(crate) fn abort_shared_pit(shared_pit: &Option<SharedPitCoordinator>, error:
     }
 }
 
+/// The cluster no longer has the scroll or point-in-time context: it expired, or the node
+/// holding it restarted (TST-BRK-NET-009, BRK-SRV-007).
+pub(crate) fn search_context_lost(error: &anyhow::Error) -> bool {
+    let text = format!("{error:#}");
+    [
+        "search_context_missing",
+        "No search context found",
+        "SearchContextMissing",
+    ]
+    .iter()
+    .any(|n| text.contains(n))
+}
+
+pub(crate) fn context_lost_error(
+    error: anyhow::Error,
+    slice_id: usize,
+    kind: &str,
+) -> anyhow::Error {
+    let knob = if kind == "scroll" {
+        "--scrollTime"
+    } else {
+        "--pitKeepAlive"
+    };
+    error.context(format!(
+        "Slice {slice_id}: the {kind} context no longer exists on the cluster: it expired (raise {knob} when pages are slow to write) or the node holding it restarted; nothing was committed. Re-run the dump"
+    ))
+}
+
+/// A point-in-time page that failed for good (TST-BRK-NET-009): say whether the context is
+/// gone and that a rerun is the way out. Cancellation passes through unchanged.
+pub(crate) fn pit_page_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error {
+    if crate::http::is_cancelled(&error) {
+        return error;
+    }
+    if search_context_lost(&error) {
+        return context_lost_error(error, slice_id, "point-in-time");
+    }
+    let status = error
+        .downcast_ref::<crate::http::EsHttpError>()
+        .map(|h| h.status);
+    if status.is_some_and(|s| (400..500).contains(&s) && s != 408) {
+        return error;
+    }
+    error.context(format!(
+        "Slice {slice_id}: a point-in-time page failed after its retries; nothing was committed. Re-run the dump (if the cluster restarted, its point-in-time context is gone; a larger --retryAttempts/--retryDelay rides out a short outage only while the cluster keeps the context)"
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TotalHitsEstimate {
     pub(crate) value: u64,

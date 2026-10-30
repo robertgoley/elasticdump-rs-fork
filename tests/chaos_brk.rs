@@ -760,3 +760,57 @@ async fn l605_dns_failures_fail_fast_are_bounded_or_retried() {
     );
     assert_eq!(std::fs::read_to_string(&out).unwrap().lines().count(), N);
 }
+
+// L-606 (TST-BRK-NET-009), mock half: after a node restart the cluster answers the next page
+// with 404 search_context_missing. Scroll and PIT dumps fail with a "context no longer exists
+// ... re-run" message and commit nothing. (The live restart run is scripts/res/restart.sh.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l606_lost_search_context_says_rerun() {
+    let missing = r#"{"error":{"root_cause":[{"type":"search_context_missing_exception","reason":"No search context found for id [7]"}],"type":"search_phase_execution_exception","reason":"all shards failed"},"status":404}"#;
+    let es = r#"{"version":{"number":"8.19.0","build_flavor":"default"},"tagline":"You Know, for Search"}"#;
+    for pit in [false, true] {
+        let first = if pit {
+            r#"{"pit_id":"p1","hits":{"total":{"value":3,"relation":"eq"},"hits":[{"_index":"idx","_id":"1","_source":{},"sort":[1]}]},"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"timed_out":false}"#.to_string()
+        } else {
+            page("s1", &[hit("1", "{}")], 3)
+        };
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(es)))
+            .route(Route::contains("POST", "/idx/_pit").reply(Reply::ok(r#"{"id":"p1"}"#)))
+            .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(&first)))
+            .route(
+                Route::exact("POST", "/_search")
+                    .replies([Reply::ok(&first), Reply::json(404, missing)]),
+            )
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::json(404, missing)))
+            .fallback(Reply::ok(CLEARED))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let mut a = s(&[
+            "--input",
+            &format!("{}/idx", m.url()),
+            "--output",
+            out.to_str().unwrap(),
+            "--limit",
+            "1",
+            "--retryDelay",
+            "1",
+        ]);
+        if pit {
+            a.extend(s(&["--searchType", "pit"]));
+        }
+        let o = run_async(a, vec![]).await;
+        let err = stderr(&o);
+        let kind = if pit { "point-in-time" } else { "scroll" };
+        assert_eq!(o.status.code(), Some(1), "{kind}: {err}");
+        assert!(
+            err.contains(&format!("the {kind} context no longer exists"))
+                && err.contains("restarted")
+                && err.contains("Re-run the dump"),
+            "{kind}: {err}"
+        );
+        assert!(!out.exists(), "{kind}");
+    }
+}

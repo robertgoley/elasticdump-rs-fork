@@ -641,9 +641,13 @@ where
                     } else {
                         classify(&e)
                     };
-                    let hint = hint
-                        .map(|(_, h)| format!(" ({h})"))
-                        .unwrap_or_else(|| timeout_hint(&e).to_string());
+                    let hint = hint.map(|(_, h)| format!(" ({h})")).unwrap_or_else(|| {
+                        if chain.contains("Connection refused") {
+                            " (connection refused: the cluster is down or restarting, or the URL's port is wrong; --retryAttempts/--retryDelay set how long to wait for it)".to_string()
+                        } else {
+                            timeout_hint(&e).to_string()
+                        }
+                    });
                     (
                         outcome,
                         anyhow!("{prefix}Elasticsearch {operation} request failed: {chain}{hint}"),
