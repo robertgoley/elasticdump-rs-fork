@@ -1616,3 +1616,132 @@ async fn scripts_round_trip_empty_and_monitor_privilege() {
             .await;
     }
 }
+
+// L-429 (TST-API-053): version conflicts. `create` on existing ids and `--handleVersion
+// --versionType external` with a lower version are counted per item like the server reports
+// them; the exit code follows --ignore-es-write-errors (default true: exit 0 + Failed Writes).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn version_conflicts_counted_and_exit_follows_ignore_flags() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let dst = unique("api_vc");
+    c.delete_index(&dst).await;
+    c.ok(
+        "PUT",
+        &dst,
+        Some(json!({"settings": {"number_of_shards": 1, "number_of_replicas": 0}})),
+    )
+    .await;
+    // existing: e0..e4 at external version 5
+    for i in 0..5 {
+        c.ok(
+            "PUT",
+            &format!("{dst}/_doc/e{i}?version=5&version_type=external"),
+            Some(json!({"n": i, "orig": true})),
+        )
+        .await;
+    }
+    c.ok("POST", &format!("{dst}/_refresh"), None).await;
+    // create: e0..e4 conflict, n0..n4 are new
+    let mut input = String::new();
+    for i in 0..5 {
+        input.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"e{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+        input.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"n{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+    }
+    let file = tmp_path("api_vc", "json");
+    std::fs::write(&file, &input).unwrap();
+    let dst_url = c.url_with_auth(&dst);
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &dst_url,
+        &["--bulkAction", "create"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(report_counts(&o), (5, 5), "{err}");
+    assert!(err.contains("version_conflict_engine_exception"), "{err}");
+    // the same with --ignore-es-write-errors false: exit 1, counts unchanged semantics
+    c.delete_index(&dst).await;
+    c.ok(
+        "PUT",
+        &dst,
+        Some(json!({"settings": {"number_of_shards": 1, "number_of_replicas": 0}})),
+    )
+    .await;
+    for i in 0..5 {
+        c.ok(
+            "PUT",
+            &format!("{dst}/_doc/e{i}?version=5&version_type=external"),
+            Some(json!({"n": i, "orig": true})),
+        )
+        .await;
+    }
+    c.ok("POST", &format!("{dst}/_refresh"), None).await;
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &dst_url,
+        &[
+            "--bulkAction",
+            "create",
+            "--ignore-es-write-errors",
+            "false",
+        ],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("version_conflict_engine_exception"), "{err}");
+
+    // --handleVersion --versionType external: lower (3) conflicts, higher (7) wins
+    let mut vin = String::new();
+    for i in 0..5 {
+        let v = if i % 2 == 0 { 3 } else { 7 };
+        vin.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"e{i}\",\"_version\":{v},\"_source\":{{\"n\":{},\"orig\":false}}}}\n",
+            100 + i
+        ));
+    }
+    let vfile = tmp_path("api_vc_ver", "json");
+    std::fs::write(&vfile, &vin).unwrap();
+    let o = run_loud(io(
+        &c,
+        vfile.to_str().unwrap(),
+        &dst_url,
+        &["--handleVersion", "--versionType", "external"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(report_counts(&o), (2, 3), "{err}");
+    c.ok("POST", &format!("{dst}/_refresh"), None).await;
+    for i in 0..5 {
+        let d = c.ok("GET", &format!("{dst}/_doc/e{i}"), None).await;
+        let (want_v, want_orig) = if i % 2 == 0 { (5, true) } else { (7, false) };
+        assert_eq!(d["_version"], json!(want_v), "e{i}: {d}");
+        assert_eq!(d["_source"]["orig"], json!(want_orig), "e{i}: {d}");
+    }
+    // external_gte with an equal version is accepted
+    let o = run_loud(io(
+        &c,
+        vfile.to_str().unwrap(),
+        &dst_url,
+        &["--handleVersion", "--versionType", "external_gte"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(
+        report_counts(&o),
+        (2, 3),
+        "external_gte: 7>=7 ok, 3<5 conflicts: {err}"
+    );
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(vfile);
+    c.delete_index(&dst).await;
+}
