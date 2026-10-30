@@ -138,6 +138,12 @@ for every place the tool changes what is loaded, and for the tested versions, se
   combined with splitting.
 * **`--searchWithTemplate`** renders `{"id"|"source", "params"}` via `_render/template`, then searches normally.
 * **Big integers and unicode** are preserved byte-for-byte in both directions (no `--support-big-int` needed).
+* **Restored documents are sent as written in the file.** Node re-serialises every `_source` and `_id` (escape forms
+  such as `\u00e9` become `é`, `1.0` becomes `1`, `1e21` becomes `1e+21`, integer-like keys move first, integers
+  beyond 2^53 are rounded or turned into strings); the Rust tool passes the JSON text through unchanged. Node also sends
+  each bulk batch in reverse file order, so when one batch holds two documents with the same `_id` the earlier line
+  wins in Node and the later line wins here (file order). Verified on 10,000 random documents by
+  `scripts/node/bulk-diff.py` (L-506): every other byte difference is one of these.
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
 * **`--username`/`--password` apply to the input only.**
 * **Metadata types** fix several Node bugs (listed in [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md)); intentional

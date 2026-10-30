@@ -1,0 +1,15 @@
+{
+ "docs": 10000,
+ "node_docs": 10000,
+ "rust_docs": 10000,
+ "byte_equal": 842,
+ "documented_reserialisation": 8399,
+ "documented_bigint": 759,
+ "undocumented": 0,
+ "action_lines_equal": 4626,
+ "node_order_differs": true,
+ "missing": [],
+ "rust_order_is_input_order": true,
+ "examples": [],
+ "pass": true
+}
