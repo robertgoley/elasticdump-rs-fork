@@ -181,6 +181,11 @@ impl SealedOutput {
         &self.final_path
     }
 
+    /// Whether committing may replace an existing file (`--overwrite`).
+    pub fn replaces(&self) -> bool {
+        self.overwrite
+    }
+
     /// Move the staged file into place (rename with `--overwrite`, otherwise
     /// a race-free hard link that refuses to clobber a file created meanwhile).
     pub async fn commit(self) -> Result<()> {

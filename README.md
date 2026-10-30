@@ -121,7 +121,7 @@ for every place the tool changes what is loaded, and for the tested versions, se
 * **Compressed input is auto-detected** (gzip or zstd magic bytes) with or without `--fsCompress`.
 * **`--fileSize` counts UTF-8 bytes**; Node counts UTF-16 code units. Identical part names for ASCII data
   (verified against Node), slightly different boundaries for non-ASCII text.
-* **Split parts are staged and committed together** at the end of a successful run; a failed run leaves nothing.
+* **Split parts are staged and committed together** at the end of a successful run; a failed run (including a full disk) leaves nothing and an existing destination untouched. With `--overwrite` the files being replaced are moved aside first and restored if any part cannot be committed; older parts beyond the new set are left in place with a warning.
   Existing `*.split-*` files need `--overwrite`.
 * **Certificate flags always apply**; Node ignores `--ca/--cert/--key` unless `--tlsAuth` is set.
 * **Retries also cover HTTP 429**, and bulk items rejected with 429/503 are retried individually.

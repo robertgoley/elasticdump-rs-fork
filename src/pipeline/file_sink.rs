@@ -368,13 +368,23 @@ impl FileSink {
             }
             return Err(e);
         }
-        let mut sealed = std::mem::take(&mut self.sealed).into_iter();
-        while let Some(s) = sealed.next() {
-            if let Err(e) = s.commit().await {
-                for rest in sealed {
-                    rest.discard().await;
-                }
-                return Err(e);
+        let sealed = std::mem::take(&mut self.sealed);
+        commit_all(sealed).await?;
+        if let (Some(root), Some(_)) = (&self.opts.path, self.opts.split) {
+            let stale: Vec<PathBuf> = existing_parts(root)
+                .into_iter()
+                .filter(|p| !(0..self.next_part).any(|n| part_path(root, n, self.opts.codec) == *p))
+                .collect();
+            if !stale.is_empty() {
+                log::warn!(
+                    "{} older split part(s) were left in place and are not part of this dump (remove them before reading the set back): {}",
+                    stale.len(),
+                    stale
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
         Ok(())
@@ -388,6 +398,79 @@ impl FileSink {
             s.discard().await;
         }
     }
+}
+
+/// Commit every staged part, or none: files that would be replaced
+/// (`--overwrite`) are first moved aside, and if any commit fails the parts
+/// already committed are removed, the rest discarded and the moved-aside files
+/// restored. Renames within one directory need no free space, so a full disk
+/// cannot strike half-way through.
+async fn commit_all(sealed: Vec<SealedOutput>) -> Result<()> {
+    let finals: Vec<PathBuf> = sealed
+        .iter()
+        .filter(|s| s.replaces())
+        .map(|s| s.final_path().to_path_buf())
+        .collect();
+    let mut backups: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let restore = |backups: Vec<(PathBuf, PathBuf)>| async move {
+        for (orig, bak) in backups {
+            if let Err(e) = tokio::fs::rename(&bak, &orig).await {
+                log::error!(
+                    "could not restore '{}' from '{}': {e}",
+                    orig.display(),
+                    bak.display()
+                );
+            }
+        }
+    };
+    for f in &finals {
+        let is_file = tokio::fs::symlink_metadata(f)
+            .await
+            .map(|m| m.is_file())
+            .unwrap_or(false);
+        if !is_file {
+            continue;
+        }
+        let name = f
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let bak = f.with_file_name(format!(".{name}.edrs-replaced-{}", std::process::id()));
+        if let Err(e) = tokio::fs::rename(f, &bak).await {
+            restore(backups).await;
+            for s in sealed {
+                s.discard().await;
+            }
+            return Err(anyhow!(
+                "could not move '{}' aside to replace it: {e}; nothing was committed and existing files are unchanged",
+                f.display()
+            ));
+        }
+        backups.push((f.clone(), bak));
+    }
+    let mut committed: Vec<PathBuf> = Vec::new();
+    let mut iter = sealed.into_iter();
+    while let Some(s) = iter.next() {
+        let path = s.final_path().to_path_buf();
+        if let Err(e) = s.commit().await {
+            for rest in iter {
+                rest.discard().await;
+            }
+            for c in &committed {
+                let _ = tokio::fs::remove_file(c).await;
+            }
+            restore(backups).await;
+            return Err(e.context(format!(
+                "nothing was committed: {} part(s) already moved into place were removed again and existing files are unchanged",
+                committed.len()
+            )));
+        }
+        committed.push(path);
+    }
+    for (_, bak) in backups {
+        let _ = tokio::fs::remove_file(&bak).await;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -519,6 +602,92 @@ mod tests {
             );
             std::fs::remove_dir_all(&d).unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_commit_leaves_all_or_nothing() {
+        let names = |d: &Path| {
+            let mut v: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            v.sort();
+            v
+        };
+        // without --overwrite: part 2 appears while the dump runs
+        let d = tmpdir("commit-race");
+        let root = d.join("out.json");
+        let mut sink = FileSink::create(FileOptions {
+            path: Some(root.clone()),
+            split: Some(SplitBy::Rows(1)),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        sink.write_lines(b"{\"n\":0}\n{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n")
+            .await
+            .unwrap();
+        std::fs::write(part_path(&root, 2, None), "theirs\n").unwrap();
+        let e = format!("{:#}", sink.finalize().await.unwrap_err());
+        assert!(e.contains("nothing was committed"), "{e}");
+        assert_eq!(names(&d), vec!["out.split-2.json".to_string()], "{e}");
+        assert_eq!(
+            std::fs::read_to_string(part_path(&root, 2, None)).unwrap(),
+            "theirs\n"
+        );
+        std::fs::remove_dir_all(&d).unwrap();
+
+        // with --overwrite: an earlier set is restored when a later part cannot be replaced
+        let d = tmpdir("commit-overwrite");
+        let root = d.join("out.json");
+        for n in 0..2 {
+            std::fs::write(part_path(&root, n, None), format!("old{n}\n")).unwrap();
+        }
+        let blocker = part_path(&root, 2, None);
+        std::fs::create_dir(&blocker).unwrap();
+        std::fs::write(blocker.join("keep"), "x").unwrap();
+        let mut sink = FileSink::create(FileOptions {
+            path: Some(root.clone()),
+            split: Some(SplitBy::Rows(1)),
+            overwrite: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        sink.write_lines(b"{\"n\":0}\n{\"n\":1}\n{\"n\":2}\n")
+            .await
+            .unwrap();
+        let e = format!("{:#}", sink.finalize().await.unwrap_err());
+        assert!(e.contains("nothing was committed"), "{e}");
+        assert_eq!(
+            names(&d),
+            vec!["out.split-0.json", "out.split-1.json", "out.split-2.json"],
+            "{e}"
+        );
+        for n in 0..2 {
+            assert_eq!(
+                std::fs::read_to_string(part_path(&root, n, None)).unwrap(),
+                format!("old{n}\n")
+            );
+        }
+        // and a clean overwrite replaces the set and leaves no backups
+        std::fs::remove_dir_all(&blocker).unwrap();
+        let mut sink = FileSink::create(FileOptions {
+            path: Some(root.clone()),
+            split: Some(SplitBy::Rows(1)),
+            overwrite: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        sink.write_lines(b"{\"n\":0}\n").await.unwrap();
+        sink.finalize().await.unwrap();
+        assert_eq!(names(&d), vec!["out.split-0.json", "out.split-1.json"]);
+        assert_eq!(
+            std::fs::read_to_string(part_path(&root, 0, None)).unwrap(),
+            "{\"n\":0}\n"
+        );
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[tokio::test]
