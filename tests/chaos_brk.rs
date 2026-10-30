@@ -1434,3 +1434,83 @@ async fn l612_protocol_mismatches_fail_clearly_and_fast() {
         }
     }
 }
+
+// L-613 (TST-BRK-TLS-004): SSL_CERT_FILE / SSL_CERT_DIR. A usable SSL_CERT_FILE is honoured
+// (the test CA becomes trusted). Garbage or empty ones fall back to the bundled webpki roots
+// with a warning naming the variable (so the test CA is not trusted), never silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l613_ssl_cert_env_is_honoured_or_falls_back_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(certs) = cert_factory(dir.path()) else {
+        return;
+    };
+    let (_srv, port) = s_server(&certs, "ok", &[]);
+    let garbage = dir.path().join("garbage.pem");
+    std::fs::write(
+        &garbage,
+        "-----BEGIN CERTIFICATE-----\nnot base64 at all!\n-----END CERTIFICATE-----\n",
+    )
+    .unwrap();
+    let empty_dir = dir.path().join("empty-dir");
+    std::fs::create_dir(&empty_dir).unwrap();
+    let ca = certs.join("ca.pem").to_str().unwrap().to_string();
+    for (name, env, want, warn) in [
+        (
+            "SSL_CERT_FILE = test CA",
+            vec![("SSL_CERT_FILE", ca.as_str())],
+            "expected JSON from",
+            false,
+        ),
+        (
+            "SSL_CERT_FILE = garbage",
+            vec![("SSL_CERT_FILE", garbage.to_str().unwrap())],
+            "not signed by a trusted CA",
+            true,
+        ),
+        (
+            "SSL_CERT_FILE = missing file",
+            vec![("SSL_CERT_FILE", "/nonexistent/ca.pem")],
+            "not signed by a trusted CA",
+            true,
+        ),
+        (
+            "SSL_CERT_DIR = empty dir, no file",
+            vec![
+                ("SSL_CERT_FILE", "/dev/null"),
+                ("SSL_CERT_DIR", empty_dir.to_str().unwrap()),
+            ],
+            "not signed by a trusted CA",
+            true,
+        ),
+    ] {
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("https://localhost:{port}/idx"),
+                "--output",
+                dir.path().join("o.json").to_str().unwrap(),
+                "--type",
+                "mapping",
+                "--retryAttempts",
+                "1",
+                "--retryDelay",
+                "1",
+            ]),
+            env.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        assert!(err.contains(want), "{name}: want {want:?}: {err}");
+        if warn {
+            assert!(
+                err.contains("WARN") && err.contains("SSL_CERT_") && err.contains("bundled webpki"),
+                "{name}: loud fallback: {err}"
+            );
+        } else {
+            assert!(!err.contains("bundled webpki"), "{name}: {err}");
+        }
+    }
+}

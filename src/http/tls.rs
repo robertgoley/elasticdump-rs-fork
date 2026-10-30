@@ -89,12 +89,32 @@ fn root_store(ca: Option<&Path>) -> Result<RootCertStore> {
         }
         None => {
             let native = rustls_native_certs::load_native_certs();
+            // an explicit SSL_CERT_FILE/SSL_CERT_DIR that cannot be used is worth a warning:
+            // a silent switch to other roots surprises users of private CAs (TST-BRK-TLS-004)
+            let explicit: Vec<String> = ["SSL_CERT_FILE", "SSL_CERT_DIR"]
+                .iter()
+                .filter_map(|v| std::env::var(v).ok().map(|x| format!("{v}={x}")))
+                .collect();
             for err in &native.errors {
-                log::debug!("Skipping unreadable system certificate: {err}");
+                if explicit.is_empty() {
+                    log::debug!("Skipping unreadable system certificate: {err}");
+                } else {
+                    log::warn!(
+                        "Skipping unusable certificate from {}: {err}",
+                        explicit.join(", ")
+                    );
+                }
             }
             let (added, _) = store.add_parsable_certificates(native.certs);
             if added == 0 {
-                log::debug!("No system CA certificates found; using bundled webpki roots");
+                if explicit.is_empty() {
+                    log::debug!("No system CA certificates found; using bundled webpki roots");
+                } else {
+                    log::warn!(
+                        "No usable CA certificates from {}; using the bundled webpki (Mozilla) roots instead. For a private CA pass --ca/--input-ca/--output-ca",
+                        explicit.join(", ")
+                    );
+                }
                 store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
             }
         }

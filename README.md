@@ -80,6 +80,9 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   `--carryoverConcurrencyCount`, `--maxSockets`, `--timeout` (ms of server *silence*, as in Node's `request`;
   a slow but progressing response is not cut off; overrides `--idleTimeout`).
 * **Retries:** `--retryAttempts` (0 = Node's 4 implicit retries), `--retryDelay` (5000 ms).
+* **Trusted roots:** `--ca`/`--input-ca`/`--output-ca` when given; otherwise the system store (honouring
+  `SSL_CERT_FILE`/`SSL_CERT_DIR`). When that store has no usable certificate, the bundled webpki (Mozilla)
+  roots are used; if `SSL_CERT_FILE`/`SSL_CERT_DIR` was set, this fallback is logged as a warning naming it.
 * **Redirects** are never followed (Node follows them): a 3xx answer stops the run and names the target, so
   credentials and documents only go to the cluster you named. Use the final URL directly.
 * **Auth/TLS:** `--httpAuthFile`, `--tlsAuth`, `--ca`/`--cert`/`--key`/`--pass` and their `--input-*`/`--output-*` forms.
