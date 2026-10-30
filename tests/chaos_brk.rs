@@ -1523,9 +1523,11 @@ async fn l613_ssl_cert_env_is_honoured_or_falls_back_loudly() {
 async fn l614_bulk_5xx_beyond_the_retry_budget_is_counted() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("in.json");
-    let lines: String = (0..10)
-        .map(|i| format!("{}\n", hit(&i.to_string(), "{}")))
-        .collect();
+    let lines: String = (0..10).fold(String::new(), |mut acc, i| {
+        acc.push_str(&hit(&i.to_string(), "{}"));
+        acc.push('\n');
+        acc
+    });
     std::fs::write(&input, lines).unwrap();
     let ok2 =
         r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
