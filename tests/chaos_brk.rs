@@ -1928,3 +1928,71 @@ async fn l623_truncated_gzip_names_file_offset_and_docs_read() {
         assert!(!out.exists(), "{name}: output committed");
     }
 }
+
+// L-624 (TST-BRK-IN-003): wrong compression. bzip2 (the Rally corpora), xz, lzma, lz4, zip, 7z
+// and tar archives (plain, gzip, zstd) are refused by magic bytes with "not supported;
+// decompress/extract first", exit 1, and nothing is written.
+#[tokio::test]
+async fn l624_unsupported_compression_is_named() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let doc = b"{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n";
+    let mut tar = vec![0u8; 512];
+    tar[..6].copy_from_slice(b"d.json");
+    tar[257..263].copy_from_slice(b"ustar\0");
+    tar.extend_from_slice(doc);
+    tar.resize(2048, 0);
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&tar).unwrap();
+    let tar_gz = gz.finish().unwrap();
+    let tar_zst = zstd::encode_all(&tar[..], 3).unwrap();
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "d.json.bz2",
+            b"BZh91AY&SY\x00\x01".to_vec(),
+            "bzip2-compressed",
+        ),
+        (
+            "d.json.xz",
+            b"\xfd7zXZ\x00\x00\x04".to_vec(),
+            "xz-compressed",
+        ),
+        (
+            "d.json.lzma",
+            b"\x5d\x00\x00\x80\x00".to_vec(),
+            "lzma-compressed",
+        ),
+        (
+            "d.json.lz4",
+            b"\x04\x22\x4d\x18\x64".to_vec(),
+            "lz4-compressed",
+        ),
+        ("d.zip", b"PK\x03\x04\x14\x00".to_vec(), "a zip archive"),
+        ("d.7z", b"7z\xbc\xaf\x27\x1c\x00".to_vec(), "a 7z archive"),
+        ("d.tar", tar.clone(), "a tar archive"),
+        ("d.tar.gz", tar_gz, "a gzip-compressed tar archive"),
+        ("d.tar.zst", tar_zst, "a zstd-compressed tar archive"),
+    ];
+    for (name, bytes, kind) in cases {
+        let input = dir.path().join(name);
+        std::fs::write(&input, bytes).unwrap();
+        let out = dir.path().join(format!("{name}.out"));
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                out.to_str().unwrap(),
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        assert!(
+            err.contains(&format!("is {kind}, which is not supported")),
+            "{name}: {err}"
+        );
+        assert!(!out.exists(), "{name}: output written");
+    }
+}

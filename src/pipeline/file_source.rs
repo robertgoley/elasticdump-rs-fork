@@ -76,16 +76,32 @@ pub fn decode_input(
 ) -> Result<Box<dyn Read + Send>> {
     let mut buffered = BufReader::with_capacity(READ_CHUNK, raw);
     let head = buffered.fill_buf().context("Failed to read input")?;
+    let name = path
+        .map(|p| format!("'{}'", p.display()))
+        .unwrap_or_else(|| "stdin".into());
+    if let Some(kind) = unsupported_format(head) {
+        anyhow::bail!(
+            "Input {name} is {kind}, which is not supported; decompress it first (only plain, gzip and zstd input are read)"
+        );
+    }
     if head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b {
         log::debug!("Input is gzip-compressed");
-        Ok(Box::new(flate2::read::MultiGzDecoder::new(buffered)))
+        no_tar(
+            Box::new(flate2::read::MultiGzDecoder::new(buffered)),
+            &name,
+            "gzip",
+        )
     } else if head.starts_with(&ZSTD_MAGIC) {
         log::debug!("Input is zstd-compressed");
         // Concatenated frames (e.g. `cat` of parts) are decoded in sequence.
         let mut d = zstd::stream::read::Decoder::with_buffer(buffered).context("zstd decoder")?;
         d.window_log_max(ZSTD_WINDOW_LOG_MAX)
             .context("zstd decoder")?;
-        Ok(Box::new(d))
+        no_tar(Box::new(d), &name, "zstd")
+    } else if is_tar(head) {
+        anyhow::bail!(
+            "Input {name} is a tar archive, which is not supported; extract the dump file first"
+        )
     } else if path.is_some_and(|p| p.extension().is_some_and(|e| e == "zst" || e == "zstd"))
         && !head.is_empty()
     {
@@ -95,6 +111,53 @@ pub fn decode_input(
         )
     } else {
         Ok(Box::new(buffered))
+    }
+}
+
+/// Compression and archive formats recognised by magic bytes but not read (TST-BRK-IN-003),
+/// e.g. the Rally corpora ship as bzip2.
+fn unsupported_format(head: &[u8]) -> Option<&'static str> {
+    const MAGIC: &[(&[u8], &str)] = &[
+        (b"BZh", "bzip2-compressed"),
+        (&[0xfd, b'7', b'z', b'X', b'Z', 0x00], "xz-compressed"),
+        (&[0x5d, 0x00, 0x00], "lzma-compressed"),
+        (&[0x04, 0x22, 0x4d, 0x18], "lz4-compressed"),
+        (b"PK\x03\x04", "a zip archive"),
+        (&[b'7', b'z', 0xbc, 0xaf, 0x27, 0x1c], "a 7z archive"),
+        (b"\x89LZO", "lzop-compressed"),
+    ];
+    MAGIC
+        .iter()
+        .find(|(m, _)| head.starts_with(m))
+        .map(|(_, k)| *k)
+}
+
+fn is_tar(head: &[u8]) -> bool {
+    head.len() >= 262 && &head[257..262] == b"ustar"
+}
+
+/// Refuses a compressed tar archive (`.tar.gz`, `.tar.zst`): its member headers and padding
+/// would otherwise be read as document text (TST-BRK-IN-003).
+fn no_tar(inner: Box<dyn Read + Send>, name: &str, codec: &str) -> Result<Box<dyn Read + Send>> {
+    let mut b = BufReader::with_capacity(READ_CHUNK, inner);
+    match b.fill_buf() {
+        Ok(head) if is_tar(head) => anyhow::bail!(
+            "Input {name} is a {codec}-compressed tar archive, which is not supported; extract the dump file first"
+        ),
+        Ok(_) => Ok(Box::new(b)),
+        // a decode error is handed to the first read, where it gets the offsets context
+        Err(e) => Ok(Box::new(FirstReadError(Some(e)))),
+    }
+}
+
+struct FirstReadError(Option<std::io::Error>);
+
+impl Read for FirstReadError {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        match self.0.take() {
+            Some(e) => Err(e),
+            None => Ok(0),
+        }
     }
 }
 
