@@ -15,3 +15,4 @@ Short smoke runs only (<= 300 s per target, one at a time, `-rss_limit_mb=1024`,
 | endpoint_parse | 300 s | 1,253,924 | 4193 | ok |
 | extract_batch | 300 s | 3,554,483 | 3443 | ok |
 | ilm_to_ism_convert | 300 s | 2,906,168 | 1351 | ok |
+| ini_auth_file | 300 s | 2,621,675 | 1161 | ok |
