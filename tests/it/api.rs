@@ -32,6 +32,17 @@ pub(crate) async fn dump(
     (out, o)
 }
 
+/// As `dump`, without `--quiet` (for warning assertions).
+pub(crate) async fn dump_loud(
+    c: &Cluster,
+    index: &str,
+    extra: &[&str],
+) -> (PathBuf, std::process::Output) {
+    let out = tmp_path("api", "json");
+    let o = run_loud(io(c, &c.url_with_auth(index), out.to_str().unwrap(), extra)).await;
+    (out, o)
+}
+
 /// Same shape as `Cluster::docs`: id -> (routing, _source).
 pub(crate) fn file_docs(path: &Path) -> BTreeMap<String, (Option<String>, Value)> {
     let mut m = BTreeMap::new();
@@ -105,5 +116,36 @@ async fn scroll_unsliced_and_sliced_digest_and_no_open_contexts() {
     assert!(err.contains("max_slices_per_scroll"), "{err}");
     assert!(!f.exists(), "nothing written on failure");
     assert_no_open_contexts(&c, &src, "slices=1100").await;
+    c.delete_index(&src).await;
+}
+
+// L-406 (TST-API-011): PIT unsliced and sliced (2, 4, 16) give the source digest and leave no
+// PIT open; versions without a PIT API (ES OSS, OpenSearch < 2.4) fall back to scroll with a
+// warning naming the version. Request shapes (tiebreaker per version) are in the goldens.
+#[tokio::test]
+async fn pit_unsliced_and_sliced_digest_and_no_open_pits() {
+    let c = Cluster::from_env();
+    let src = unique("api_pit");
+    seed_index(&c, &src, 2500).await;
+    let want = c.docs(&src).await;
+    let has_pit = c.has_pit().await;
+    for slices in ["0", "2", "4", "16"] {
+        let (f, o) = dump_loud(
+            &c,
+            &src,
+            &["--searchType", "pit", "--slices", slices, "--limit", "200"],
+        )
+        .await;
+        assert_success(&o);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(
+            err.contains("does not support point-in-time search"),
+            !has_pit,
+            "slices={slices}: fallback warning iff no PIT API: {err}"
+        );
+        assert_eq!(file_docs(&f), want, "slices={slices}");
+        let _ = std::fs::remove_file(f);
+        assert_no_open_contexts(&c, &src, &format!("pit slices={slices}")).await;
+    }
     c.delete_index(&src).await;
 }
