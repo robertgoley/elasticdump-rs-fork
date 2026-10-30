@@ -814,3 +814,86 @@ async fn l606_lost_search_context_says_rerun() {
         assert!(!out.exists(), "{kind}");
     }
 }
+
+// L-607 (TST-BRK-NET-010): a proxy answers with HTML: a 200 login page, 502/503 error pages,
+// a WAF 403. Each fails with exit 1 and a short message that says an HTML page answered
+// (with its title) instead of quoting it: the final error line stays under 4 KB though the
+// page is 50 KB. A 200 HTML page is not retried (it is not a transient failure).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l607_html_from_a_proxy_is_named_not_dumped() {
+    let page_html = |title: &str| {
+        format!(
+            "<!DOCTYPE html>\n<html><head><title>{title}</title></head><body>{}</body></html>",
+            "<p>lorem ipsum</p>\n".repeat(2700)
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, format!("{}\n", hit("1", "{}"))).unwrap();
+    for (status, title, want) in [
+        (200u16, "Sign in - Corp SSO", "expected JSON from"),
+        (502, "502 Bad Gateway", "an HTML page, not JSON"),
+        (
+            503,
+            "Service Temporarily Unavailable",
+            "an HTML page, not JSON",
+        ),
+        (403, "Access Denied - WAF", "an HTML page, not JSON"),
+    ] {
+        let body = page_html(title);
+        assert!(body.len() > 50_000);
+        for restore in [false, true] {
+            let tag = format!("HTTP {status} restore={restore}");
+            let html = Reply::html(status, &body);
+            let mut b =
+                RouterMock::builder().route(Route::exact("GET", "/").reply(Reply::ok(INFO)));
+            b = if restore {
+                b.route(Route::contains("POST", "/_bulk").reply(html))
+            } else {
+                b.route(Route::contains("POST", "/idx/_search").reply(html))
+            };
+            let m = b.fallback(Reply::ok(CLEARED)).start().await;
+            let out = dir.path().join("d.json");
+            let a = if restore {
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    &format!("{}/dst", m.url()),
+                    "--noRefresh",
+                ])
+            } else {
+                s(&[
+                    "--input",
+                    &format!("{}/idx", m.url()),
+                    "--output",
+                    out.to_str().unwrap(),
+                ])
+            };
+            let mut a = a;
+            a.extend(s(&["--retryAttempts", "1", "--retryDelay", "1"]));
+            let o = run_async(a, vec![]).await;
+            let err = stderr(&o);
+            assert_eq!(o.status.code(), Some(1), "{tag}: {err}");
+            let last = err.lines().rfind(|l| l.starts_with("Error")).unwrap_or("");
+            assert!(last.contains(want) && last.contains(title), "{tag}: {last}");
+            assert!(last.len() < 4096, "{tag}: {} bytes", last.len());
+            assert!(
+                err.len() < 16 * 1024,
+                "{tag}: whole stderr {} bytes",
+                err.len()
+            );
+            assert!(!err.contains("lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p> <p>lorem ipsum</p>"), "{tag}: the page is not dumped");
+            let path = if restore {
+                "/dst/_bulk"
+            } else {
+                "/idx/_search"
+            };
+            let tries = count(&m.requests(), "POST", path);
+            if status == 200 {
+                assert_eq!(tries, 1, "{tag}: a 200 HTML page is not retried");
+            }
+            assert!(!out.exists());
+        }
+    }
+}

@@ -1625,7 +1625,7 @@ async fn partial_results_fail_and_commit_nothing() {
 // L-431 (TST-API-055): TLS failures against `openssl s_server` endpoints built from the cert
 // factory (scripts/tls/certs.sh). Each failure: exit 1, one message naming the cause, no retry
 // loop (TLS errors are permanent). Success cases reach HTTP (s_server -www answers HTML, so the
-// run stops at "did not return JSON"). Skipped when openssl (>= 3.4 for -not_before) is missing.
+// run stops at "expected JSON from" (its text/html page)). Skipped when openssl (>= 3.4 for -not_before) is missing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tls_failures_have_one_clear_message() {
     struct Srv(std::process::Child);
@@ -1701,7 +1701,7 @@ async fn tls_failures_have_one_clear_message() {
         ),
     ];
     let port = |n: &str| servers.iter().find(|(k, _)| *k == n).unwrap().1.1;
-    let reached_http = "did not return JSON";
+    let reached_http = "expected JSON from";
     type Env = Vec<(String, String)>;
     let cases: Vec<(&str, String, Vec<String>, Env, &str)> = vec![
         (

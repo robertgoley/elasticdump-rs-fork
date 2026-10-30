@@ -59,7 +59,15 @@ impl fmt::Display for EsHttpError {
         if let Some(summary) = server_error_summary(&self.body) {
             write!(f, "{summary}; body: ")?;
         }
-        f.write_str(&truncate_body(&self.body))?;
+        if looks_like_html(&self.body) {
+            write!(
+                f,
+                "an HTML page, not JSON: a proxy, load balancer or firewall in front of the cluster answered (first 200 bytes: {})",
+                html_excerpt(self.body.as_bytes(), 200)
+            )?;
+        } else {
+            f.write_str(&truncate_body(&self.body))?;
+        }
         match self.status {
             401 => write!(
                 f,
@@ -74,6 +82,45 @@ impl fmt::Display for EsHttpError {
             ),
             _ => Ok(()),
         }
+    }
+}
+
+/// An HTML document (proxy error pages, WAF blocks, login pages; TST-BRK-NET-010).
+fn looks_like_html(body: &str) -> bool {
+    let head: String = body
+        .trim_start()
+        .chars()
+        .take(64)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    head.starts_with("<!doctype html")
+        || head.starts_with("<html")
+        || head.starts_with("<head")
+        || head.starts_with("<body")
+        || (head.starts_with('<') && body.to_ascii_lowercase().contains("</html>"))
+}
+
+/// The first `n` bytes of a body on one line (control characters and runs of whitespace
+/// collapsed), with the `<title>` first when there is one.
+fn html_excerpt(body: &[u8], n: usize) -> String {
+    let text = String::from_utf8_lossy(body);
+    let lower = text.to_ascii_lowercase();
+    let title = lower.find("<title>").and_then(|i| {
+        let rest = &text[i + 7..];
+        rest.find("</").map(|j| rest[..j].trim().to_string())
+    });
+    let flat: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let head = truncate_at(&flat, n);
+    let more = if head.len() < flat.len() { "…" } else { "" };
+    match title {
+        Some(t) if !t.is_empty() => format!("title \"{}\"; {head}{more}", truncate_at(&t, 100)),
+        _ => format!("{head}{more}"),
     }
 }
 
@@ -589,6 +636,12 @@ where
                 note_host_answered(response.url());
                 let status = response.status();
                 let endpoint = public_endpoint(response.url());
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
                 if matches!(status.as_u16(), 429 | 503) {
                     retry_after = parse_retry_after(response.headers());
                 }
@@ -608,6 +661,14 @@ where
                             timeout_hint(&e)
                         ),
                     ),
+                    Ok(bytes) if status.is_success() && content_type.contains("text/html") => {
+                        // permanent: a login page or proxy answered, not the cluster (BRK-NET-010)
+                        return Err(anyhow!(
+                            "{prefix}{operation}: expected JSON from {endpoint}, got text/html (HTTP {}; first 200 bytes: {}). A proxy, load balancer or login page answered instead of the cluster: check the URL, the proxy environment (--noProxy) and the authentication",
+                            status.as_u16(),
+                            html_excerpt(&bytes, 200)
+                        ));
+                    }
                     Ok(bytes) if status.is_success() => return Ok(bytes),
                     Ok(bytes) => {
                         let error = anyhow::Error::new(EsHttpError {
