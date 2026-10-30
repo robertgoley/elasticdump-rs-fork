@@ -86,6 +86,19 @@ Built and tested with podman 5 (buildah 1.39.3) on 2026-10-29. The dhi.io pulls 
 The integration matrix above tests the host build of the binary (glibc, `target/it`). The container's musl build of the
 same source was verified only by the checks in this table.
 
+### Pinned images (INF-012)
+
+Every engine and helper image is pulled by digest from `scripts/it/images.lock`; `scripts/it/up.sh` appends the
+digest, and refuses an unpinned image when `CI` or `IT_REQUIRE_PIN=1` is set (`IT_UNPINNED=1` allows a bare tag
+locally). `scripts/it/check-pins.sh` (CI) fails when a profile image is missing from the lock, when a lock digest is
+not recorded in this file, or when a Dockerfile base or compose image lacks `@sha256:`. Engine digests are in the
+tables above; the helper images are:
+
+| Image | Digest | Used by |
+|---|---|---|
+| `ghcr.io/shopify/toxiproxy:2.12.0` | `sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e` | out-of-process fault proxy (`scripts/it/toxiproxy.sh`, INF-004) |
+| `docker.io/library/alpine:3.24.3` | `sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` | `make image-alpine` runtime base |
+
 ## 2. Untested or untestable differences per version
 
 These are behaviours the suite cannot exercise, or that differ between versions and are handled by gating or a fallback. Each row gives the reason.

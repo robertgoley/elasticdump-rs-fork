@@ -35,10 +35,16 @@ pin() {
   local img="$1" d
   [[ "$img" == *@sha256:* || "${IT_UNPINNED:-0}" == 1 ]] && { echo "$img"; return; }
   d=$(awk -v i="$img" '$1 == i {print $2}' "$(dirname "$0")/images.lock" 2>/dev/null)
-  if [[ -n "$d" ]]; then echo "$img@$d"; else echo "warning: $img is not pinned in images.lock" >&2; echo "$img"; fi
+  if [[ -n "$d" ]]; then echo "$img@$d"; return; fi
+  # CI (or IT_REQUIRE_PIN=1) refuses an unpinned image instead of warning (INF-012).
+  if [[ -n "${CI:-}" || "${IT_REQUIRE_PIN:-0}" == 1 ]]; then
+    echo "error: $img is not pinned in scripts/it/images.lock (add its digest, or IT_UNPINNED=1 locally)" >&2
+    return 1
+  fi
+  echo "warning: $img is not pinned in images.lock" >&2; echo "$img"
 }
-OS_IMAGE=$(pin "$OS_IMAGE")
-ES_IMAGE=$(pin "$ES_IMAGE")
+OS_IMAGE=$(pin "$OS_IMAGE") || exit 2
+ES_IMAGE=$(pin "$ES_IMAGE") || exit 2
 # OpenSearch < 2.12 ignores OPENSEARCH_INITIAL_ADMIN_PASSWORD; its demo
 # config always uses admin/admin.
 OS_LEGACY_ADMIN=0
