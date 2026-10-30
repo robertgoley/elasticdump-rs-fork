@@ -1008,3 +1008,67 @@ async fn data_file_variants_restore_to_the_same_digest() {
     c.delete_index(&src).await;
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+// L-437 (TST-API-064): Node's bigint fixtures (tests/fixtures/node/bigint, from the Node repo's
+// test/test-resources, Apache-2.0) restore and dump with `--support-big-int` byte for byte, and
+// Node's own `--support-big-int` dump of the same index is byte-equal too.
+#[tokio::test]
+async fn node_bigint_fixtures_round_trip_byte_for_byte() {
+    let c = Cluster::from_env();
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/node/bigint");
+    for (data, mapping) in [
+        ("bigint.json", "bigint_mapping.json"),
+        ("bigint2.json", "bigint_mapping2.json"),
+        ("bigint3.json", "bigint_mapping3.json"),
+    ] {
+        let dst = unique("bigint");
+        c.delete_index(&dst).await;
+        assert_success(
+            &run_rs(
+                &c,
+                dir.join(mapping).to_str().unwrap(),
+                &c.url_with_auth(&dst),
+                "mapping",
+            )
+            .await,
+        );
+        assert_success(
+            &run_rs(
+                &c,
+                dir.join(data).to_str().unwrap(),
+                &c.url_with_auth(&dst),
+                "data",
+            )
+            .await,
+        );
+        c.ok("POST", &format!("{dst}/_refresh"), None).await;
+        // bigint2/3 hold one id; bigint.json has distinct ids
+        let want = raw_sources_by_id(&dir.join(data));
+        let out = tempfile::tempdir().unwrap();
+        let rf = out.path().join("rust.json");
+        let mut a = s(&[
+            "--input",
+            &c.url_with_auth(&dst),
+            "--output",
+            rf.to_str().unwrap(),
+            "--support-big-int",
+        ]);
+        a.extend(c.tls_args("input"));
+        assert_success(&run(a).await);
+        assert_eq!(raw_sources_by_id(&rf), want, "{data}: rust dump");
+        if node_bin().is_some() {
+            let nf = out.path().join("node.json");
+            let o = run_node(&s(&[
+                "--input",
+                &c.url_with_auth(&dst),
+                "--output",
+                nf.to_str().unwrap(),
+                "--support-big-int",
+            ]))
+            .await;
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            assert_eq!(raw_sources_by_id(&nf), want, "{data}: node dump");
+        }
+        c.delete_index(&dst).await;
+    }
+}
