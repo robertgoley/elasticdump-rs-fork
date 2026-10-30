@@ -1095,3 +1095,75 @@ async fn bulk_item_429_retry_413_and_item_count_mismatch() {
     );
 }
 
+// L-413 (TST-API-022): one `_refresh` per written batch (concurrency 1), none with
+// `--noRefresh`; a failing refresh is a warning, not a failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        format!(
+            "{}\n{}\n{}\n",
+            hit("1", "{}"),
+            hit("2", "{}"),
+            hit("3", "{}")
+        ),
+    )
+    .unwrap();
+    for (extra, refresh_status, want_refreshes) in [
+        (None, 200, 3),
+        (Some("--noRefresh"), 200, 0),
+        (None, 500, 3),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(
+                r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+            )))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(
+                r#"{"took":1,"errors":false,"items":[{"index":{"status":201}}]}"#,
+            )))
+            .route(
+                Route::contains("POST", "/_refresh")
+                    .reply(Reply::json(refresh_status, r#"{"error":"boom"}"#)),
+            )
+            .start()
+            .await;
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m.url()),
+            "--limit".into(),
+            "1".into(),
+            "--retryAttempts".into(),
+            "0".into(),
+        ];
+        a.extend(extra.map(String::from));
+        let o = run_async(a, vec![]).await;
+        assert!(
+            o.status.success(),
+            "{extra:?}/{refresh_status}: {}",
+            stderr(&o)
+        );
+        let reqs = m.requests();
+        let bulks = reqs.iter().filter(|r| r.path.ends_with("/_bulk")).count();
+        let refreshes = reqs
+            .iter()
+            .filter(|r| r.path.ends_with("/_refresh"))
+            .count();
+        assert_eq!(
+            (bulks, refreshes),
+            (3, want_refreshes),
+            "{extra:?}/{refresh_status}"
+        );
+        if refresh_status != 200 {
+            assert!(
+                stderr(&o).contains("refresh failed: HTTP 500"),
+                "{}",
+                stderr(&o)
+            );
+        }
+    }
+}
