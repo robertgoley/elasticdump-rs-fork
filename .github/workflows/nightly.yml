@@ -45,6 +45,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: scripts/it/run.sh "$PROFILE"
         env: { PROFILE: "${{ matrix.profile }}" }
+      # API-004 drift job: re-record the goldens live and require a normalised zero diff
+      # (target/golden-diff/<engine>-<version>.diff is the drift report artefact)
+      - if: endsWith(matrix.profile, '-plain')
+        run: scripts/golden/record.sh "$PROFILE" --check
+        env: { PROFILE: "${{ matrix.profile }}" }
       - if: always()
         run: scripts/ci/collect-artifacts.sh "$ARTIFACT"
       - if: always()
