@@ -155,6 +155,7 @@ pub fn retry_policy(cli: &Cli) -> Result<RetryPolicy> {
             RetryBackoffArg::Exponential => Backoff::Exponential,
         },
         retry_on,
+        max_response_bytes: (cli.max_response_mb > 0).then_some(cli.max_response_mb << 20),
     })
 }
 

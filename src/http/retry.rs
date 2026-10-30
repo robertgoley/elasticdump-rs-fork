@@ -263,7 +263,12 @@ pub struct RetryPolicy {
     pub base_delay: Duration,
     pub backoff: Backoff,
     pub retry_on: RetryOn,
+    /// Largest response body accepted (`--maxResponseMb`); `None` = unlimited.
+    pub max_response_bytes: Option<usize>,
 }
+
+/// Default response size cap: 256 MiB (TST-BRK-SRV-006).
+pub const DEFAULT_MAX_RESPONSE_MB: usize = 256;
 
 impl RetryPolicy {
     pub fn none() -> Self {
@@ -272,6 +277,7 @@ impl RetryPolicy {
             base_delay: Duration::ZERO,
             backoff: Backoff::Fixed,
             retry_on: RetryOn::default(),
+            max_response_bytes: Some(DEFAULT_MAX_RESPONSE_MB << 20),
         }
     }
 
@@ -376,6 +382,35 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
     } else {
         return None;
     })
+}
+
+enum ReadError {
+    TooLarge(usize),
+    Http(reqwest::Error),
+}
+
+/// Read the body, refusing more than `cap` bytes (by Content-Length up front, or while
+/// streaming) so a huge page or an endless body cannot exhaust memory (TST-BRK-SRV-006).
+/// A body read error after the server answered is a transport error: the server already
+/// processed the request, so scroll continuations never retry it.
+async fn read_capped(
+    mut response: reqwest::Response,
+    cap: Option<usize>,
+) -> std::result::Result<Bytes, ReadError> {
+    let Some(cap) = cap else {
+        return response.bytes().await.map_err(ReadError::Http);
+    };
+    if response.content_length().is_some_and(|n| n > cap as u64) {
+        return Err(ReadError::TooLarge(cap));
+    }
+    let mut buf = bytes::BytesMut::new();
+    while let Some(chunk) = response.chunk().await.map_err(ReadError::Http)? {
+        if buf.len() + chunk.len() > cap {
+            return Err(ReadError::TooLarge(cap));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf.freeze())
 }
 
 /// Which limit a timeout hit (TST-BRK-NET-004).
@@ -488,7 +523,22 @@ where
                 if matches!(status.as_u16(), 429 | 503) {
                     retry_after = parse_retry_after(response.headers());
                 }
-                match response.bytes().await {
+                match read_capped(response, retry.max_response_bytes).await {
+                    Err(ReadError::TooLarge(cap)) => {
+                        // permanent: the same request would return the same body
+                        return Err(anyhow!(
+                            "{prefix}{operation} response from {endpoint} is larger than {} MB (--maxResponseMb); it was not read further. For searches lower --limit (documents per page) or select fewer fields; or raise --maxResponseMb (0 = unlimited) if the memory allows",
+                            cap >> 20
+                        ));
+                    }
+                    Err(ReadError::Http(e)) => (
+                        RetryOutcome::TransportError,
+                        anyhow!(
+                            "{prefix}Failed to read {operation} response bytes: {}{}",
+                            error_chain(&e),
+                            timeout_hint(&e)
+                        ),
+                    ),
                     Ok(bytes) if status.is_success() => return Ok(bytes),
                     Ok(bytes) => {
                         let error = anyhow::Error::new(EsHttpError {
@@ -500,16 +550,6 @@ where
                         });
                         (RetryOutcome::Status(status.as_u16()), error)
                     }
-                    // The server already processed the request; classify as a
-                    // transport error so scroll continuations never retry it.
-                    Err(e) => (
-                        RetryOutcome::TransportError,
-                        anyhow!(
-                            "{prefix}Failed to read {operation} response bytes: {}{}",
-                            error_chain(&e),
-                            timeout_hint(&e)
-                        ),
-                    ),
                 }
             }
             // Refused before sending (unsafe path): never retried.
@@ -603,6 +643,7 @@ mod tests {
             base_delay: Duration::from_millis(100),
             backoff: Backoff::Fixed,
             retry_on: RetryOn::default(),
+            max_response_bytes: None,
         }
     }
 

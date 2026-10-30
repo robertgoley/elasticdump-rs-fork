@@ -2223,3 +2223,61 @@ async fn failed_writes_exit_non_zero_unless_accepted_explicitly() {
         }
     }
 }
+
+// L-445 (TST-BRK-SRV-006): a response larger than --maxResponseMb (default 256) is refused
+// while reading, with or without Content-Length, with a hint to lower --limit; it is not
+// retried (the same request would return the same body). The 512 MB cgroup run with an
+// endless body is scripts/res/huge-response.sh.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_responses_fail_with_a_limit_hint() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let big = "x".repeat(1_200_000);
+    let body = page("s1", &[hit("1", &format!("{{\"blob\":\"{big}\"}}"))], 1);
+    for chunked in [false, true] {
+        let reply = if chunked {
+            Reply::ok(&body).chunked()
+        } else {
+            Reply::ok(&body)
+        };
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::contains("POST", "/idx/_search").reply(reply))
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(page("s1", &[], 1))))
+            .fallback(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let args = |cap: &str| -> Vec<String> {
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--maxResponseMb".into(),
+                cap.into(),
+                "--overwrite".into(),
+                "--retryDelay".into(),
+                "1".into(),
+            ]
+        };
+        let o = run_async(args("1"), vec![]).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "chunked={chunked}: {err}");
+        assert!(
+            err.contains("larger than 1 MB (--maxResponseMb)") && err.contains("lower --limit"),
+            "chunked={chunked}: {err}"
+        );
+        let searches = m
+            .requests()
+            .iter()
+            .filter(|r| r.path.starts_with("/idx/_search"))
+            .count();
+        assert_eq!(searches, 1, "not retried: {err}");
+        assert!(!out.exists());
+        // a cap above the page size reads it
+        let o = run_async(args("2"), vec![]).await;
+        assert!(o.status.success(), "chunked={chunked}: {}", stderr(&o));
+    }
+}

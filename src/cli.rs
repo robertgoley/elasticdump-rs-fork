@@ -397,6 +397,11 @@ pub struct Cli {
     #[arg(long = "idleTimeout", default_value_t = 300)]
     pub idle_timeout_secs: u64,
 
+    /// Extension: largest HTTP response body read into memory, in MB (0 = unlimited); a
+    /// bigger page fails with a hint to lower --limit instead of exhausting memory
+    #[arg(long = "maxResponseMb", default_value_t = crate::http::DEFAULT_MAX_RESPONSE_MB)]
+    pub max_response_mb: usize,
+
     // ------------------------------------------------------------ retries
     /// Retries per request (0 = 4 implicit retries unless --noImplicitRetry)
     #[arg(long = "retryAttempts", default_value_t = 0)]
