@@ -76,5 +76,5 @@ from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) 
 | file_to_bulk | 300 s | 2,448,842 | 3970 | ok |
 | url_segments | 300 s | 10,727,995 | 425 | ok |
 | meta_names | 300 s | 54,495,383 | 147 | ok |
-| extract_batch | 300 s | - | - | CRASH (see PROGRESS/notes) |
+| extract_batch | <1 s | - | - | F-512-2 (fixed): a search response with an invalid escape inside `_source` (`"\u27-"`) became a dump line that is not valid JSON; sonic-rs hands out raw spans unvalidated. `extract_batch` now runs `check_escapes` over the response and fails with "malformed search response" |
 | renamer_new_index | 300 s | 574,383 | 13632 | ok |

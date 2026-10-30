@@ -277,6 +277,10 @@ pub(crate) fn extract_batch(
     response_bytes: &Bytes,
     search_type: &SearchType,
 ) -> Result<ExtractedBatch> {
+    // sonic-rs does not validate escapes inside the values it hands out raw, so a
+    // malformed response would become an invalid dump line (L-512 fuzz finding).
+    crate::pipeline::bulk::check_escapes(response_bytes)
+        .map_err(|e| anyhow!("malformed search response: {e}"))?;
     let metadata_inputs = extract_metadata_inputs(response_bytes)?;
     let iter = metadata_inputs
         .hits

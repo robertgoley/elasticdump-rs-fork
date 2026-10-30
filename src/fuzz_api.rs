@@ -388,6 +388,8 @@ mod tests {
             br#"{"phases":{}}"#,
             // L-509: lone surrogate escape (serde_json refuses, JSON allows)
             br#"{"s":"\ud800"}"#,
+            // L-512: a search response with an invalid escape inside _source
+            br#"{"hits":{"hits":[{"_index":"i","_id":"1","_source":{"k":"\u27-"}}]}}"#,
             // L-505 regression: ASan heap-buffer-overflow in sonic-rs string serialisation
             // (fixed by its `sanitize` feature; only visible in an ASan release build).
             br#"{"_index":"golden_dst","_id":"r4","_source":{"k":"d","n":4}}"#,

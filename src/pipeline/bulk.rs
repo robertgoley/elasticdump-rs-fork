@@ -210,7 +210,7 @@ pub(crate) fn check_doc_line(line: &[u8]) -> std::result::Result<(), String> {
 /// escape such as `"\u%%%%"` passed the check above and then failed the
 /// whole bulk request on the cluster (L-505 fuzz finding). Backslashes only
 /// occur inside strings in a line that parsed, so a linear scan is exact.
-fn check_escapes(line: &[u8]) -> std::result::Result<(), String> {
+pub(crate) fn check_escapes(line: &[u8]) -> std::result::Result<(), String> {
     let mut i = 0;
     while let Some(off) = memchr::memchr(b'\\', &line[i..]) {
         let at = i + off;
