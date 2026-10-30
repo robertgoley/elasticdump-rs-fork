@@ -211,6 +211,7 @@ async fn committed_goldens_replay() {
     let cases = golden::cases(&root);
     let inv = Inventory::load();
     let mut failures = vec![];
+    let started = std::time::Instant::now();
     for dir in &cases {
         let meta = Meta::read(dir);
         let rel = dir.strip_prefix(&root).unwrap().to_path_buf();
@@ -249,8 +250,24 @@ async fn committed_goldens_replay() {
             failures.push(format!("{}:\n  {}", rel.display(), problems.join("\n  ")));
         }
     }
-    eprintln!("golden replay: {} cases", cases.len());
+    let took = started.elapsed();
+    eprintln!(
+        "golden replay: {} cases in {:.1}s",
+        cases.len(),
+        took.as_secs_f64()
+    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    // TST-API-003: the offline replay of every committed recording stays under 2 minutes
+    // (debug build, one case at a time); split the suite or trim cases before raising this.
+    assert!(
+        took < std::time::Duration::from_secs(120),
+        "golden replay took {took:?} (budget 120 s)"
+    );
+    assert!(
+        !cases.is_empty() || std::env::var_os("GOLDEN_ALLOW_EMPTY").is_some(),
+        "no committed goldens found under {}",
+        root.display()
+    );
 }
 
 fn inventory_problems(dir: &Path, inv: &Inventory) -> Vec<String> {
