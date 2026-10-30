@@ -178,3 +178,193 @@ async fn l601_reset_mid_scroll_continuation_is_not_retried() {
         assert_eq!(ids, ["\"1\"", "\"2\"", "\"3\"", "\"4\""], "{got}");
     }
 }
+
+/// A stateful Elasticsearch 8.19 PIT server: `n` docs (`_id` = i, sort value = i), slice of
+/// doc i = i % max, a new PIT id on every delivered response (ES may rotate ids), and a
+/// seeded chance of an RST part-way through any search response (first attempt per cursor
+/// only, so a retry always gets through).
+struct PitServer {
+    n: u64,
+    rng: std::sync::Mutex<support::chaos::Rng>,
+    p_reset: f64,
+    issued: std::sync::Mutex<Vec<String>>,
+    faulted: std::sync::Mutex<std::collections::HashSet<String>>,
+    resets: std::sync::atomic::AtomicUsize,
+    bad_ids: std::sync::Mutex<Vec<String>>,
+    next_id: std::sync::atomic::AtomicUsize,
+    max_slices: std::sync::atomic::AtomicU64,
+}
+
+impl PitServer {
+    fn reply(&self, r: &Recorded) -> Reply {
+        if r.method == "GET" && r.path == "/" {
+            return Reply::ok(
+                r#"{"version":{"number":"8.19.0","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+            );
+        }
+        if r.method == "POST" && r.path.ends_with("/_pit") {
+            let id = self.issue();
+            return Reply::ok(format!(r#"{{"id":"{id}"}}"#));
+        }
+        if r.method == "DELETE" {
+            return Reply::ok(r#"{"succeeded":true,"num_freed":1}"#);
+        }
+        if r.method == "POST" && r.path == "/_search" {
+            let b: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            let id = b["pit"]["id"].as_str().unwrap_or("").to_string();
+            if !self.issued.lock().unwrap().contains(&id) {
+                self.bad_ids.lock().unwrap().push(id.clone());
+            }
+            let size = b["size"].as_u64().unwrap_or(10);
+            let after = b["search_after"][0]
+                .as_u64()
+                .map(|x| x as i64)
+                .unwrap_or(-1);
+            let (sid, max) = (
+                b["slice"]["id"].as_u64().unwrap_or(0),
+                b["slice"]["max"].as_u64().unwrap_or(1),
+            );
+            self.max_slices
+                .fetch_max(max, std::sync::atomic::Ordering::Relaxed);
+            let in_slice: Vec<u64> = (0..self.n).filter(|i| i % max == sid).collect();
+            let hits: Vec<String> = in_slice
+                .iter()
+                .filter(|&&i| i as i64 > after)
+                .take(size as usize)
+                .map(|i| {
+                    format!(
+                        r#"{{"_index":"idx","_id":"{i}","_score":null,"_source":{{"n":{i}}},"sort":[{i}]}}"#
+                    )
+                })
+                .collect();
+            let next = self.issue();
+            let body = format!(
+                r#"{{"pit_id":"{next}","took":1,"timed_out":false,"_shards":{{"total":1,"successful":1,"skipped":0,"failed":0}},"hits":{{"total":{{"value":{},"relation":"eq"}},"hits":[{}]}}}}"#,
+                in_slice.len(),
+                hits.join(",")
+            );
+            let key = format!("{sid}/{max}/{after}");
+            let reply = Reply::ok(body.clone());
+            let mut rng = self.rng.lock().unwrap();
+            if rng.chance(self.p_reset) && self.faulted.lock().unwrap().insert(key) {
+                // the client never sees this response, so its id is not "issued" to it
+                self.issued.lock().unwrap().pop();
+                self.resets
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // headers are > 100 bytes, so a cut below the body length is always mid-response
+                let cut = 1 + rng.below(body.len() as u64 - 1) as usize;
+                return reply.with_fault(Fault::ResetAt(cut));
+            }
+            return reply;
+        }
+        Reply::json(404, r#"{"error":"unexpected"}"#)
+    }
+
+    fn issue(&self) -> String {
+        let mut g = self.issued.lock().unwrap();
+        let id = format!(
+            "pit-{}",
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        g.push(id.clone());
+        id
+    }
+}
+
+// L-602 (TST-BRK-NET-002): RSTs part-way through PIT search pages (unsliced and 16 slices)
+// on Elasticsearch, whose PIT id rotates on every response. Each failed page is retried
+// with the same search_after and a PIT id the server issued; the dump has no duplicates and
+// no gaps: the sorted output equals the fault-free run's over 50 seeded runs per mode.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn l602_reset_mid_pit_page_is_retried_without_dups_or_gaps() {
+    use std::sync::Arc;
+    const N: u64 = 300;
+    let base = support::chaos::seed("l602_reset_mid_pit_page_is_retried_without_dups_or_gaps");
+    let dump = |slices: &'static str, seed: u64, p_reset: f64| async move {
+        let srv = Arc::new(PitServer {
+            n: N,
+            rng: std::sync::Mutex::new(support::chaos::Rng::new(seed)),
+            p_reset,
+            issued: Default::default(),
+            faulted: Default::default(),
+            resets: Default::default(),
+            bad_ids: Default::default(),
+            next_id: Default::default(),
+            max_slices: Default::default(),
+        });
+        let s2 = Arc::clone(&srv);
+        let m = RouterMock::builder()
+            .handler(move |r| {
+                let rep = s2.reply(&r);
+                async move { rep }
+            })
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            s(&[
+                "--input",
+                &format!("{}/idx", m.url()),
+                "--output",
+                out.to_str().unwrap(),
+                "--searchType",
+                "pit",
+                "--limit",
+                "7",
+                "--slices",
+                slices,
+                "--retryAttempts",
+                "3",
+                "--retryDelay",
+                "1",
+            ]),
+            vec![],
+        )
+        .await;
+        let tag = format!("slices={slices} seed={seed}");
+        assert!(o.status.success(), "{tag}: {}", stderr(&o));
+        let mut lines: Vec<String> = std::fs::read_to_string(&out)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        lines.sort();
+        let ids: std::collections::BTreeSet<String> = lines
+            .iter()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["_id"].to_string())
+            .collect();
+        assert_eq!(ids.len() as u64, N, "{tag}: gaps or duplicates");
+        assert_eq!(lines.len() as u64, N, "{tag}: duplicates");
+        let bad = srv.bad_ids.lock().unwrap().clone();
+        assert!(
+            bad.is_empty(),
+            "{tag}: PIT ids the server never delivered: {bad:?}"
+        );
+        assert_eq!(
+            srv.max_slices
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .to_string(),
+            slices,
+            "{tag}: sliced PIT"
+        );
+        (lines, srv.resets.load(std::sync::atomic::Ordering::Relaxed))
+    };
+    let mut total_resets = 0;
+    for slices in ["1", "16"] {
+        let (reference, r0) = dump(slices, 0, 0.0).await;
+        assert_eq!(r0, 0);
+        for run in 0..50u64 {
+            let seed = base.wrapping_add(run);
+            let (got, resets) = dump(slices, seed, 0.2).await;
+            assert!(
+                got == reference,
+                "slices={slices} seed={seed}: output differs from the fault-free run"
+            );
+            total_resets += resets;
+        }
+    }
+    eprintln!("L-602: {total_resets} mid-response resets over 100 runs");
+    assert!(total_resets > 100, "faults were injected ({total_resets})");
+}
