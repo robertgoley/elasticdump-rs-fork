@@ -79,3 +79,8 @@ from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) 
 | extract_batch | <1 s | - | - | F-512-2 (fixed): a search response with an invalid escape inside `_source` (`"\u27-"`) became a dump line that is not valid JSON; sonic-rs hands out raw spans unvalidated. `extract_batch` now runs `check_escapes` over the response and fails with "malformed search response" |
 | renamer_new_index | 300 s | 574,383 | 13632 | ok |
 | extract_batch | 300 s | 3,593,341 | 3353 | ok |
+
+Result L-512: the six INJ-015 targets (`bulk_encode_doc` = fuzz_encode_doc, `file_to_bulk`, `extract_batch`,
+`url_segments`, `renamer_new_index` = fuzz_rename_output, `meta_names`) ran 300 s each with their oracles and no
+open crash; 2 findings fixed (F-512-1, F-512-2) with regression samples in `fuzz_api` tests and a unit test in
+`http::client`. Nightly 1 h/target campaigns are B.
