@@ -1077,3 +1077,237 @@ async fn node_bigint_fixtures_round_trip_byte_for_byte() {
         c.delete_index(&dst).await;
     }
 }
+
+/// L-511 (TST-INJ-014): escaping corpus round trip, file -> engine -> file. Ids and values with
+/// `"`, `\`, control escapes, U+2028/U+2029 (raw and escaped), astral characters (raw and as
+/// surrogate pairs), lone surrogate escapes, 2^64+1, -0.0, 1e400, ... Every `_source` must come
+/// back byte for byte (the multiset digest of sources is equal) and every `_id` decodes to the
+/// same string. The index stores sources without indexing them (`enabled: false`), so values
+/// out of any numeric range are legal. Node is run on the same file when installed and its
+/// differences are printed (documented in NODE-DIFFERENCES.md), not asserted.
+#[tokio::test]
+async fn xv_escaping_corpus_round_trips_byte_for_byte() {
+    use sonic_rs::JsonValueTrait;
+    use std::hash::{Hash, Hasher};
+    let c = Cluster::from_env();
+    let ids: &[&str] = &[
+        r#""plain""#,
+        r#""q\"uote""#,
+        r#""back\\slash""#,
+        r#""ctl\u0001\u001f""#,
+        r#""nl\n\t\r""#,
+        "\"ls\u{2028}ps\u{2029}raw\"",
+        r#""ls\u2028ps\u2029esc""#,
+        "\"astral😀raw\"",
+        r#""astral\ud83d\ude00esc""#,
+        r#""slash\/esc""#,
+        r#""é\u00e9mixed""#,
+        r#""lone\ud800high""#,
+        r#""lone\udc00low""#,
+        "18446744073709551617",
+        "-0",
+    ];
+    let values: &[&str] = &[
+        r#""q\"\\\/\b\f\n\r\t""#,
+        r#""\u0000\u0001\u007f\u0080""#,
+        "\"\u{2028}\u{2029}\"",
+        r#""\u2028\u2029""#,
+        "\"😀𝄞\"",
+        r#""\ud83d\ude00\uD834\uDD1E""#,
+        r#""\ud800""#,
+        r#""\udfff\ud800""#,
+        "18446744073709551617",
+        "-18446744073709551617",
+        "-0.0",
+        "-0",
+        "1e400",
+        "-1e-400",
+        "1.0E+2",
+        "0.1000000000000000055511151231257827",
+        r#"{"k\u0000":1,"k\"":[true,null,{}],"":""}"#,
+        r#"[ 1 , "a" ,{ } ]"#,
+    ];
+    let mut cases: Vec<(String, String, String)> = Vec::new(); // (case, id literal, source raw)
+    for (i, id) in ids.iter().enumerate() {
+        for (j, v) in values.iter().enumerate() {
+            // string ids get a per-case suffix; a numeric id can only be used once
+            let numeric = !id.starts_with('"');
+            if (numeric && j != i % values.len())
+                || (!numeric && (i + j) % 3 != 0 && j != i % values.len())
+            {
+                continue;
+            }
+            let case = format!("c{i:02}-{j:02}");
+            let src = format!(r#"{{"case":"{case}","v":{v},"k\u2028\"\\":1}}"#);
+            cases.push((case, id.to_string(), src));
+        }
+    }
+    let mut body = String::new();
+    for (case, id, src) in &cases {
+        let id = if id.starts_with('"') {
+            format!("{}-{case}\"", &id[..id.len() - 1])
+        } else {
+            id.clone()
+        };
+        body.push_str(&format!(r#"{{"_index":"x","_id":{id},"_source":{src}}}"#));
+        body.push('\n');
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("corpus.json");
+    std::fs::write(&input, &body).unwrap();
+    let numeric_ids = cases
+        .iter()
+        .filter(|(_, id, _)| !id.starts_with('"'))
+        .count();
+    let digest = |srcs: &mut Vec<String>| {
+        srcs.sort();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        srcs.hash(&mut h);
+        h.finish()
+    };
+    let want: std::collections::BTreeMap<String, String> = cases
+        .iter()
+        .map(|(c, _, s)| (c.clone(), s.clone()))
+        .collect();
+    let decoded_ids = |path: &Path| -> std::collections::BTreeMap<String, (String, String)> {
+        let mut m = std::collections::BTreeMap::new();
+        for l in lines(path) {
+            let src = sonic_rs::get(l.as_bytes(), ["_source"])
+                .unwrap()
+                .as_raw_str()
+                .to_string();
+            let case = sonic_rs::get(src.as_bytes(), ["case"])
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string();
+            let id_raw = sonic_rs::get(l.as_bytes(), ["_id"])
+                .unwrap()
+                .as_raw_str()
+                .to_string();
+            m.insert(case, (id_raw, src));
+        }
+        m
+    };
+    let mut report = Vec::new();
+    let mut id_diffs = 0;
+    for tool in ["rust", "node"] {
+        if tool == "node" && node_bin().is_none() {
+            eprintln!("SKIP node side: Node elasticdump not installed");
+            continue;
+        }
+        let idx = unique(&format!("esc-{tool}"));
+        c.delete_index(&idx).await;
+        c.ok(
+            "PUT",
+            &idx,
+            Some(json!({"settings": {"number_of_shards": 1, "number_of_replicas": 0}, "mappings": {"enabled": false}})),
+        )
+        .await;
+        let out = dir.path().join(format!("{tool}.json"));
+        let restore = if tool == "rust" {
+            run_rs(&c, input.to_str().unwrap(), &c.url_with_auth(&idx), "data").await
+        } else {
+            let to = c.url_with_auth(&idx);
+            run_node(&s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &to,
+                "--type",
+                "data",
+            ]))
+            .await
+        };
+        let restore_err = String::from_utf8_lossy(&restore.stderr).to_string();
+        c.ok("POST", &format!("{idx}/_refresh"), None).await;
+        let o = if tool == "rust" {
+            run_rs(&c, &c.url_with_auth(&idx), out.to_str().unwrap(), "data").await
+        } else {
+            run_node(&s(&[
+                "--input",
+                &c.url_with_auth(&idx),
+                "--output",
+                out.to_str().unwrap(),
+                "--type",
+                "data",
+            ]))
+            .await
+        };
+        assert!(
+            o.status.success(),
+            "{tool} dump: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let got = decoded_ids(&out);
+        let mut diffs = Vec::new();
+        for (case, src) in &want {
+            match got.get(case) {
+                None => diffs.push(format!("{case}: missing (restore: {})", restore.status)),
+                Some((_, s)) if s != src => diffs.push(format!("{case}: source {src} -> {s}")),
+                _ => {}
+            }
+        }
+        let mut a: Vec<String> = want.values().cloned().collect();
+        let mut b: Vec<String> = got.values().map(|(_, s)| s.clone()).collect();
+        let equal = digest(&mut a) == digest(&mut b);
+        report.push(format!(
+            "{tool} on {}: {} docs ({numeric_ids} numeric ids), restore exit {:?}, {} returned, digest {}, {} differences",
+            c.version().await,
+            cases.len(),
+            restore.status.code(),
+            got.len(),
+            if equal { "EQUAL" } else { "DIFFERENT" },
+            diffs.len()
+        ));
+        for d in diffs.iter().take(if tool == "rust" { 40 } else { 12 }) {
+            report.push(format!("  {d}"));
+        }
+        if tool == "rust" {
+            // ids: what the engine returns decodes to what was sent (lone surrogates: reported)
+            for (case, (id_raw, _)) in &got {
+                let sent = cases.iter().find(|(c, _, _)| c == case).unwrap();
+                let sent_id = if sent.1.starts_with('"') {
+                    format!("{}-{case}\"", &sent.1[..sent.1.len() - 1])
+                } else {
+                    format!("\"{}\"", sent.1)
+                };
+                // engines store a lone surrogate escape in an _id as U+FFFD
+                let lone_to_fffd = sent_id
+                    .replace("\\ud800", "\u{fffd}")
+                    .replace("\\udc00", "\u{fffd}");
+                let a = serde_json::from_str::<String>(&lone_to_fffd).ok();
+                let b = serde_json::from_str::<String>(id_raw).ok();
+                if a.is_none() || a != b {
+                    report.push(format!("  {case}: id {sent_id} -> {id_raw}"));
+                    id_diffs += 1;
+                }
+            }
+            if !restore.status.success() {
+                report.push(format!(
+                    "  restore stderr: {}",
+                    restore_err
+                        .lines()
+                        .rev()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ));
+            }
+        }
+        c.delete_index(&idx).await;
+        if tool == "rust" {
+            eprintln!("{}", report.join("\n"));
+            assert!(
+                restore.status.success(),
+                "rust restore failed: {restore_err}"
+            );
+            assert!(
+                equal && diffs.is_empty() && id_diffs == 0,
+                "rust round trip differs:\n{}",
+                report.join("\n")
+            );
+        }
+    }
+    eprintln!("{}", report.join("\n"));
+}

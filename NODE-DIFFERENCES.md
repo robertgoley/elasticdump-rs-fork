@@ -56,3 +56,20 @@ Exit status for failed writes (L-444, Q3): Node exits 0 when bulk items fail (de
 `--ignore-es-write-errors true`). elasticdump-rs continues past failed items the same way but exits **3**
 ("finished with failed writes") unless `--ignore-es-write-errors` or `--ignore-errors` is given explicitly;
 `--ignore-es-write-errors false` stops at the first failed item with status 1, as in Node.
+
+Escaping corpus (L-511, TST-INJ-014; IT `node_interop::xv_escaping_corpus_round_trips_byte_for_byte`, OpenSearch
+2.19.7 and Elasticsearch 8.19.23, 88 documents into an `enabled: false` index): elasticdump-rs returns every
+`_source` byte for byte (multiset digest equal) and every `_id` decodes to the string sent; the engines themselves
+store a lone surrogate escape inside an `_id` (`"\ud800"`) as U+FFFD. Node 6.125.1 changes all 88 sources on the way
+file -> engine -> file because it parses and re-serialises them. Most changes are only re-escaping (`\/` -> `/`,
+`\u2028` -> raw U+2028, surrogate pairs -> raw astral characters, key order), but these change the data:
+
+| Input value | After the Node round trip |
+|---|---|
+| `1e400` | `null` |
+| `-18446744073709551617` | `-18446744073709552000` (rounded) |
+| `18446744073709551617` | `"18446744073709551617"` (a string) |
+| `0.1000000000000000055511151231257827` | `0.1` |
+| `-0`, `-0.0` | `0` |
+| `1.0E+2` | `100` |
+| lone surrogate escape `"\ud800"` (value or key) | U+FFFD or the character dropped |
