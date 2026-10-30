@@ -58,10 +58,17 @@ pub fn build_client_config(opts: &TlsOptions) -> Result<ClientConfig> {
     let config = match (&opts.cert, &opts.key) {
         (Some(cert), Some(key)) => {
             let chain = load_certs(cert)?;
+            let key_path = key;
             let key = load_key(key, opts.pass.as_deref())?;
             builder
                 .with_client_auth_cert(chain, key)
-                .context("Invalid client certificate/key pair")?
+                .with_context(|| {
+                    format!(
+                        "Invalid client certificate/key pair ('{}' and '{}': does the key match the certificate?)",
+                        cert.display(),
+                        key_path.display()
+                    )
+                })?
         }
         (Some(_), None) => bail!("A client certificate (--cert) requires a private key (--key)"),
         (None, Some(_)) => bail!("A private key (--key) requires a client certificate (--cert)"),
@@ -105,9 +112,34 @@ pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
         .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("Failed to parse PEM certificates in '{}'", path.display()))?;
     if certs.is_empty() {
-        bail!("No PEM certificates found in '{}'", path.display());
+        bail!(
+            "No PEM certificates found in '{}'{}",
+            path.display(),
+            not_pem_hint(&pem, path, "x509")
+        );
+    }
+    if String::from_utf8_lossy(&pem).contains("PRIVATE KEY-----") {
+        log::warn!(
+            "'{}' also contains a private key; only its certificates are used. A certificate or CA file should not carry keys: keep keys in a separate file with restricted permissions",
+            path.display()
+        );
     }
     Ok(certs)
+}
+
+/// Why a file has no PEM items (TST-BRK-TLS-002): empty, or binary DER (with the openssl
+/// command that converts it).
+fn not_pem_hint(bytes: &[u8], path: &Path, tool: &str) -> String {
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        " (the file is empty)".to_string()
+    } else if bytes.first() == Some(&0x30) {
+        format!(
+            " (it looks like binary DER, not PEM; convert it with `openssl {tool} -inform DER -in {} -out converted.pem`)",
+            path.display()
+        )
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(feature = "encrypted-keys")]
@@ -161,7 +193,11 @@ pub fn load_key(path: &Path, pass: Option<&str>) -> Result<PrivateKeyDer<'static
     match PrivateKeyDer::from_pem_slice(&pem) {
         Ok(key) => Ok(key),
         Err(rustls::pki_types::pem::Error::NoItemsFound) => {
-            bail!("No private key found in '{}'", path.display())
+            bail!(
+                "No private key found in '{}'{}",
+                path.display(),
+                not_pem_hint(&pem, path, "pkey")
+            )
         }
         Err(e) => {
             Err(anyhow!(e).context(format!("Failed to parse private key '{}'", path.display())))

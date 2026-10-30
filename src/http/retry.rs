@@ -413,6 +413,23 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
             true,
             "TLS: the server requires a client certificate; pass --input-cert/--input-key (or --cert/--key)",
         )
+    } else if has("received fatal alert")
+        && [
+            "UnknownCA",
+            "BadCertificate",
+            "CertificateUnknown",
+            "UnsupportedCertificate",
+            "CertificateExpired",
+            "CertificateRevoked",
+            "AccessDenied",
+        ]
+        .iter()
+        .any(|a| has(a))
+    {
+        (
+            true,
+            "TLS: the server rejected this client certificate: it must be signed by a CA the cluster trusts, be valid now and allow client authentication; check --input-cert/--output-cert (or --cert)",
+        )
     } else if has("ProtocolVersion") || has("PeerIncompatible") || has("peer is incompatible") {
         (
             true,

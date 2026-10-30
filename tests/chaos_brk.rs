@@ -1134,3 +1134,229 @@ async fn l609_redirects_are_never_followed() {
             .collect::<Vec<_>>()
     );
 }
+
+struct Srv(std::process::Child);
+impl Drop for Srv {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `scripts/tls/certs.sh` into `dir/certs`, or `None` (no openssl) after printing SKIP.
+fn cert_factory(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let certs = dir.join("certs");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/tls/certs.sh");
+    let ok = Command::new("bash")
+        .arg(script)
+        .arg(&certs)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        println!("SKIP: openssl cert factory unavailable");
+        return None;
+    }
+    Some(certs)
+}
+
+fn s_server(certs: &std::path::Path, cert: &str, extra: &[&str]) -> (Srv, u16) {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let child = Command::new("openssl")
+        .current_dir(certs)
+        .args(["s_server", "-quiet", "-www", "-accept", &port.to_string()])
+        .args([
+            "-cert",
+            &format!("{cert}.pem"),
+            "-key",
+            &format!("{cert}.key"),
+        ])
+        .args(extra)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..100 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    (Srv(child), port)
+}
+
+// L-611 (TST-BRK-TLS-002): client certificate faults beyond L-431 (missing, wrong --pass, legacy
+// PEM): a client cert from a CA the server does not trust, DER instead of PEM (cert and key),
+// a cert/key mismatch, empty files, a CA bundle that also holds a private key. Each: exit 1 or
+// 2 (never a panic), one message naming the file or the cause, and the passphrase canary never
+// appears.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l611_client_certificate_faults_have_clear_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some(certs) = cert_factory(dir.path()) else {
+        return;
+    };
+    let sh = |cmd: &str| {
+        let o = Command::new("sh")
+            .current_dir(&certs)
+            .args(["-c", cmd])
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "{cmd}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    };
+    sh(
+        "openssl req -newkey rsa:2048 -nodes -keyout rogue.key -out rogue.csr -subj /CN=rogue 2>/dev/null \
+        && printf 'extendedKeyUsage=clientAuth\\n' > rogue.ext \
+        && openssl x509 -req -in rogue.csr -CA other-ca.pem -CAkey other-ca.key -CAcreateserial -out rogue.pem -days 2 -extfile rogue.ext 2>/dev/null",
+    );
+    sh(
+        "openssl x509 -in client.pem -outform DER -out client.der && openssl pkey -in client.key -outform DER -out client.key.der",
+    );
+    sh(": > empty.pem && cat ca.pem client.key > ca-with-key.pem");
+    let (_srv, port) = s_server(
+        &certs,
+        "ok",
+        &["-Verify", "1", "-verify_return_error", "-CAfile", "ca.pem"],
+    );
+    let p = |n: &str| certs.join(n).to_str().unwrap().to_string();
+    let canary = "Canary-Passphrase-611";
+    let cases: Vec<(&str, Vec<String>, &[&str])> = vec![
+        (
+            "client cert from an untrusted CA",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("rogue.pem"),
+                "--input-key",
+                &p("rogue.key"),
+            ]),
+            &["rejected this client certificate"],
+        ),
+        (
+            "DER client cert",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("client.der"),
+                "--input-key",
+                &p("client.key"),
+            ]),
+            &["client.der", "PEM"],
+        ),
+        (
+            "DER client key",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("client.pem"),
+                "--input-key",
+                &p("client.key.der"),
+            ]),
+            &["client.key.der", "PEM"],
+        ),
+        (
+            "cert/key mismatch",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("client.pem"),
+                "--input-key",
+                &p("ok.key"),
+            ]),
+            &["match"],
+        ),
+        (
+            "empty cert file",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("empty.pem"),
+                "--input-key",
+                &p("client.key"),
+            ]),
+            &["empty.pem"],
+        ),
+        (
+            "empty key file",
+            s(&[
+                "--input-ca",
+                &p("ca.pem"),
+                "--input-cert",
+                &p("client.pem"),
+                "--input-key",
+                &p("empty.pem"),
+            ]),
+            &["empty.pem"],
+        ),
+        (
+            "empty CA file",
+            s(&[
+                "--input-ca",
+                &p("empty.pem"),
+                "--input-cert",
+                &p("client.pem"),
+                "--input-key",
+                &p("client.key"),
+            ]),
+            &["empty.pem"],
+        ),
+        (
+            "CA bundle with a private key",
+            s(&[
+                "--input-ca",
+                &p("ca-with-key.pem"),
+                "--input-cert",
+                &p("client.pem"),
+                "--input-key",
+                &p("client.key"),
+            ]),
+            &["ca-with-key.pem", "also contains a private key"],
+        ),
+    ];
+    for (name, mut extra, want) in cases {
+        extra.extend(s(&["--input-pass", canary]));
+        let mut a = s(&[
+            "--input",
+            &format!("https://localhost:{port}/idx"),
+            "--output",
+            dir.path().join("o.json").to_str().unwrap(),
+            "--type",
+            "mapping",
+            "--retryAttempts",
+            "1",
+            "--retryDelay",
+            "1",
+        ]);
+        a.extend(extra);
+        let o = run_async(a, vec![]).await;
+        let err = stderr(&o);
+        println!(
+            "L-611 {name}: exit {:?}: {}",
+            o.status.code(),
+            err.lines().rfind(|l| l.starts_with("Error")).unwrap_or("")
+        );
+        assert!(
+            matches!(o.status.code(), Some(1) | Some(2)),
+            "{name}: {err}"
+        );
+        assert!(!err.contains("panicked"), "{name}: {err}");
+        assert!(!err.contains(canary), "{name}: passphrase echoed: {err}");
+        assert!(
+            want.iter().all(|w| err.contains(w)),
+            "{name}: want {want:?}: {err}"
+        );
+        assert!(!dir.path().join("o.json").exists());
+    }
+}
