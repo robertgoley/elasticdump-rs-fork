@@ -182,7 +182,35 @@ pub async fn fetch(client: &EsClient, index: Option<&str>, opts: &MetaOptions) -
         segs.join("/"),
         opts.kind.type_name()
     );
-    get_json(client, opts.retry, &segs, &what).await
+    let mut doc = get_json(client, opts.retry, &segs, &what).await?;
+    skip_data_stream_backing(&mut doc, opts.kind.type_name());
+    Ok(doc)
+}
+
+/// TST-API-032: data stream backing indices (`.ds-*`, or a `data_stream` field in the GET
+/// index response) are not restorable as plain indices; drop them with a warning naming the
+/// data stream.
+pub(crate) fn skip_data_stream_backing(doc: &mut Value, type_name: &str) {
+    let Value::Object(obj) = doc else { return };
+    let backing: Vec<(String, Option<String>)> = obj
+        .iter()
+        .filter_map(|(name, def)| {
+            let ds = def
+                .get("data_stream")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            (name.starts_with(".ds-") || ds.is_some()).then(|| (name.clone(), ds))
+        })
+        .collect();
+    for (name, ds) in backing {
+        obj.remove(&name);
+        log::warn!(
+            "--type {type_name}: skipping data stream backing index {name}{}; dump the data stream's \
+             documents and restore them with --bulkAction create into a data stream",
+            ds.map(|d| format!(" (data stream {d})"))
+                .unwrap_or_default()
+        );
+    }
 }
 
 /// Remove generated settings from every index of a dump.
@@ -586,6 +614,17 @@ async fn apply_mapping(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn data_stream_backing_indices_are_skipped() {
+        let mut doc = serde_json::json!({
+            "a": {"settings": {}},
+            ".ds-logs-2026.10.30-000001": {"settings": {}},
+            "renamed_backing": {"data_stream": "logs", "settings": {}}
+        });
+        super::skip_data_stream_backing(&mut doc, "index");
+        assert_eq!(doc.as_object().unwrap().keys().collect::<Vec<_>>(), ["a"]);
+    }
 
     #[test]
     fn settings_exclusions_nested_and_flat() {

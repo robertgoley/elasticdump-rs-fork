@@ -754,3 +754,110 @@ async fn settings_round_trip_strips_generated_keys_and_honours_exclude() {
         c.delete_index(i).await;
     }
 }
+
+/// Index names in a `--type index|settings|mapping` dump file (the document may be a
+/// JSON-encoded string, as elasticdump writes it).
+fn dumped_index_names(path: &Path) -> Vec<String> {
+    let mut out = vec![];
+    for l in lines(path) {
+        let mut v: Value = serde_json::from_str(&l).unwrap();
+        if let Some(s) = v.as_str() {
+            v = serde_json::from_str(s).unwrap();
+        }
+        out.extend(v.as_object().into_iter().flat_map(|o| o.keys().cloned()));
+    }
+    out.sort();
+    out
+}
+
+// L-416 (TST-API-032): `--type index` over a wildcard includes open visible indices with
+// their aliases (filter, routing); hidden and closed indices are excluded (the server's
+// default `expand_wildcards=open`), a hidden index named explicitly is included, and data
+// stream backing indices are skipped with a warning naming the data stream.
+#[tokio::test]
+async fn index_type_inclusion_hidden_closed_and_data_streams() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let v = c.vnum().await;
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let p = unique("api_incl");
+    let (vis, hid, clo, ds) = (
+        format!("{p}_a"),
+        format!("{p}_h"),
+        format!("{p}_c"),
+        format!("{p}_ds"),
+    );
+    c.ok("PUT", &vis, Some(json!({"settings": {"number_of_replicas": 0}, "aliases": {format!("{p}_al"): {"filter": {"term": {"k": "x"}}, "routing": "r1"}}}))).await;
+    c.ok(
+        "PUT",
+        &hid,
+        Some(json!({"settings": {"number_of_replicas": 0, "index.hidden": true}})),
+    )
+    .await;
+    c.ok(
+        "PUT",
+        &clo,
+        Some(json!({"settings": {"number_of_replicas": 0}})),
+    )
+    .await;
+    c.ok("POST", &format!("{clo}/_close"), None).await;
+    let tpl = format!("{p}_dstpl");
+    let has_ds = if es {
+        v >= (7, 9) && !c.is_oss().await
+    } else {
+        true
+    };
+    if has_ds {
+        c.ok("PUT", &format!("_index_template/{tpl}"), Some(json!({"index_patterns": [format!("{ds}*")], "data_stream": {}, "priority": 500, "template": {"settings": {"number_of_replicas": 0}}}))).await;
+        c.ok("PUT", &format!("_data_stream/{ds}"), None).await;
+    }
+    let file = tmp_path("api_incl", "json");
+    let o = run_loud(io(
+        &c,
+        &c.url_with_auth(&format!("{p}_*")),
+        file.to_str().unwrap(),
+        &["--type", "index"],
+    ))
+    .await;
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(dumped_index_names(&file), vec![vis.clone()], "{err}");
+    if has_ds {
+        assert!(
+            err.contains("skipping data stream backing index") && err.contains(&ds),
+            "{err}"
+        );
+    }
+    let doc: Value = {
+        let l = &lines(&file)[0];
+        let v: Value = serde_json::from_str(l).unwrap();
+        v.as_str()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .unwrap_or(v)
+    };
+    let al = &doc[&vis]["aliases"][format!("{p}_al")];
+    assert_eq!(al["filter"]["term"]["k"], "x", "{doc}");
+    assert_eq!(al["index_routing"], "r1", "{doc}");
+    let _ = std::fs::remove_file(&file);
+    // a hidden index named explicitly is dumped
+    let o = run(io(
+        &c,
+        &c.url_with_auth(&hid),
+        file.to_str().unwrap(),
+        &["--type", "index"],
+    ))
+    .await;
+    assert_success(&o);
+    assert_eq!(dumped_index_names(&file), vec![hid.clone()]);
+    let _ = std::fs::remove_file(&file);
+    if has_ds {
+        let _ = c.call("DELETE", &format!("_data_stream/{ds}"), None).await;
+        let _ = c
+            .call("DELETE", &format!("_index_template/{tpl}"), None)
+            .await;
+    }
+    for i in [&vis, &hid, &clo] {
+        c.delete_index(i).await;
+    }
+}
+
