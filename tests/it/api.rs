@@ -861,3 +861,127 @@ async fn index_type_inclusion_hidden_closed_and_data_streams() {
     }
 }
 
+async fn index_status(c: &Cluster, index: &str) -> String {
+    let v = c.ok("GET", &format!("_cluster/state/metadata/{index}?filter_path=metadata.indices.*.state&expand_wildcards=all"), None).await;
+    v["metadata"]["indices"][index]["state"]
+        .as_str()
+        .unwrap_or("?")
+        .to_string()
+}
+
+// L-417 (TST-API-033): `--type analyzer` creates a new index; into an existing index it fails
+// naming --closeIndex/--skip-existing; --skip-existing leaves it alone; --closeIndex closes,
+// updates and reopens it; an update the server rejects (unknown tokenizer, injected) still
+// reopens the index and exits 1.
+#[tokio::test]
+async fn analyzer_restore_never_leaves_the_index_closed() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let p = unique("api_an");
+    let src = format!("{p}_src");
+    c.ok("PUT", &src, Some(json!({"settings": {"number_of_replicas": 0, "analysis": {"analyzer": {"a1": {"type": "custom", "tokenizer": "whitespace", "filter": ["lowercase"]}}}}}))).await;
+    let file = tmp_path("api_an", "json");
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&src),
+            file.to_str().unwrap(),
+            &["--type", "analyzer"],
+        ))
+        .await,
+    );
+    let good = std::fs::read_to_string(&file).unwrap();
+    let analyzer = |idx: &str| {
+        let idx = idx.to_string();
+        let c = &c;
+        async move {
+            let v = c.ok("GET", &format!("{idx}/_settings"), None).await;
+            v[&idx]["settings"]["index"]["analysis"]["analyzer"]["a1"]["tokenizer"].clone()
+        }
+    };
+    // new index
+    let fresh = format!("{p}_new");
+    assert_success(
+        &run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&fresh),
+            &["--type", "analyzer"],
+        ))
+        .await,
+    );
+    assert_eq!(analyzer(&fresh).await, "whitespace");
+    // existing index: clear error, then --skip-existing, then --closeIndex
+    let ex = format!("{p}_ex");
+    c.ok(
+        "PUT",
+        &ex,
+        Some(json!({"settings": {"number_of_replicas": 0}})),
+    )
+    .await;
+    let o = run(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(&ex),
+        &["--type", "analyzer"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("--closeIndex") && err.contains("--skip-existing"),
+        "{err}"
+    );
+    assert_eq!(index_status(&c, &ex).await, "open");
+    assert_success(
+        &run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&ex),
+            &["--type", "analyzer", "--skip-existing"],
+        ))
+        .await,
+    );
+    assert!(
+        analyzer(&ex).await.is_null(),
+        "--skip-existing leaves the index alone"
+    );
+    assert_success(
+        &run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&ex),
+            &["--type", "analyzer", "--closeIndex"],
+        ))
+        .await,
+    );
+    assert_eq!(analyzer(&ex).await, "whitespace");
+    assert_eq!(index_status(&c, &ex).await, "open");
+    // injected failure while closed: the index is reopened
+    let bad = tmp_path("api_an_bad", "json");
+    std::fs::write(&bad, good.replace("whitespace", "no_such_tokenizer")).unwrap();
+    let ex2 = format!("{p}_ex2");
+    c.ok(
+        "PUT",
+        &ex2,
+        Some(json!({"settings": {"number_of_replicas": 0}})),
+    )
+    .await;
+    let o = run(io(
+        &c,
+        bad.to_str().unwrap(),
+        &c.url_with_auth(&ex2),
+        &["--type", "analyzer", "--closeIndex"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("reopened"), "{err}");
+    assert_eq!(index_status(&c, &ex2).await, "open");
+    for f in [&file, &bad] {
+        let _ = std::fs::remove_file(f);
+    }
+    for i in [&src, &fresh, &ex, &ex2] {
+        c.delete_index(i).await;
+    }
+}
