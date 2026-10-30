@@ -210,6 +210,26 @@ tables above; the helper images are:
 | `ghcr.io/shopify/toxiproxy:2.12.0` | `sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e` | out-of-process fault proxy (`scripts/it/toxiproxy.sh`, INF-004) |
 | `docker.io/library/alpine:3.24.3` | `sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` | `make image-alpine` runtime base |
 
+### Injection PoCs: Node elasticdump vs elasticdump-rs (INJ-017)
+
+- **Run:** `scripts/poc/node-oracle.sh` (L-513), 2026-10-30 12:25 America/New_York.
+- **Setup:** one throwaway engine, opensearch-plain (`OS_TAG=2`, OpenSearch 2.19.7). Node elasticdump 6.125.1 on node v20.
+- **Captures:** a logging proxy recorded Node's HTTP requests for the two metadata cases. Raw output is in `results/local/L-513.json`.
+
+| PoC | elasticdump-rs | Node elasticdump 6.125.1 |
+|---|---|---|
+| INJ-F1 variant 1 (pretty-printed `_source` carrying a bulk action line), export → restore, checks A–D | NO-INJECTION; every check OK | NO-INJECTION; every check OK. Node re-serialises `_source` with `JSON.stringify`, so the export is one line. |
+| INJ-F1 variant 2 | NO-INJECTION | NO-INJECTION |
+| INJ-F2 analyzer file `{"*":{"settings":{"index":{"analysis":…}}}}`, output = cluster root (rs with `--closeIndex`) | Refused before any request (`invalid index name '*'`); exit 1; no index closed | Sends `PUT /` (405), then stops **silently with exit 0** and "Total Writes: 0". No index closed. |
+| Same file, output = `…/keep1` | – (the index name is validated the same way) | `PUT /keep1` (400 already exists), then the same silent stop with exit 0. Node never sends `_close`/`_open` for an existing index. |
+| INJ-F2 alias file `{"*":{"aliases":{"logs-read":{}}}}` | Refused before any request; exit 1; no alias created | **No request sent at all**, exit 0, "Total Writes: 0". From the source (`_alias.js`), a parsed file would send `POST /_aliases` with `index: "*"`, which adds the alias to every index. File-based alias restore is a silent no-op in 6.125.1, so this is not reachable. |
+| Data documents with `_index: "_all"` / `_index: "*"` | Refused per line by the client (`invalid _index`); nothing sent; exit 1 | Sent to `_bulk`. The engine refuses both (`invalid_index_name_exception`); Node prints the item errors and exits 0. |
+
+Result: Node 6.125.1 is not exploitable by these PoCs on OpenSearch 2.19.7. The engine or Node's own silent failures stop
+them. However, Node reports success (exit 0) in every refused case. elasticdump-rs refuses on the client before any request and
+exits non-zero. Its final error line now names both rejection reasons. Before L-513 it said only "not exactly one JSON object",
+even when the line was rejected for an invalid `_index`.
+
 ## 2. Untested or untestable differences per version
 
 These are behaviours the suite cannot exercise, or that differ between versions and are handled by gating or a fallback. Each row gives the reason.

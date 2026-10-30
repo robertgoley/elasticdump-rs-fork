@@ -770,7 +770,7 @@ pub async fn run() -> Result<()> {
         // A malformed line means the input framing is broken (INJ-F1):
         // never report success, even with --ignore-errors.
         return Err(anyhow::anyhow!(
-            "{} document line(s) were rejected because they were not exactly one JSON object; nothing was written for them",
+            "{} document line(s) were rejected (not exactly one JSON object, or an invalid _index; see the errors above); nothing was written for them",
             report.rejected
         ));
     }
