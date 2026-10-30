@@ -261,3 +261,39 @@ async fn source_only_dump_restores_with_new_ids() {
     c.delete_index(&dst).await;
     let _ = std::fs::remove_file(f);
 }
+
+/// L-455 (TST-BRK-XV-002): an index with `_source.enabled: false` cannot be fully dumped:
+/// refused by default, written without _source with --allowMissingSource.
+#[tokio::test]
+async fn xv_source_disabled_index_is_refused_unless_allowed() {
+    let c = Cluster::from_env();
+    let idx = unique("nosrc");
+    let (mapping, doc) = if c.major().await < 7 {
+        (
+            json!({"doc": {"_source": {"enabled": false}}}),
+            format!("{idx}/doc/1?refresh=true"),
+        )
+    } else {
+        (
+            json!({"_source": {"enabled": false}}),
+            format!("{idx}/_doc/1?refresh=true"),
+        )
+    };
+    c.ok("PUT", &idx, Some(json!({"mappings": mapping}))).await;
+    c.ok("PUT", &doc, Some(json!({"a": 1}))).await;
+    let out = tmp_path("nosrc", "json");
+    let o = run(io_args(&c, &c.url_with_auth(&idx), out.to_str().unwrap())).await;
+    let e = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(1), "{e}");
+    assert!(e.contains("documents cannot be fully dumped"), "{e}");
+    assert!(!out.exists());
+    let mut a = io_args(&c, &c.url_with_auth(&idx), out.to_str().unwrap());
+    a.push("--allowMissingSource".into());
+    assert_success(&run(a).await);
+    let l = lines(&out);
+    assert_eq!(l.len(), 1);
+    let v: Value = serde_json::from_str(&l[0]).unwrap();
+    assert_eq!(v["_id"], "1");
+    assert!(v.get("_source").is_none(), "{v}");
+    c.delete_index(&idx).await;
+}

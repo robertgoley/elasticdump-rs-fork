@@ -46,6 +46,17 @@ enum CancelReason {
     OutputClosed,
 }
 
+/// Whether every hit must carry `_source` (see [`extract`]); set once per run.
+static REQUIRE_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_require_source(on: bool) {
+    REQUIRE_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn require_source() -> bool {
+    REQUIRE_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Everything the Elasticsearch/OpenSearch reader needs.
 pub struct EsSourceOptions {
     pub client: EsClient,

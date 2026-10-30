@@ -413,6 +413,11 @@ pub struct Cli {
     #[arg(long = "allowMerge")]
     pub allow_merge: bool,
 
+    /// Extension: dump data from indices whose mapping disables _source (documents then
+    /// carry only _id and metadata). By default the first hit without _source stops the dump
+    #[arg(long = "allowMissingSource")]
+    pub allow_missing_source: bool,
+
     // ------------------------------------------------------------ retries
     /// Retries per request (0 = 4 implicit retries unless --noImplicitRetry)
     #[arg(long = "retryAttempts", default_value_t = 0)]

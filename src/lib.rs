@@ -732,6 +732,11 @@ pub async fn run() -> Result<()> {
                 Endpoint::Es(ep) => {
                     let opts = es_source_options(&cli, ep, retry, gate.clone()).await?;
                     check_rename_merges(&cli, &opts.client, ep.index.as_deref(), retry).await?;
+                    // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
+                    // stop the dump unless the search body filters _source itself (anything but `true`).
+                    let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
+                        .is_some_and(|v| sonic_rs::JsonValueTrait::as_bool(v) != Some(true));
+                    retrieval::set_require_source(!cli.allow_missing_source && !own_choice);
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {

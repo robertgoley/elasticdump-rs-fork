@@ -2870,3 +2870,65 @@ async fn sigterm_and_sigint_stop_cleanly_with_128_plus_signal() {
     );
     writer.join().unwrap();
 }
+
+// L-455 (BRK-XV-002): hits without _source (mapping _source.enabled: false) stop the dump
+// with "documents cannot be fully dumped" unless --allowMissingSource or a searchBody that
+// filters _source itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn hits_without_source_are_refused_unless_allowed() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let page = r#"{"_scroll_id":"s1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"nosrc","_id":"1","_score":1.0}]}}"#;
+    let empty = r#"{"_scroll_id":"s1","hits":{"total":{"value":1,"relation":"eq"},"hits":[]}}"#;
+    let mock = || {
+        RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::prefix("POST", "/nosrc/_search").reply(Reply::ok(page)))
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(empty)))
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    for (extra, ok) in [
+        (vec![], false),
+        (vec!["--allowMissingSource"], true),
+        (
+            vec![
+                "--searchBody",
+                r#"{"query":{"match_all":{}},"_source":false}"#,
+            ],
+            true,
+        ),
+    ] {
+        let m = mock().await;
+        let out = dir.path().join(format!("out-{}.json", extra.len()));
+        let mut args = vec![
+            "--input".to_string(),
+            format!("{}/nosrc", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+        ];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let o = run_async(args, vec![]).await;
+        let err = stderr(&o);
+        if ok {
+            assert_eq!(o.status.code(), Some(0), "{extra:?}: {err}");
+            assert!(
+                std::fs::read_to_string(&out)
+                    .unwrap()
+                    .contains("\"_id\":\"1\"")
+            );
+        } else {
+            assert_eq!(o.status.code(), Some(1), "{err}");
+            assert!(err.contains("documents cannot be fully dumped"), "{err}");
+            assert!(
+                err.contains("'nosrc'") && err.contains("--allowMissingSource"),
+                "{err}"
+            );
+            assert!(!out.exists(), "nothing written");
+        }
+    }
+}

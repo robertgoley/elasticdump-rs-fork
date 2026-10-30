@@ -261,6 +261,18 @@ pub(crate) fn extract_batch_metadata(
     )
 }
 
+/// A hit without `_source`: its index does not store it, so documents cannot
+/// be fully dumped (TST-BRK-XV-002).
+fn missing_source_error(hit: &LazyValue<'_>) -> anyhow::Error {
+    let index = hit
+        .get("_index")
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "?".to_string());
+    anyhow!(
+        "documents cannot be fully dumped: a hit from index '{index}' has no _source (its mapping has _source.enabled: false, so only _id and metadata could be written). Nothing of this page was written; pass --allowMissingSource to dump such indices anyway"
+    )
+}
+
 pub(crate) fn extract_batch(
     response_bytes: &Bytes,
     search_type: &SearchType,
@@ -275,9 +287,13 @@ pub(crate) fn extract_batch(
     let mut last_sort_raw = None;
     let mut buffer = Vec::with_capacity(response_bytes.len());
 
+    let require_source = super::require_source();
     for hit in iter {
         let hit = hit?;
         doc_count += 1;
+        if require_source && hit.get("_source").is_none() {
+            return Err(missing_source_error(&hit));
+        }
 
         // The cluster returns `_source` byte for byte as indexed, so a
         // pretty-printed document carries raw line breaks between tokens.
