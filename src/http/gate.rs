@@ -93,7 +93,8 @@ pub struct GatePermit {
 impl RequestGate {
     pub fn new(max_sockets: Option<usize>, interval: Option<IntervalLimiter>) -> Self {
         Self {
-            sockets: max_sockets.map(|n| Arc::new(Semaphore::new(n.max(1)))),
+            sockets: max_sockets
+                .map(|n| Arc::new(Semaphore::new(n.clamp(1, Semaphore::MAX_PERMITS)))),
             interval: interval.map(Arc::new),
         }
     }

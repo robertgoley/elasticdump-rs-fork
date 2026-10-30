@@ -16,7 +16,9 @@ static CHECKED: AtomicBool = AtomicBool::new(false);
 
 pub fn set(buffer_size: usize, slices: usize, concurrency: usize, limit: usize) {
     let _ = PLAN.set(Plan {
-        batches: (buffer_size + slices + concurrency) as u64,
+        batches: (buffer_size as u64)
+            .saturating_add(slices as u64)
+            .saturating_add(concurrency as u64),
         limit: limit as u64,
     });
 }

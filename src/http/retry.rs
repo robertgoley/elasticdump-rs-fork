@@ -80,6 +80,14 @@ impl fmt::Display for EsHttpError {
                 self.endpoint_or_operation(),
                 privilege_hint(&self.endpoint)
             ),
+            400 if self.body.contains("max_result_window") => write!(
+                f,
+                " (--limit is larger than the index allows per page: index.max_result_window, 10000 by default; lower --limit)"
+            ),
+            400 if self.body.contains("max_slices_per_scroll") => write!(
+                f,
+                " (--slices is larger than the index allows: index.max_slices_per_scroll, 1024 by default; lower --slices)"
+            ),
             503 if self.body.contains("missing shards")
                 || self.body.contains("no_shard_available_action_exception")
                 || self.body.contains("all shards failed") =>

@@ -727,7 +727,10 @@ pub async fn run() -> Result<()> {
     if let Some(limit) = open_file_limit() {
         // connections (one per concurrent request or slice, input and output side) plus
         // ~24 for the runtime, logs, input and output files (TST-BRK-RES-004)
-        let need = 2 * (cli.concurrency + cli.slices.max(1)) as u64 + 24;
+        let need = (cli.concurrency as u64)
+            .saturating_add(cli.slices.max(1) as u64)
+            .saturating_mul(2)
+            .saturating_add(24);
         if need > limit {
             log::warn!(
                 "--concurrency {} and --slices {} may need ~{need} open files but the limit (ulimit -n) is {limit}; expect 'Too many open files' unless it is raised or those flags lowered",

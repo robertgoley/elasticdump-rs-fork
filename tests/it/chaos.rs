@@ -241,3 +241,27 @@ async fn l622_red_index_fails_clearly() {
     assert!(!out.exists(), "nothing committed");
     c.delete_index(&index).await;
 }
+
+// L-638 (TST-BRK-RES-005), live half: --limit above index.max_result_window and --slices above
+// index.max_slices_per_scroll are refused by the engine; the error names the setting and the
+// flag to lower, exit 1, nothing committed.
+#[tokio::test]
+async fn l638_page_and_slice_limits_are_explained() {
+    let c = Cluster::from_env();
+    let index = unique("limits");
+    seed_index(&c, &index, 20).await;
+    for (flags, want) in [
+        (vec!["--limit", "20000"], "lower --limit"),
+        (vec!["--slices", "2000"], "lower --slices"),
+    ] {
+        let out = tmp_path("limits", "json");
+        let mut a = io_args(&c, &c.url_with_auth(&index), out.to_str().unwrap());
+        a.extend(s(&flags));
+        let o = run_loud(a).await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert_eq!(o.status.code(), Some(1), "{flags:?}: {err}");
+        assert!(err.contains(want), "{flags:?}: {err}");
+        assert!(!out.exists(), "{flags:?}");
+    }
+    c.delete_index(&index).await;
+}

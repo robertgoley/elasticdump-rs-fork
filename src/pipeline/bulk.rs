@@ -808,7 +808,11 @@ impl BulkSink {
         let mut start = 0;
         while start < docs.len() {
             // Split oversized batches at --maxBulkBytes.
-            let mut body = Vec::with_capacity(encoded.len().min(self.opts.max_bulk_bytes + 4096));
+            let mut body = Vec::with_capacity(
+                encoded
+                    .len()
+                    .min(self.opts.max_bulk_bytes.saturating_add(4096)),
+            );
             let mut end = start;
             while end < docs.len() {
                 let before = body.len();

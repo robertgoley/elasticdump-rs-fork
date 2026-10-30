@@ -2906,3 +2906,76 @@ async fn l637_fd_limit_is_survived_or_explained() {
         "{err}"
     );
 }
+
+// L-638 (TST-BRK-RES-005): extreme numeric flags. Every numeric flag with boundary values of
+// the u64 range (and just past it, negative, float notation) either parses and runs (a
+// restore of 50 docs to a mock) or is a usage error (exit 2): never a panic, an abort, a
+// capacity overflow or a hang.
+#[tokio::test]
+async fn l638_extreme_numeric_flags_never_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("d.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n".repeat(50),
+    )
+    .unwrap();
+    let m = RouterMock::builder()
+        .handler(|req| async move {
+            if req.method == "GET" {
+                return Reply::ok(INFO);
+            }
+            let n = String::from_utf8_lossy(&req.body).lines().count() / 2;
+            let items = vec![r#"{"index":{"status":201}}"#; n].join(",");
+            Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+        })
+        .start()
+        .await;
+    let flags = [
+        "--limit",
+        "--offset",
+        "--size",
+        "--concurrency",
+        "--maxSockets",
+        "--maxResponseMb",
+        "--maxDocMb",
+        "--retryAttempts",
+        "--retryDelay",
+        "--slices",
+        "--workers",
+        "--bufferSize",
+        "--maxBulkBytes",
+        "--intervalCap",
+        "--timeout",
+        "--idleTimeout",
+        "--requestTimeout",
+    ];
+    let values = [
+        "0",
+        "1",
+        "4294967296",
+        "9223372036854775807",
+        "18446744073709551615",
+        "18446744073709551616",
+        "-1",
+        "1e9",
+    ];
+    for f in flags {
+        for v in values {
+            let mut a = s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/z", m.url()),
+            ]);
+            a.extend(s(&[f, v]));
+            let o = tokio::time::timeout(std::time::Duration::from_secs(20), run_async(a, vec![]))
+                .await
+                .unwrap_or_else(|_| panic!("{f} {v}: hung"));
+            let err = stderr(&o);
+            let code = o.status.code();
+            assert!(matches!(code, Some(0..=2)), "{f} {v}: {code:?} {err}");
+            assert!(!err.contains("panicked"), "{f} {v}: {err}");
+        }
+    }
+}
