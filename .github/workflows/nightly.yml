@@ -64,6 +64,12 @@ jobs:
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       # T7: every chaos test prints CHAOS_SEED=<n>; replay with the same env var (INF-013).
       - run: cargo nextest run --profile chaos --features chaos --no-tests=pass
+      # INF-004: the fault conformance suite against both proxies (in-process + toxiproxy container).
+      - run: |
+          eval "$(scripts/it/toxiproxy.sh up)"
+          cargo nextest run --profile contract -E 'binary(fault_conformance)'
+      - if: always()
+        run: scripts/it/toxiproxy.sh down
       - if: always()
         run: scripts/ci/collect-artifacts.sh chaos
       - if: always()

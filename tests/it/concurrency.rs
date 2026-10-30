@@ -1,15 +1,12 @@
 //! M5: concurrent writes, throttling, the interval limiter, retries under
 //! injected network faults, and `--searchWithTemplate` / `--format human`.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 
 use crate::harness::*;
+use crate::support::fault_proxy::{Dir, FaultProxy, Policy};
 
 fn io_args(c: &Cluster, input: &str, output: &str) -> Vec<String> {
     let mut a = s(&["--input", input, "--output", output]);
@@ -92,87 +89,22 @@ async fn interval_cap_and_throttle_timing() {
     }
 }
 
-/// A TCP proxy that injects faults: every `refuse_every`-th connection is
-/// closed immediately; every other connection is cut after forwarding a
-/// pseudo-random number of response bytes (small for every `cut_every`-th
-/// connection, up to ~64 KiB otherwise), so pooled keep-alive connections
-/// keep dying mid-response throughout the run.
-struct FaultProxy {
-    port: u16,
-    faults: Arc<AtomicU64>,
-    handle: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for FaultProxy {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
-}
-
+/// The original fault pattern on the shared proxy (tests/support/fault_proxy.rs): every
+/// `refuse_every`-th connection is closed immediately; every other connection is cut after
+/// forwarding a pseudo-random number of response bytes (small for every `cut_every`-th
+/// connection, up to ~64 KiB otherwise), so pooled keep-alive connections keep dying
+/// mid-response throughout the run.
 async fn fault_proxy(upstream: String, cut_every: u64, refuse_every: u64) -> FaultProxy {
-    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = l.local_addr().unwrap().port();
-    let faults = Arc::new(AtomicU64::new(0));
-    let f2 = Arc::clone(&faults);
-    let handle = tokio::spawn(async move {
-        let mut n: u64 = 0;
-        loop {
-            let Ok((mut down, _)) = l.accept().await else {
-                return;
-            };
-            n += 1;
-            if n % refuse_every == 0 {
-                f2.fetch_add(1, Ordering::SeqCst);
-                drop(down);
-                continue;
-            }
-            let cut_after = Some(if n % cut_every == 0 {
+    let policy = Policy::new()
+        .refuse_every(refuse_every)
+        .cut_with(Dir::Down, move |n| {
+            Some(if n % cut_every == 0 {
                 64 + (n * 7919) % 2048
             } else {
                 4096 + (n * 104_729) % 61_440
-            });
-            let upstream = upstream.clone();
-            let f3 = Arc::clone(&f2);
-            tokio::spawn(async move {
-                let Ok(mut up) = TcpStream::connect(&upstream).await else {
-                    return;
-                };
-                let (mut dr, mut dw) = down.split();
-                let (mut ur, mut uw) = up.split();
-                let c2u = tokio::io::copy(&mut dr, &mut uw);
-                let u2c = async {
-                    let mut sent: u64 = 0;
-                    let mut buf = vec![0u8; 4096];
-                    loop {
-                        let k = ur.read(&mut buf).await?;
-                        if k == 0 {
-                            return Ok::<_, std::io::Error>(());
-                        }
-                        let k = match cut_after {
-                            Some(limit) if sent + k as u64 >= limit => {
-                                let part = (limit - sent) as usize;
-                                dw.write_all(&buf[..part]).await?;
-                                f3.fetch_add(1, Ordering::SeqCst);
-                                return Ok(());
-                            }
-                            _ => k,
-                        };
-                        dw.write_all(&buf[..k]).await?;
-                        sent += k as u64;
-                    }
-                };
-                tokio::select! {
-                    _ = c2u => {}
-                    _ = u2c => {}
-                }
-            });
-        }
-    });
-    FaultProxy {
-        port,
-        faults,
-        handle,
-    }
+            })
+        });
+    FaultProxy::start(&upstream, policy).await
 }
 
 #[tokio::test]
@@ -219,7 +151,7 @@ async fn restore_through_fault_injection_20_of_20() {
         ]));
         let o = run(a).await;
         assert_success(&o);
-        total_faults += proxy.faults.load(Ordering::SeqCst);
+        total_faults += proxy.faults();
         // explicit ids: retried bulks never duplicate
         c.ok("POST", &format!("{dst}/_refresh"), None).await;
         assert_eq!(c.count(&dst).await, want.len() as u64, "run {run_no}");

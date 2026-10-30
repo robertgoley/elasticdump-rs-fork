@@ -7,6 +7,7 @@
 
 pub mod chaos;
 pub mod es_shim;
+pub mod fault_proxy;
 pub mod golden;
 pub mod mock_es;
 pub mod router_mock;
