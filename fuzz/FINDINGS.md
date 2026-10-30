@@ -64,3 +64,13 @@ Known, by design, already guarded: sonic-rs does not validate escapes inside ski
 `check_escapes`), and `to_object_iter` stops at the closing brace without looking at trailing bytes
 (`check_doc_line` rejects those). sonic-rs is pinned to `=0.5.10` in Cargo.toml so an upgrade re-runs this
 target first. No divergence needed filing upstream; the 4 h nightly campaign is B.
+
+## L-512 (TST-INJ-015): injection oracles
+
+F-512-1 (fixed, found by the `url_segments` unit sample before the run): the URL parser drops tab, CR and LF
+from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) would have addressed `logs`.
+`EsClient::url` now refuses any segment with a control character.
+
+| Target | Run | Execs | Coverage | Result |
+|---|---|---|---|---|
+| file_to_bulk | 300 s | 2,448,842 | 3970 | ok |
