@@ -80,6 +80,8 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   `--carryoverConcurrencyCount`, `--maxSockets`, `--timeout` (ms of server *silence*, as in Node's `request`;
   a slow but progressing response is not cut off; overrides `--idleTimeout`).
 * **Retries:** `--retryAttempts` (0 = Node's 4 implicit retries), `--retryDelay` (5000 ms).
+* **Redirects** are never followed (Node follows them): a 3xx answer stops the run and names the target, so
+  credentials and documents only go to the cluster you named. Use the final URL directly.
 * **Auth/TLS:** `--httpAuthFile`, `--tlsAuth`, `--ca`/`--cert`/`--key`/`--pass` and their `--input-*`/`--output-*` forms.
 * **Metadata:** `--templateRegex`, `--filterSystemTemplates` (Node), and the extensions `--filterManaged`
   (default true), `--closeIndex`, `--excludeTemplateFields`, `--convertIlmToIsm`, `--lenientPolicyConversion`,

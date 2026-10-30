@@ -645,6 +645,24 @@ where
                 if matches!(status.as_u16(), 429 | 503) {
                     retry_after = parse_retry_after(response.headers());
                 }
+                if status.is_redirection() {
+                    let location = response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|l| {
+                            response
+                                .url()
+                                .join(l)
+                                .map(|u| public_endpoint(&u))
+                                .unwrap_or_else(|_| truncate_at(l, 200).to_string())
+                        })
+                        .unwrap_or_else(|| "(no Location header)".to_string());
+                    return Err(anyhow!(
+                        "{prefix}{operation}: {endpoint} answered with a redirect (HTTP {}) to {location}; redirects are not followed for API calls (they could send credentials or documents elsewhere). Use the final URL directly",
+                        status.as_u16()
+                    ));
+                }
                 match read_capped(response, retry.max_response_bytes).await {
                     Err(ReadError::TooLarge(cap)) => {
                         // permanent: the same request would return the same body

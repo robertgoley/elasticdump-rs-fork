@@ -1035,3 +1035,102 @@ async fn l608_broken_encodings_fail_clearly_or_are_retried() {
         }
     }
 }
+
+// L-609 (TST-BRK-NET-012): redirects (301, 302, 307, 308; same-origin and to another host)
+// on `GET /`, the search and `_bulk` are never followed: exit 1, a message naming the
+// redirect target (without credentials), and no request ever reaches the target, so no
+// `Authorization` header leaves for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l609_redirects_are_never_followed() {
+    let target = RouterMock::builder()
+        .fallback(Reply::ok(INFO))
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, format!("{}\n", hit("1", "{}"))).unwrap();
+    for status in [301u16, 302, 307, 308] {
+        for (what, same_origin) in [
+            ("info", false),
+            ("search", false),
+            ("search", true),
+            ("bulk", false),
+        ] {
+            let tag = format!("{status} {what} same_origin={same_origin}");
+            let loc = if same_origin {
+                "/elsewhere/_search".to_string()
+            } else {
+                format!("{}/stolen?x=1", target.url())
+            };
+            let redirect = Reply::redirect(status, &loc);
+            let mut b = RouterMock::builder();
+            b = match what {
+                "info" => b.route(Route::exact("GET", "/").reply(redirect)),
+                "search" => b
+                    .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                    .route(Route::contains("POST", "/idx/_search").reply(redirect)),
+                _ => b
+                    .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                    .route(Route::contains("POST", "/_bulk").reply(redirect)),
+            };
+            let m = b.fallback(Reply::ok(CLEARED)).start().await;
+            let auth_url = m
+                .url()
+                .replacen("http://", "http://admin:Redir3ctSecret@", 1);
+            let out = dir.path().join("d.json");
+            // `GET /` is probed by restores (scroll dumps do not need it)
+            let a = if what == "bulk" || what == "info" {
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    &format!("{auth_url}/dst"),
+                    "--noRefresh",
+                ])
+            } else {
+                s(&[
+                    "--input",
+                    &format!("{auth_url}/idx"),
+                    "--output",
+                    out.to_str().unwrap(),
+                ])
+            };
+            let mut a = a;
+            a.extend(s(&["--retryAttempts", "1", "--retryDelay", "1"]));
+            let o = run_async(a, vec![]).await;
+            let err = stderr(&o);
+            assert_eq!(o.status.code(), Some(1), "{tag}: {err}");
+            assert!(
+                err.contains("redirect") && err.contains("not followed"),
+                "{tag}: {err}"
+            );
+            assert!(
+                err.contains(if same_origin {
+                    "/elsewhere/_search"
+                } else {
+                    "/stolen"
+                }),
+                "{tag}: {err}"
+            );
+            assert!(
+                !err.contains("Redir3ctSecret") && !err.contains("x=1"),
+                "{tag}: {err}"
+            );
+            assert!(!out.exists(), "{tag}");
+            assert_eq!(count(&m.requests(), "POST", "/elsewhere"), 0, "{tag}");
+        }
+    }
+    assert!(
+        target.requests().is_empty(),
+        "the redirect target was contacted: {:?}",
+        target
+            .requests()
+            .iter()
+            .map(|r| (
+                r.method.clone(),
+                r.path.clone(),
+                r.header("authorization").is_some()
+            ))
+            .collect::<Vec<_>>()
+    );
+}
