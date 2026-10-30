@@ -8,6 +8,7 @@ mod support;
 mod golden;
 
 mod api;
+mod chaos;
 
 mod concurrency;
 mod cross;
