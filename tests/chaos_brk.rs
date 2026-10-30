@@ -1760,3 +1760,40 @@ async fn l616_bulk_answers_that_do_not_match_are_never_counted_as_written() {
         );
     }
 }
+
+// L-617 (TST-BRK-SRV-005): a 200 search page that is cut inside `hits.hits[k]`, has no `hits`,
+// or whose `hits.hits` is not an array. With stdout output (no staging to hide a partial
+// page) the consumer sees the earlier pages whole and nothing of the broken one; exit 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l617_malformed_search_page_never_reaches_stdout_partially() {
+    let first = page("s1", &[hit("1", "{}"), hit("2", "{}")], 6);
+    let good2 = page(
+        "s1",
+        &[hit("3", r#"{"k":"v"}"#), hit("4", "{}"), hit("5", "{}")],
+        6,
+    );
+    let cut = good2[..good2.find(r#""_id":"5""#).unwrap() + 4].to_string();
+    for (label, bad) in [
+        ("cut inside hits.hits[2]", cut),
+        ("no hits", r#"{"_scroll_id":"s1","timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0}}"#.to_string()),
+        ("hits.hits not an array", r#"{"_scroll_id":"s1","timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":6,"relation":"eq"},"hits":{"0":{}}}}"#.to_string()),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(&first)))
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(&bad)))
+            .fallback(Reply::ok(CLEARED))
+            .start()
+            .await;
+        let o = run_async(s(&["--input", &format!("{}/idx", m.url()), "--output", "$", "--limit", "3"]), vec![]).await;
+        let err = stderr(&o);
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        assert_eq!(o.status.code(), Some(1), "{label}: {err}");
+        let ids: Vec<String> = out
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap_or_else(|e| panic!("{label}: partial line {l:?}: {e}"))["_id"].to_string())
+            .collect();
+        assert_eq!(ids, ["\"1\"", "\"2\""], "{label}: only the first page, whole: {out}");
+        assert!(err.contains("malformed search response") || err.contains("hits"), "{label}: {err}");
+    }
+}
