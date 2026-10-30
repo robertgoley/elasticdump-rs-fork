@@ -1444,3 +1444,74 @@ async fn x_elastic_product_is_tolerated_on_meta_paths() {
         );
     }
 }
+
+// L-427 (TST-API-051): 5xx per request kind. Idempotent requests (initial search, meta GET)
+// are retried; a scroll continuation is not (the cursor may have moved) and the message says
+// why and how to recover. Exit 1, nothing committed, no staging left behind.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_5xx_per_request_kind() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    for status in [500u16, 502, 503, 504] {
+        let fail =
+            format!(r#"{{"error":{{"type":"x","reason":"boom {status}"}},"status":{status}}}"#);
+        let m = RouterMock::builder()
+            .route(Route::contains("POST", "/idx/_search").replies([
+                Reply::json(status, &fail),
+                Reply::ok(page("s1", &[hit("1", "{}")], 3)),
+            ]))
+            .route(Route::exact("POST", "/_search/scroll").reply(Reply::json(status, &fail)))
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--limit".into(),
+                "1".into(),
+                "--retryAttempts".into(),
+                "2".into(),
+                "--retryDelay".into(),
+                "1".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        let reqs = m.requests();
+        let n = |p: &str| {
+            reqs.iter()
+                .filter(|r| r.method == "POST" && r.path.starts_with(p))
+                .count()
+        };
+        assert_eq!(n("/idx/_search"), 2, "initial search retried once: {err}");
+        assert_eq!(
+            n("/_search/scroll"),
+            1,
+            "continuation never retried on {status}: {err}"
+        );
+        assert!(
+            err.contains(&format!("HTTP {status}")) && err.contains(&format!("boom {status}")),
+            "{err}"
+        );
+        assert!(
+            err.contains("not retried") && err.contains("--scrollId"),
+            "{err}"
+        );
+        assert!(!out.exists(), "nothing committed");
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert!(left.is_empty(), "staging left: {left:?}");
+    }
+}

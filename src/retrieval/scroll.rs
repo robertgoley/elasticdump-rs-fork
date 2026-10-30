@@ -16,6 +16,21 @@ use super::{
     slice_state::SliceState,
 };
 
+/// A failed scroll continuation (other than cancellation or an exhausted 429)
+/// was not retried by design: the server may already have moved the cursor.
+/// Say so, and how to recover (TST-API-051).
+fn continuation_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error {
+    let status = error
+        .downcast_ref::<crate::http::EsHttpError>()
+        .map(|h| h.status);
+    if crate::http::is_cancelled(&error) || status == Some(429) {
+        return error;
+    }
+    error.context(format!(
+        "Slice {slice_id}: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page; nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resumes only from a still-open scroll and the page in flight may be missing)"
+    ))
+}
+
 pub(crate) fn build_scroll_request_body(scroll_ttl: &str, scroll_id: &str) -> Value {
     json!({
         "scroll": scroll_ttl,
@@ -178,7 +193,7 @@ pub(crate) async fn run_scroll_slice(
                     )
                     .await;
                 }
-                return Err(error);
+                return Err(continuation_failure(error, state.slice_id));
             }
         };
 
