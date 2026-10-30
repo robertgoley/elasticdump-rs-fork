@@ -1471,6 +1471,14 @@ main() {
   printf '  BENCH_INDEX=%s\n' "${BENCH_INDEX}"
   printf '  WORKDIR=%s\n' "${WORKDIR}"
 
+  # L-208 U-2: never silently delete a caller-named index that already holds data.
+  if [[ -n "${BENCH_INDEX_NAME}" && "${BENCH_ALLOW_DELETE:-0}" != "1" ]]; then
+    if [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --head "$(es_url "/${BENCH_INDEX}")")" == "200" ]]; then
+      local existing="${BENCH_INDEX}"
+      BENCH_INDEX=""  # cleanup must not delete it either
+      die "Index ${existing} already exists; refusing to delete it (set BENCH_ALLOW_DELETE=1 to allow)"
+    fi
+  fi
   delete_index_if_exists || die "Failed to delete existing benchmark index ${BENCH_INDEX}"
   create_index
   seed_index

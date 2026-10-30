@@ -116,7 +116,11 @@ pub(crate) async fn run_scroll_slice(
     };
     apply_scroll_batch_metadata(state, &metadata);
     if let Some(id) = &state.current_id {
-        debug!("Slice {}: Got scroll_id: {}", state.slice_id, id);
+        debug!(
+            "Slice {}: Got scroll_id: {}",
+            state.slice_id,
+            super::redact_context_id(id)
+        );
     } else {
         debug!("Slice {}: No scroll_id found in response", state.slice_id);
     }

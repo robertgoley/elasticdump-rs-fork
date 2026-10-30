@@ -105,7 +105,9 @@ pub(crate) async fn run_pit_slice(
         build_pit_search_body(&state.search_body, &lease.id, pit_keep_alive, None)?;
     debug!(
         "Search body: {}",
-        sonic_rs::to_string(&request_body).unwrap_or_default()
+        sonic_rs::to_string(&request_body)
+            .unwrap_or_default()
+            .replace(lease.id.as_str(), &super::redact_context_id(&lease.id))
     );
 
     // PIT search_after requests are idempotent (the cursor lives in the
@@ -217,7 +219,12 @@ pub(crate) async fn run_pit_slice(
         }
         debug!(
             "Next PIT body: {}",
-            sonic_rs::to_string(&request_body).unwrap_or_default()
+            sonic_rs::to_string(&request_body)
+                .unwrap_or_default()
+                .replace(
+                    current_request_id.as_str(),
+                    &super::redact_context_id(&current_request_id)
+                )
         );
 
         let body = Body::sonic(&request_body);
@@ -313,6 +320,17 @@ pub(crate) async fn run_pit_slice(
 
     abort_guard.defuse();
     Ok(slice_total_hits)
+}
+
+#[cfg(test)]
+mod redact_tests {
+    #[test]
+    fn context_ids_are_shortened_in_logs() {
+        let id = "FGluY2x1ZGVfY29udGV4dF91dWlkDXF1ZXJ5QW5kRmV0Y2gBFkx";
+        let r = super::super::redact_context_id(id);
+        assert!(r.starts_with("FGluY2x1…("));
+        assert!(!r.contains("ZGVfY29udGV4"));
+    }
 }
 
 #[cfg(test)]

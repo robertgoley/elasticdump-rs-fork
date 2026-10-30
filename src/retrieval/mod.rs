@@ -121,6 +121,13 @@ where
 /// two are usually "channel closed" cascades of the former. A `DumpCancelled`
 /// cascade never outranks a real error regardless of position. Every
 /// suppressed error is still logged.
+/// Shorten a scroll/PIT context id for logs (L-208 U-1): the id is a capability
+/// that lets anyone with cluster access read the open search context.
+pub(crate) fn redact_context_id(id: &str) -> String {
+    let head: String = id.chars().take(8).collect();
+    format!("{head}…({} bytes)", id.len())
+}
+
 fn select_root_cause(
     output_error: Option<anyhow::Error>,
     retrieval_error: Option<anyhow::Error>,
