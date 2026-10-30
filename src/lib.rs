@@ -39,6 +39,32 @@ impl std::fmt::Display for UsageError {
 
 impl std::error::Error for UsageError {}
 
+/// L-642: does the dump read and write the same place? Files are compared by canonical
+/// path (the output may not exist yet, so its parent is canonicalized); clusters by
+/// normalized base URL (scheme, host, port, path) plus index expression. Aliases such as
+/// `localhost` vs `127.0.0.1`, or an alias name pointing at the input index, are not resolved.
+fn same_target(input: &Endpoint, output: &Endpoint) -> bool {
+    fn canon(p: &std::path::Path) -> Option<std::path::PathBuf> {
+        if let Ok(c) = p.canonicalize() {
+            return Some(c);
+        }
+        let name = p.file_name()?;
+        let parent = match p.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        };
+        Some(parent.canonicalize().ok()?.join(name))
+    }
+    match (input, output) {
+        (Endpoint::File(a), Endpoint::File(b)) => match (canon(a), canon(b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => a == b,
+        },
+        (Endpoint::Es(a), Endpoint::Es(b)) => a.base == b.base && a.index == b.index,
+        _ => false,
+    }
+}
+
 fn usage(msg: impl Into<String>) -> anyhow::Error {
     anyhow::Error::new(UsageError(msg.into()))
 }
@@ -772,6 +798,11 @@ pub async fn run() -> Result<()> {
         node_alias_url(&cli, &mut input);
     }
     validate(&cli, &input, &output)?;
+    if !cli.force() && same_target(&input, &output) {
+        return Err(usage(
+            "--input and --output name the same file or index; refusing to read and write it at once (pass --force to do it anyway)",
+        ));
+    }
 
     let auth_file = match &cli.http_auth_file {
         Some(p) => Some(endpoint::read_auth_file(p)?),

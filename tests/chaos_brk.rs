@@ -3535,3 +3535,56 @@ fn l641_conflicting_flag_table() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// L-642: the same file or index as input and output is refused (exit 2, before any
+/// write or network I/O) unless `--force`.
+#[test]
+fn l642_same_source_and_destination_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("d.json");
+    let body = "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n";
+    std::fs::write(&f, body).unwrap();
+    let fp = f.to_str().unwrap();
+    let dotted = format!("{}/./d.json", dir.path().display());
+    let es = "http://127.0.0.1:1/idx";
+    let refused: Vec<Vec<&str>> = vec![
+        vec!["--input", fp, "--output", fp],
+        vec!["--input", fp, "--output", fp, "--overwrite"],
+        vec!["--input", fp, "--output", &dotted, "--overwrite"],
+        vec!["--input", es, "--output", es],
+        vec!["--input", es, "--output", "http://127.0.0.1:1/idx/"],
+        vec![
+            "--input",
+            "http://127.0.0.1:1",
+            "--input-index",
+            "idx",
+            "--output",
+            es,
+        ],
+        vec!["--input", es, "--output", es, "--type", "mapping"],
+        vec!["--input", es, "--output", es, "--force", "false"],
+    ];
+    for args in refused {
+        let o = bin().args(&args).output().expect("spawn");
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {err}");
+        assert!(err.contains("same file or index"), "{args:?}: {err}");
+    }
+    // The input was never touched.
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), body);
+    // A different file is not refused.
+    let other = dir.path().join("other.json");
+    let o = bin()
+        .args(["--input", fp, "--output", other.to_str().unwrap()])
+        .output()
+        .expect("spawn");
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    // --force: the user's explicit choice; on a file with --overwrite that truncates it
+    // before reading, so it must still run without panicking.
+    let o = bin()
+        .args(["--input", fp, "--output", fp, "--overwrite", "--force"])
+        .output()
+        .expect("spawn");
+    assert!(!stderr(&o).contains("same file or index"), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("panicked"), "{}", stderr(&o));
+}

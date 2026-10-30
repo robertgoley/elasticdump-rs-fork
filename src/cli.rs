@@ -128,6 +128,10 @@ pub struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub overwrite: Option<bool>,
 
+    /// Extension: allow --input and --output to name the same file or index (refused otherwise)
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub force: Option<bool>,
+
     /// Suppress all output except errors
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub quiet: Option<bool>,
@@ -570,6 +574,10 @@ impl Cli {
     pub fn handle_version(&self) -> bool {
         is(self.handle_version)
     }
+    pub fn force(&self) -> bool {
+        is(self.force)
+    }
+
     pub fn skip_existing(&self) -> bool {
         is(self.skip_existing)
     }
