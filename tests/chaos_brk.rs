@@ -2622,3 +2622,65 @@ async fn l632_empty_inputs_warn_for_data_and_fail_for_meta() {
         );
     }
 }
+
+// L-633 (TST-BRK-IN-015): split-part problems. Each part restores on its own; restoring a part
+// warns when sibling parts are missing (split-1 absent of 0..3) or an interrupted run left
+// staging files; a staging leftover passed as --input is refused (exit 2); a truncated part
+// fails per IN-001.
+#[tokio::test]
+async fn l633_split_part_gaps_and_staging_leftovers_are_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = |i: u32| format!("{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{{}}}}\n");
+    for k in [0u32, 2, 3] {
+        std::fs::write(dir.path().join(format!("d.split-{k}.json")), doc(k)).unwrap();
+    }
+    let run1 = |input: std::path::PathBuf, out: &str| {
+        let out = dir.path().join(out);
+        async move {
+            run_async(
+                s(&[
+                    "--input",
+                    input.to_str().unwrap(),
+                    "--output",
+                    out.to_str().unwrap(),
+                ]),
+                vec![],
+            )
+            .await
+        }
+    };
+    // out of order, with a gap: every part still restores, each warns about part 1
+    for k in [3u32, 0, 2] {
+        let o = run1(
+            dir.path().join(format!("d.split-{k}.json")),
+            &format!("o{k}.json"),
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "{err}");
+        assert!(
+            err.contains("part(s) 1 missing") && err.contains("found 3 of 4"),
+            "{err}"
+        );
+    }
+    std::fs::write(dir.path().join("d.split-1.json"), doc(1)).unwrap();
+    let o = run1(dir.path().join("d.split-1.json"), "o1.json").await;
+    assert!(!stderr(&o).contains("missing"), "{}", stderr(&o));
+    // a staging leftover next to the parts, and passed as input
+    let leftover = dir.path().join(".d.split-4.json.part-123-456");
+    std::fs::write(&leftover, doc(4)).unwrap();
+    let o = run1(dir.path().join("d.split-0.json"), "o0b.json").await;
+    assert!(
+        stderr(&o).contains("1 staging file(s) of an interrupted split run"),
+        "{}",
+        stderr(&o)
+    );
+    let o = run1(leftover, "o4.json").await;
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("is a staging file of an interrupted run"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(!dir.path().join("o4.json").exists());
+}

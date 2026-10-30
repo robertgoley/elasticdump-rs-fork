@@ -182,6 +182,75 @@ impl Read for FirstReadError {
     }
 }
 
+/// TST-BRK-IN-015: a staging leftover (`.name.part-PID-NANOS`, never committed, maybe
+/// partial) is refused; for a split part (`base.split-N.ext`), missing sibling parts and
+/// staging leftovers next to it are reported, since each part is restored on its own.
+fn check_input_name(path: &std::path::Path) -> Result<()> {
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return Ok(());
+    };
+    if name.starts_with('.') && name.contains(".part-") {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "'{}' is a staging file of an interrupted run (it was never committed and may be incomplete); restore the committed file instead, or rename this one if you really want its contents",
+            path.display()
+        ))));
+    }
+    let Some(at) = name.rfind(".split-") else {
+        return Ok(());
+    };
+    let (base, rest) = (&name[..at], &name[at + 7..]);
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return Ok(());
+    }
+    let suffix = &rest[digits..];
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    let prefix = format!("{base}.split-");
+    let mut parts = Vec::new();
+    let mut staging = 0;
+    for e in rd.filter_map(|e| e.ok()) {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with(&format!(".{prefix}")) && n.contains(".part-") {
+            staging += 1;
+        }
+        if let Some(r) = n.strip_prefix(&prefix) {
+            let d = r.bytes().take_while(u8::is_ascii_digit).count();
+            if d > 0 && &r[d..] == suffix {
+                if let Ok(k) = r[..d].parse::<u64>() {
+                    parts.push(k);
+                }
+            }
+        }
+    }
+    parts.sort_unstable();
+    if let Some(&max) = parts.last() {
+        let missing: Vec<String> = (0..=max)
+            .filter(|k| parts.binary_search(k).is_err())
+            .map(|k| k.to_string())
+            .collect();
+        if !missing.is_empty() {
+            log::warn!(
+                "split dump {base}.split-*{suffix}: part(s) {} missing next to this one (found {} of {}); restore every part, or the restored data has gaps",
+                missing.join(", "),
+                parts.len(),
+                max + 1
+            );
+        }
+    }
+    if staging > 0 {
+        log::warn!(
+            "{staging} staging file(s) of an interrupted split run sit next to {name}: that run may have stopped before writing every part"
+        );
+    }
+    Ok(())
+}
+
 fn read_loop(
     path: Option<PathBuf>,
     limit: usize,
@@ -193,6 +262,9 @@ fn read_loop(
         .as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "stdin".to_string());
+    if let Some(p) = &path {
+        check_input_name(p)?;
+    }
     let raw_bytes = Arc::new(AtomicU64::new(0));
     let mut reader = open_reader_counted(path.as_ref(), Arc::clone(&raw_bytes))?;
     let mut decoded = 0u64;
