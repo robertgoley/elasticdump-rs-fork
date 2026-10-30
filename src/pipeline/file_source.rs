@@ -251,6 +251,43 @@ fn check_input_name(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// TST-BRK-IN-016: the input is read to the end of the file that was opened. Truncated while
+/// being read (fewer bytes now than were read): an error, the read was cut short. Replaced
+/// (another inode at the path) or appended to after the end was reached: a warning.
+fn check_unchanged(path: &std::path::Path, before: &std::fs::Metadata, read: u64) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if !before.is_file() {
+        return Ok(());
+    }
+    let Ok(now) = std::fs::metadata(path) else {
+        log::warn!(
+            "{} was removed while being read; the opened file was read to its end",
+            path.display()
+        );
+        return Ok(());
+    };
+    if (now.dev(), now.ino()) != (before.dev(), before.ino()) {
+        log::warn!(
+            "{} was replaced while being read; the file as opened was read to its end ({read} bytes), the new one was not read",
+            path.display()
+        );
+    } else if now.len() < read || now.len() < before.len() {
+        anyhow::bail!(
+            "{} was truncated while being read (now {} bytes, {read} were read); the input changed under the restore, re-run it on a stable file",
+            path.display(),
+            now.len()
+        );
+    } else if now.len() > read {
+        log::warn!(
+            "{} grew while being read ({} bytes now, {read} read); the {} bytes appended after the end was reached were not read",
+            path.display(),
+            now.len(),
+            now.len() - read
+        );
+    }
+    Ok(())
+}
+
 fn read_loop(
     path: Option<PathBuf>,
     limit: usize,
@@ -265,6 +302,8 @@ fn read_loop(
     if let Some(p) = &path {
         check_input_name(p)?;
     }
+    // TST-BRK-IN-016: what the file was when opened, to notice changes while reading
+    let opened = path.as_ref().and_then(|p| std::fs::metadata(p).ok());
     let raw_bytes = Arc::new(AtomicU64::new(0));
     let mut reader = open_reader_counted(path.as_ref(), Arc::clone(&raw_bytes))?;
     let mut decoded = 0u64;
@@ -298,8 +337,14 @@ fn read_loop(
             splitter.push(&chunk[..n]);
         }
         loop {
-            let value = splitter
-                .next_value(eof)
+            let next = splitter.next_value(eof);
+            if next.is_err() {
+                // a cut-off last document: say the file was truncated under us, if it was
+                if let (Some(p), Some(before)) = (&path, &opened) {
+                    check_unchanged(p, before, raw_bytes.load(Ordering::Relaxed))?;
+                }
+            }
+            let value = next
                 .map_err(|e| {
                     if e.starts_with("a single document is larger") {
                         anyhow!(
@@ -338,6 +383,9 @@ fn read_loop(
                 }
             }
         }
+    }
+    if let (Some(p), Some(before)) = (&path, &opened) {
+        check_unchanged(p, before, raw_bytes.load(Ordering::Relaxed))?;
     }
     if batch.docs > 0 {
         let _ = tx.blocking_send(Ok(batch));

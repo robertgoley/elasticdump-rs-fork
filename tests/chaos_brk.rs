@@ -2684,3 +2684,72 @@ async fn l633_split_part_gaps_and_staging_leftovers_are_reported() {
     );
     assert!(!dir.path().join("o4.json").exists());
 }
+
+// L-634 (TST-BRK-IN-016): the input changes while it is read (a slow restore: one small batch
+// per 100 ms). Truncated: exit 1 "was truncated while being read". Replaced by rename: the
+// opened file is read to its end, with a warning. Appended to: everything up to the end seen
+// is read; bytes appended later are reported, never silently mixed.
+#[tokio::test]
+async fn l634_input_changed_while_reading_is_defined() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = |i: u32| {
+        format!(
+            "{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{{\"pad\":\"{}\"}}}}\n",
+            "p".repeat(2000)
+        )
+    };
+    let content: String = (0..400).map(doc).collect();
+    for case in ["truncate", "replace"] {
+        let input = dir.path().join(format!("{case}.json"));
+        std::fs::write(&input, &content).unwrap();
+        let out = dir.path().join(format!("{case}.out"));
+        let m = RouterMock::builder()
+            .handler(|req| async move {
+                if req.method == "GET" {
+                    return Reply::ok(INFO);
+                }
+                let n = String::from_utf8_lossy(&req.body).lines().count() / 2;
+                let items = vec![r#"{"index":{"status":201}}"#; n].join(",");
+                Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+            })
+            .start()
+            .await;
+        let args = s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/z", m.url()),
+            "--limit",
+            "5",
+            "--throttleInterval",
+            "100",
+        ]);
+        let h = tokio::spawn(run_async(args, vec![]));
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        if case == "truncate" {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&input)
+                .unwrap()
+                .set_len(1000)
+                .unwrap();
+        } else {
+            let tmp = dir.path().join("new.json");
+            std::fs::write(&tmp, doc(999)).unwrap();
+            std::fs::rename(&tmp, &input).unwrap();
+        }
+        let o = h.await.unwrap();
+        let err = stderr(&o);
+        if case == "truncate" {
+            assert_eq!(o.status.code(), Some(1), "{err}");
+            assert!(err.contains("was truncated while being read"), "{err}");
+        } else {
+            assert!(o.status.success(), "{err}");
+            assert!(
+                err.contains("was replaced while being read") && err.contains("Total Writes: 400"),
+                "{err}"
+            );
+        }
+        let _ = out;
+    }
+}
