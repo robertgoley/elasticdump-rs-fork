@@ -1029,3 +1029,69 @@ async fn hits_total_variants_are_reconciled_only_when_exact() {
         }
     }
 }
+
+// L-412 (TST-API-021): bulk responses that the live engines cannot be made to produce on
+// demand: per-item 429 (`es_rejected_execution_exception`) is retried for those items only;
+// a 413 for the whole request and an item-count mismatch fail the run (exit 1) naming the cause.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_item_429_retry_413_and_item_count_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        format!("{}\n{}\n", hit("1", "{\"a\":1}"), hit("2", "{\"a\":2}")),
+    )
+    .unwrap();
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let refresh = r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#;
+    let args = |url: String| -> Vec<String> {
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            url,
+            "--noRefresh".into(),
+        ]
+    };
+    // per-item 429, then success for the retried item only
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(info),
+        CannedResponse::ok(r#"{"took":1,"errors":true,"items":[{"index":{"status":201}},{"index":{"status":429,"error":{"type":"es_rejected_execution_exception","reason":"rejected execution"}}}]}"#),
+        CannedResponse::ok(r#"{"took":1,"errors":false,"items":[{"index":{"status":201}}]}"#),
+        CannedResponse::ok(refresh),
+    ])
+    .await;
+    let o = run_async(args(mock.input_url("dst")), vec![]).await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(stderr(&o).contains("Total Writes: 2"), "{}", stderr(&o));
+    let reqs = mock.requests();
+    assert_eq!(reqs.len(), 3, "{reqs:#?}");
+    assert!(
+        reqs[2].contains("\"_id\":\"2\"") && !reqs[2].contains("\"_id\":\"1\""),
+        "only the rejected item is resent: {}",
+        reqs[2]
+    );
+    // 413 for the whole request
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(info),
+        CannedResponse::new(413, r#"{"error":"Request Entity Too Large"}"#),
+    ])
+    .await;
+    let o = run_async(args(mock.input_url("dst")), vec![]).await;
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("413"), "{}", stderr(&o));
+    // fewer items than documents
+    let mock = MockEs::serve(vec![
+        CannedResponse::ok(info),
+        CannedResponse::ok(r#"{"took":1,"errors":true,"items":[{"index":{"status":201}}]}"#),
+    ])
+    .await;
+    let o = run_async(args(mock.input_url("dst")), vec![]).await;
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("1 items for 2 documents"),
+        "{}",
+        stderr(&o)
+    );
+}
+

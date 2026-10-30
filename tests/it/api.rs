@@ -430,3 +430,114 @@ async fn search_body_variants_and_meta_from_fields() {
     c.delete_index(&src).await;
     c.delete_index(&dst).await;
 }
+
+fn report_counts(o: &std::process::Output) -> (u64, u64) {
+    let err = String::from_utf8_lossy(&o.stderr);
+    let num = |key: &str| {
+        err.lines()
+            .find_map(|l| {
+                l.trim()
+                    .strip_prefix(key)
+                    .map(|v| v.trim().parse::<u64>().unwrap())
+            })
+            .unwrap_or(0)
+    };
+    (num("Total Writes:"), num("Failed Writes:"))
+}
+
+// L-412 (TST-API-021): `Total Writes` / `Failed Writes` equal the server's truth (`_count`)
+// for mixed bulk responses: mapper_parsing_exception, version_conflict_engine_exception
+// (create on an existing id), document_missing_exception (update of a missing id) and
+// cluster_block_exception (index.blocks.write).
+#[tokio::test]
+async fn bulk_item_errors_are_counted_like_the_server() {
+    let c = Cluster::from_env();
+    let dst = unique("api_bulkerr");
+    c.delete_index(&dst).await;
+    c.ok(
+        "PUT",
+        &dst,
+        Some(serde_json::json!({"settings": {"number_of_shards": 1, "number_of_replicas": 0}, "mappings": {"properties": {"n": {"type": "long"}}}})),
+    )
+    .await;
+    c.ok(
+        "PUT",
+        &format!("{dst}/_doc/e1?refresh=true"),
+        Some(serde_json::json!({"n": 0})),
+    )
+    .await;
+    let mut input = String::new();
+    for i in 0..10 {
+        input.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"g{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+    }
+    for i in 0..3 {
+        input.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"m{i}\",\"_source\":{{\"n\":\"abc\"}}}}\n"
+        ));
+    }
+    input.push_str("{\"_index\":\"x\",\"_id\":\"e1\",\"_source\":{\"n\":5}}\n");
+    let file = tmp_path("api_bulkerr", "json");
+    std::fs::write(&file, &input).unwrap();
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(&dst),
+        &["--bulkAction", "create", "--limit", "5"],
+    ))
+    .await;
+    let (written, failed) = report_counts(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    // ES >= 8.8 says document_parsing_exception where older versions say mapper_parsing_exception
+    assert!(
+        (err.contains("mapper_parsing_exception") || err.contains("document_parsing_exception"))
+            && err.contains("version_conflict_engine_exception"),
+        "{err}"
+    );
+    assert_eq!((written, failed), (10, 4), "{err}");
+    assert_eq!(c.count(&dst).await, 1 + written);
+
+    // update of missing ids: document_missing_exception, nothing written
+    let missing = tmp_path("api_bulkerr_upd", "json");
+    std::fs::write(&missing, "{\"_index\":\"x\",\"_id\":\"nope1\",\"_source\":{\"n\":1}}\n{\"_index\":\"x\",\"_id\":\"g1\",\"_source\":{\"n\":100}}\n").unwrap();
+    let o = run_loud(io(
+        &c,
+        missing.to_str().unwrap(),
+        &c.url_with_auth(&dst),
+        &["--bulkAction", "update"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("document_missing_exception"), "{err}");
+    assert_eq!(report_counts(&o), (1, 1), "{err}");
+    assert_eq!(c.count(&dst).await, 11);
+
+    // write block: every item fails with cluster_block_exception
+    c.ok(
+        "PUT",
+        &format!("{dst}/_settings"),
+        Some(serde_json::json!({"index.blocks.write": true})),
+    )
+    .await;
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(&dst),
+        &["--limit", "5"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("cluster_block_exception"), "{err}");
+    assert_eq!(report_counts(&o), (0, 14), "{err}");
+    c.ok(
+        "PUT",
+        &format!("{dst}/_settings"),
+        Some(serde_json::json!({"index.blocks.write": false})),
+    )
+    .await;
+    assert_eq!(c.count(&dst).await, 11);
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(missing);
+    c.delete_index(&dst).await;
+}
