@@ -4,6 +4,8 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use tokio::sync::mpsc;
@@ -24,6 +26,29 @@ const READ_CHUNK: usize = 256 * 1024;
 pub const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
 pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
+    open_reader_counted(path, Arc::new(AtomicU64::new(0)))
+}
+
+/// Counts the bytes read from the underlying (possibly compressed) input.
+struct Counted<R> {
+    inner: R,
+    n: Arc<AtomicU64>,
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let k = self.inner.read(buf)?;
+        self.n.fetch_add(k as u64, Ordering::Relaxed);
+        Ok(k)
+    }
+}
+
+/// [`open_reader`], with `raw_bytes` counting the bytes taken from the file itself, so a
+/// decode error can name the compressed offset (TST-BRK-IN-001/002).
+pub fn open_reader_counted(
+    path: Option<&PathBuf>,
+    raw_bytes: Arc<AtomicU64>,
+) -> Result<Box<dyn Read + Send>> {
     let raw: Box<dyn Read + Send> = match path {
         Some(p) => Box::new(
             std::fs::File::open(p)
@@ -31,6 +56,10 @@ pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
         ),
         None => Box::new(std::io::stdin()),
     };
+    let raw: Box<dyn Read + Send> = Box::new(Counted {
+        inner: raw,
+        n: raw_bytes,
+    });
     let mut buffered = BufReader::with_capacity(READ_CHUNK, raw);
     let head = buffered.fill_buf().context("Failed to read input")?;
     if head.len() >= 2 && head[0] == 0x1f && head[1] == 0x8b {
@@ -64,7 +93,10 @@ fn read_loop(
         .as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "stdin".to_string());
-    let mut reader = open_reader(path.as_ref())?;
+    let raw_bytes = Arc::new(AtomicU64::new(0));
+    let mut reader = open_reader_counted(path.as_ref(), Arc::clone(&raw_bytes))?;
+    let mut decoded = 0u64;
+    let mut docs_read = 0u64;
     let mut splitter = ValueSplitter::new();
     let mut chunk = vec![0u8; READ_CHUNK];
     let mut batch = FileBatch::default();
@@ -73,9 +105,14 @@ fn read_loop(
         if cancel.is_cancelled() {
             return Ok(());
         }
-        let n = reader
-            .read(&mut chunk)
-            .with_context(|| format!("Failed to read {name}"))?;
+        let n = reader.read(&mut chunk).map_err(|e| {
+            // the BufReader reads ahead, so the offset is where reading had got to
+            anyhow!(
+                "Failed to read {name}: {e} (truncated or corrupt input: stopped near byte {} of the file, after {decoded} decoded bytes and {docs_read} complete documents; documents of earlier batches may already have been written)",
+                raw_bytes.load(Ordering::Relaxed)
+            )
+        })?;
+        decoded += n as u64;
         if n == 0 {
             eof = true;
         } else {
@@ -89,6 +126,7 @@ fn read_loop(
             batch.buf.extend_from_slice(&single_line(value));
             batch.buf.push(b'\n');
             batch.docs += 1;
+            docs_read += 1;
             if batch.docs as usize >= limit {
                 let full = std::mem::take(&mut batch);
                 if tx.blocking_send(Ok(full)).is_err() {
@@ -178,5 +216,60 @@ mod tests {
             }
         }
         assert!(saw_err);
+    }
+
+    /// L-447 (TST-BRK-IN-001/002): a gzip or zstd file cut anywhere before its end is an
+    /// error naming the byte offset, never a clean (silently partial) end of input.
+    #[tokio::test]
+    async fn truncated_gzip_and_zstd_are_errors_with_an_offset() {
+        let mut plain = Vec::new();
+        for i in 0..3000 {
+            writeln!(
+                plain,
+                "{{\"_id\":\"{i}\",\"_source\":{{\"a\":{i},\"t\":\"text {i}\"}}}}"
+            )
+            .unwrap();
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&plain).unwrap();
+        let gz = gz.finish().unwrap();
+        let zst = zstd::stream::encode_all(&plain[..], 3).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for (ext, full) in [("gz", gz), ("zst", zst)] {
+            let step = (full.len() / 40).max(1);
+            for cut in (2..full.len()).step_by(step) {
+                let p = dir.path().join(format!("t{cut}.json.{ext}"));
+                std::fs::write(&p, &full[..cut]).unwrap();
+                let mut rx = spawn_file_source(Some(p), 500, 2, CancellationToken::new());
+                let mut err = None;
+                let mut docs = 0;
+                while let Some(b) = rx.recv().await {
+                    match b {
+                        Ok(b) => docs += b.docs,
+                        Err(e) => err = Some(format!("{e:#}")),
+                    }
+                }
+                let err =
+                    err.unwrap_or_else(|| panic!("{ext} cut at {cut}: no error, {docs} docs"));
+                // shorter than the zstd magic number: refused as "not a zstd stream"
+                if cut >= 4 {
+                    assert!(err.contains("stopped near byte"), "{ext} {cut}: {err}");
+                }
+                assert!(docs < 3000, "{ext} {cut}");
+            }
+            // trailing garbage after the last frame/member is an error too
+            let p = dir.path().join(format!("garbage.json.{ext}"));
+            std::fs::write(&p, [&full[..], b"garbage after the stream"].concat()).unwrap();
+            let mut rx = spawn_file_source(Some(p), 500, 2, CancellationToken::new());
+            let mut failed = false;
+            while let Some(b) = rx.recv().await {
+                failed |= b.is_err();
+            }
+            assert!(failed, "{ext}: trailing garbage accepted");
+            let p = dir.path().join(format!("full.json.{ext}"));
+            std::fs::write(&p, &full).unwrap();
+            let total: u64 = collect(p, 500).await.iter().map(|(_, n)| n).sum();
+            assert_eq!(total, 3000, "{ext}");
+        }
     }
 }
