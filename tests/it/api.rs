@@ -985,3 +985,72 @@ async fn analyzer_restore_never_leaves_the_index_closed() {
         c.delete_index(i).await;
     }
 }
+
+/// Aliases of `indices` as returned by `GET <indices>/_alias`.
+async fn aliases_of(c: &Cluster, indices: &[&str]) -> Value {
+    c.ok("GET", &format!("{}/_alias", indices.join(",")), None)
+        .await
+}
+
+// L-418 (TST-API-034): alias round trip (dump, remove, restore through one atomic
+// `POST /_aliases`) keeps `is_write_index`, `is_hidden` (ES >= 7.7, OpenSearch), `filter`
+// and `index_routing`/`search_routing`; per-index and host-only dumps.
+#[tokio::test]
+async fn alias_round_trip_keeps_every_property() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let v = c.vnum().await;
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let p = unique("api_alias");
+    let (a, b) = (format!("{p}_a"), format!("{p}_b"));
+    for i in [&a, &b] {
+        c.ok("PUT", i, Some(json!({"settings": {"number_of_replicas": 0}, "mappings": {"properties": {"k": {"type": "keyword"}}}}))).await;
+    }
+    let mut actions = vec![
+        json!({"add": {"index": a, "alias": format!("{p}_w"), "is_write_index": true}}),
+        json!({"add": {"index": b, "alias": format!("{p}_w"), "is_write_index": false}}),
+        json!({"add": {"index": a, "alias": format!("{p}_f"), "filter": {"term": {"k": "x"}}, "index_routing": "ir", "search_routing": "s1,s2"}}),
+    ];
+    if !es || v >= (7, 7) {
+        actions.push(json!({"add": {"index": b, "alias": format!("{p}_h"), "is_hidden": true}}));
+    }
+    c.ok("POST", "_aliases", Some(json!({"actions": actions})))
+        .await;
+    let want = aliases_of(&c, &[&a, &b]).await;
+    for input in [c.url_with_auth(&format!("{p}_*")), c.url_with_auth("")] {
+        let file = tmp_path("api_alias", "json");
+        assert_success(&run(io(&c, &input, file.to_str().unwrap(), &["--type", "alias"])).await);
+        // remove every alias, then restore from the dump
+        c.ok(
+            "POST",
+            "_aliases",
+            Some(json!({"actions": [{"remove": {"index": format!("{p}_*"), "alias": "*"}}]})),
+        )
+        .await;
+        assert!(
+            aliases_of(&c, &[&a, &b]).await[&a]["aliases"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+        let o = run_loud(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &["--type", "alias"],
+        ))
+        .await;
+        assert_success(&o);
+        assert_eq!(
+            aliases_of(&c, &[&a, &b]).await,
+            want,
+            "input {}",
+            input.split('@').next_back().unwrap()
+        );
+        let _ = std::fs::remove_file(file);
+    }
+    for i in [&a, &b] {
+        c.delete_index(i).await;
+    }
+}
+
