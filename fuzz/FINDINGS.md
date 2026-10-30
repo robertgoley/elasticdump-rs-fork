@@ -74,3 +74,4 @@ from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) 
 | Target | Run | Execs | Coverage | Result |
 |---|---|---|---|---|
 | file_to_bulk | 300 s | 2,448,842 | 3970 | ok |
+| url_segments | 300 s | 10,727,995 | 425 | ok |
