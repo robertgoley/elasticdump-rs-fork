@@ -1549,17 +1549,22 @@ async fn scripts_round_trip_empty_and_monitor_privilege() {
         )
         .await;
     } else {
-        c.ok("PUT", &format!("_plugins/_security/api/roles/{role}"), Some(json!({"index_permissions": [{"index_patterns": ["*"], "allowed_actions": ["read"]}]}))).await;
-        c.ok(
-            "PUT",
-            &format!("_plugins/_security/api/internalusers/{user}"),
-            Some(json!({"password": pass})),
+        os_security_put(
+            &c,
+            &format!("_plugins/_security/api/roles/{role}"),
+            json!({"index_permissions": [{"index_patterns": ["*"], "allowed_actions": ["read"]}]}),
         )
         .await;
-        c.ok(
-            "PUT",
+        os_security_put(
+            &c,
+            &format!("_plugins/_security/api/internalusers/{user}"),
+            json!({"password": pass}),
+        )
+        .await;
+        os_security_put(
+            &c,
             &format!("_plugins/_security/api/rolesmapping/{role}"),
-            Some(json!({"users": [user]})),
+            json!({"users": [user]}),
         )
         .await;
     }
@@ -1744,4 +1749,292 @@ async fn version_conflicts_counted_and_exit_follows_ignore_flags() {
     let _ = std::fs::remove_file(file);
     let _ = std::fs::remove_file(vfile);
     c.delete_index(&dst).await;
+}
+
+// L-430 (TST-API-054): auth failures. No credentials, a wrong password, a disabled user (ES)
+// and missing privileges per endpoint each give exit 1 and one message naming the endpoint and
+// the privilege; separate input/output credentials are kept apart; no password is printed.
+#[tokio::test]
+async fn auth_failures_name_endpoint_and_privilege() {
+    use serde_json::json;
+    if !is_secure() {
+        println!("SKIP: auth failures need a secured profile");
+        return;
+    }
+    let c = Cluster::from_env();
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let p = unique("api_auth");
+    let src = format!("{p}_src");
+    let tpl = format!("{p}_tpl");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &format!("{src}/_doc/1?refresh=true"),
+        Some(json!({"n": 1})),
+    )
+    .await;
+    c.ok(
+        "PUT",
+        &format!("_index_template/{tpl}"),
+        Some(json!({"index_patterns": [format!("{tpl}-*")], "template": {"settings": {"number_of_replicas": 0}}})),
+    )
+    .await;
+    let user = format!("{p}_low");
+    let pass = "Lowpriv-Pass-98765!q";
+    let role = format!("{p}_role");
+    // low user: cluster monitor + index read only
+    if es {
+        c.ok(
+            "PUT",
+            &format!("_security/role/{role}"),
+            Some(json!({"cluster": ["monitor"], "indices": [{"names": ["*"], "privileges": ["read", "view_index_metadata"]}]})),
+        )
+        .await;
+        c.ok(
+            "PUT",
+            &format!("_security/user/{user}"),
+            Some(json!({"password": pass, "roles": [role]})),
+        )
+        .await;
+    } else {
+        // the security config is shared with tests creating users in parallel: retry on 409
+        for (path, body) in [
+            (
+                format!("_plugins/_security/api/roles/{role}"),
+                json!({"cluster_permissions": ["cluster_monitor", "cluster_composite_ops_ro"], "index_permissions": [{"index_patterns": ["*"], "allowed_actions": ["read", "indices_monitor"]}]}),
+            ),
+            (
+                format!("_plugins/_security/api/internalusers/{user}"),
+                json!({"password": pass}),
+            ),
+            (
+                format!("_plugins/_security/api/rolesmapping/{role}"),
+                json!({"users": [user]}),
+            ),
+        ] {
+            os_security_put(&c, &path, body).await;
+        }
+    }
+    let with = |path: &str, u: Option<(&str, &str)>| {
+        let mut url = url::Url::parse(&c.index_url(path)).unwrap();
+        if let Some((n, pw)) = u {
+            url.set_username(n).unwrap();
+            url.set_password(Some(pw)).unwrap();
+        }
+        url.to_string()
+    };
+    let check = |name: &str, o: &std::process::Output, want: &[&str]| {
+        let err = String::from_utf8_lossy(&o.stderr);
+        println!("--- {name}:\n{err}");
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        for w in want {
+            assert!(err.contains(w), "{name}: missing {w:?}: {err}");
+        }
+        let admin_pw = std::env::var("IT_ADMIN_PW").unwrap_or_default();
+        // a short admin password like "admin" would match "indices:admin/create"
+        let admin_pw = if admin_pw.len() >= 8 {
+            admin_pw
+        } else {
+            "\u{0}".into()
+        };
+        for secret in [pass, "Wrong-Pass-55555!z", admin_pw.as_str()] {
+            assert!(!err.contains(secret), "{name}: secret leaked: {err}");
+            assert!(
+                !String::from_utf8_lossy(&o.stdout).contains(secret),
+                "{name}: secret on stdout"
+            );
+        }
+    };
+    let out = tmp_path("api_auth", "json");
+    // 1. no credentials
+    let o = run_loud(io(&c, &with(&src, None), out.to_str().unwrap(), &[])).await;
+    check(
+        "no credentials",
+        &o,
+        &[
+            "HTTP 401",
+            "authentication failed at https://",
+            &format!("/{src}/_search"),
+        ],
+    );
+    // 2. wrong password
+    let o = run_loud(io(
+        &c,
+        &with(&src, Some((&user, "Wrong-Pass-55555!z"))),
+        out.to_str().unwrap(),
+        &[],
+    ))
+    .await;
+    check(
+        "wrong password",
+        &o,
+        &["HTTP 401", "authentication failed at"],
+    );
+    // 3. disabled user (Elasticsearch only; OpenSearch internal users have no disable API)
+    if es {
+        c.ok("PUT", &format!("_security/user/{user}/_disable"), None)
+            .await;
+        let o = run_loud(io(
+            &c,
+            &with(&src, Some((&user, pass))),
+            out.to_str().unwrap(),
+            &[],
+        ))
+        .await;
+        check("disabled user", &o, &["HTTP 401", "expired or locked"]);
+        c.ok("PUT", &format!("_security/user/{user}/_enable"), None)
+            .await;
+    }
+    // 4. read works for the low user
+    let o = run_loud(io(
+        &c,
+        &with(&src, Some((&user, pass))),
+        out.to_str().unwrap(),
+        &[],
+    ))
+    .await;
+    assert_success(&o);
+    // 5. separate credentials: admin input, low-privilege output -> write privilege on the
+    // output. Elasticsearch rejects the whole _bulk (403); OpenSearch accepts it and fails each
+    // item with a 403 security_exception, so exit 1 needs --ignore-es-write-errors false (the
+    // default-exit policy for item failures is L-444).
+    let dst = format!("{p}_dst");
+    let o = run_loud(io(
+        &c,
+        &c.url_with_auth(&src),
+        &with(&dst, Some((&user, pass))),
+        &["--ignore-es-write-errors", "false"],
+    ))
+    .await;
+    if es {
+        check(
+            "no write privilege",
+            &o,
+            &[
+                "HTTP 403",
+                "permission denied at https://",
+                "/_bulk",
+                "'write'",
+            ],
+        );
+    } else {
+        check(
+            "no write privilege",
+            &o,
+            &["403", "security_exception", "no permissions for [indices:"],
+        );
+    }
+    // 6. template restore without manage_index_templates
+    let tfile = tmp_path("api_auth_tpl", "json");
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&tpl),
+            tfile.to_str().unwrap(),
+            &["--type", "index_template"],
+        ))
+        .await,
+    );
+    c.ok("DELETE", &format!("_index_template/{tpl}"), None)
+        .await;
+    let o = run_loud(io(
+        &c,
+        tfile.to_str().unwrap(),
+        &with("", Some((&user, pass))),
+        &["--type", "index_template"],
+    ))
+    .await;
+    check(
+        "no manage_index_templates",
+        &o,
+        &[
+            "HTTP 403",
+            &format!("/_index_template/{tpl}"),
+            "'manage_index_templates'",
+        ],
+    );
+    // 7. policy restore without manage_ilm / ISM permissions
+    let pol = format!("{p}_pol");
+    let pfile = tmp_path("api_auth_pol", "json");
+    let (ppath, want) = if es {
+        c.ok(
+            "PUT",
+            &format!("_ilm/policy/{pol}"),
+            Some(json!({"policy": {"phases": {"hot": {"actions": {}}}}})),
+        )
+        .await;
+        (format!("_ilm/policy/{pol}"), "'manage_ilm'")
+    } else {
+        c.ok("PUT", &format!("_plugins/_ism/policies/{pol}"), Some(json!({"policy": {"description": "x", "default_state": "hot", "states": [{"name": "hot", "actions": [], "transitions": []}]}}))).await;
+        (format!("_plugins/_ism/policies/{pol}"), "ISM permissions")
+    };
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&pol),
+            pfile.to_str().unwrap(),
+            &["--type", "policy"],
+        ))
+        .await,
+    );
+    c.ok("DELETE", &ppath, None).await;
+    let o = run_loud(io(
+        &c,
+        pfile.to_str().unwrap(),
+        &with("", Some((&user, pass))),
+        &["--type", "policy"],
+    ))
+    .await;
+    check("no policy privilege", &o, &["HTTP 403", want]);
+
+    for f in [&out, &tfile, &pfile] {
+        let _ = std::fs::remove_file(f);
+    }
+    c.delete_index(&src).await;
+    c.delete_index(&dst).await;
+    if es {
+        let _ = c
+            .call("DELETE", &format!("_security/user/{user}"), None)
+            .await;
+        let _ = c
+            .call("DELETE", &format!("_security/role/{role}"), None)
+            .await;
+    } else {
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/rolesmapping/{role}"),
+                None,
+            )
+            .await;
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/internalusers/{user}"),
+                None,
+            )
+            .await;
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_security/api/roles/{role}"),
+                None,
+            )
+            .await;
+    }
+}
+
+/// PUT to the OpenSearch security API, retrying the 409 that a parallel test writing the same
+/// security config index causes.
+pub(crate) async fn os_security_put(c: &Cluster, path: &str, body: Value) {
+    let mut tries = 0;
+    loop {
+        let (st, v) = c.call("PUT", path, Some(body.clone())).await;
+        if st < 300 {
+            return;
+        }
+        tries += 1;
+        assert!(st == 409 && tries < 20, "PUT {path} -> {st}: {v}");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }

@@ -23,7 +23,12 @@ fn continuation_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error 
     let status = error
         .downcast_ref::<crate::http::EsHttpError>()
         .map(|h| h.status);
-    if crate::http::is_cancelled(&error) || status == Some(429) {
+    // 4xx answers (other than 408) are not something a retry would fix, so
+    // the "not retried" explanation would only mislead (e.g. a 403 because
+    // OpenSearch needs a cluster permission for scroll).
+    if crate::http::is_cancelled(&error)
+        || status.is_some_and(|s| (400..500).contains(&s) && s != 408)
+    {
         return error;
     }
     error.context(format!(

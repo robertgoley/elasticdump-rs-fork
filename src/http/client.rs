@@ -457,18 +457,6 @@ impl EsClient {
                     move || self.send(Method::GET, &[], &[], false, Body::Empty),
                 )
                 .await
-                .map_err(|e| {
-                    if e
-                        .downcast_ref::<super::retry::EsHttpError>()
-                        .is_some_and(|h| h.status == 403)
-                    {
-                        e.context(
-                            "the version check (GET /, cluster:monitor/main) needs the 'monitor' cluster privilege",
-                        )
-                    } else {
-                        e
-                    }
-                })
                 .with_context(|| {
                     format!(
                         "Failed to contact {}",

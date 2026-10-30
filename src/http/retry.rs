@@ -44,6 +44,9 @@ pub struct EsHttpError {
     pub operation: String,
     pub status: u16,
     pub body: String,
+    /// `scheme://host:port/path` of the request, without userinfo or query
+    /// (empty when unknown). Only used to name the endpoint on 401/403.
+    pub endpoint: String,
 }
 
 impl fmt::Display for EsHttpError {
@@ -52,13 +55,67 @@ impl fmt::Display for EsHttpError {
             f,
             "{}Elasticsearch {} failed with HTTP {}: {}",
             self.prefix, self.operation, self.status, self.body
-        )
+        )?;
+        match self.status {
+            401 => write!(
+                f,
+                " (authentication failed at {}: check the user and password for this endpoint, e.g. the URL credentials, --httpAuthFile or the --input-/--output- specific options; an expired or locked user also gives 401)",
+                self.endpoint_or_operation()
+            ),
+            403 => write!(
+                f,
+                " (permission denied at {}: {})",
+                self.endpoint_or_operation(),
+                privilege_hint(&self.endpoint)
+            ),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The privilege a request path needs, for 403 messages (TST-API-054).
+pub fn privilege_hint(endpoint: &str) -> &'static str {
+    let path = endpoint
+        .split_once("://")
+        .map(|(_, rest)| rest.find('/').map_or("/", |i| &rest[i..]))
+        .unwrap_or(endpoint);
+    let has = |n: &str| path.contains(n);
+    if path == "/" || path.is_empty() || has("/_cluster/state") || has("/_cluster/health") {
+        "needs the 'monitor' cluster privilege"
+    } else if has("/_plugins/_ism") || has("/_opendistro/_ism") {
+        "needs the OpenSearch ISM permissions (cluster:admin/opendistro/ism/*, e.g. the ism_full_access role)"
+    } else if has("/_ilm") {
+        "needs the 'manage_ilm' cluster privilege ('read_ilm' is enough to dump)"
+    } else if has("_index_template") || has("_component_template") || has("/_template") {
+        "needs the 'manage_index_templates' cluster privilege"
+    } else if has("/_scripts") {
+        "needs the 'manage' cluster privilege to store scripts"
+    } else if has("/_bulk") {
+        "needs the 'write' (or 'index'/'create_doc') index privilege on the target index"
+    } else if has("/_search/scroll") {
+        "needs the 'read' index privilege on the source index (OpenSearch: also the cluster permission indices:data/read/scroll*, e.g. cluster_composite_ops_ro)"
+    } else if has("_search") || has("/_pit") || has("point_in_time") || has("/_count") {
+        "needs the 'read' index privilege on the source index"
+    } else if has("/_mapping") || has("/_settings") || has("/_alias") || has("/_analyze") {
+        "needs the 'manage' index privilege on the index ('view_index_metadata' is enough to dump)"
+    } else if has("/_refresh") {
+        "needs the 'maintenance' (or 'manage') index privilege on the target index"
+    } else {
+        "needs the 'create_index' or 'manage' index privilege on the index"
     }
 }
 
 impl std::error::Error for EsHttpError {}
 
 impl EsHttpError {
+    fn endpoint_or_operation(&self) -> &str {
+        if self.endpoint.is_empty() {
+            &self.operation
+        } else {
+            &self.endpoint
+        }
+    }
+
     pub fn error_type_is(&self, ty: &str) -> bool {
         self.body.contains(&format!("\"type\":\"{ty}\""))
     }
@@ -317,15 +374,20 @@ where
         let (outcome, error) = match build_and_send().await {
             Ok(response) => {
                 let status = response.status();
+                let endpoint = public_endpoint(response.url());
                 if matches!(status.as_u16(), 429 | 503) {
                     retry_after = parse_retry_after(response.headers());
                 }
                 match response.bytes().await {
                     Ok(bytes) if status.is_success() => return Ok(bytes),
                     Ok(bytes) => {
-                        let error =
-                            validate_response_bytes(status.as_u16(), bytes, &prefix, operation)
-                                .expect_err("non-success status must produce an error");
+                        let error = anyhow::Error::new(EsHttpError {
+                            prefix: prefix.clone(),
+                            operation: operation.to_string(),
+                            status: status.as_u16(),
+                            body: String::from_utf8_lossy(bytes.as_ref()).into_owned(),
+                            endpoint,
+                        });
                         (RetryOutcome::Status(status.as_u16()), error)
                     }
                     // The server already processed the request; classify as a
@@ -374,6 +436,15 @@ where
     }
 }
 
+/// `scheme://host[:port]/path`: never userinfo or query (TST-API-054, STD-ACC 5).
+fn public_endpoint(url: &url::Url) -> String {
+    let host = url.host_str().unwrap_or("?");
+    match url.port() {
+        Some(port) => format!("{}://{host}:{port}{}", url.scheme(), url.path()),
+        None => format!("{}://{host}{}", url.scheme(), url.path()),
+    }
+}
+
 /// `Retry-After` in delay-seconds form (the HTTP-date form is ignored).
 fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let v = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
@@ -392,6 +463,7 @@ pub fn validate_response_bytes(
             operation: operation.to_string(),
             status,
             body: String::from_utf8_lossy(response_bytes.as_ref()).into_owned(),
+            endpoint: String::new(),
         }));
     }
     Ok(response_bytes)
@@ -579,6 +651,45 @@ mod tests {
         let s = Script::new(&[(429, Some("1")), (200, None)]);
         drive(p, RetryMode::RejectionOnly, &s).await.unwrap();
         assert_eq!(s.gaps(), vec![Duration::from_secs(5)]);
+    }
+
+    // L-430 (TST-API-054): 401/403 name the endpoint and the privilege; no secret.
+    #[test]
+    fn auth_errors_name_endpoint_and_privilege() {
+        let u =
+            url::Url::parse("https://bob:hunter2@es.local:9200/logs/_search?scroll=5m").unwrap();
+        assert_eq!(public_endpoint(&u), "https://es.local:9200/logs/_search");
+        let e = |status, ep: &str| {
+            EsHttpError {
+                prefix: String::new(),
+                operation: "op".into(),
+                status,
+                body: "{}".into(),
+                endpoint: ep.into(),
+            }
+            .to_string()
+        };
+        assert!(e(401, "https://h:9200/").contains("authentication failed at https://h:9200/"));
+        for (path, want) in [
+            ("/", "'monitor' cluster"),
+            ("/idx/_search", "'read' index"),
+            ("/_search/scroll", "'read' index"),
+            ("/idx/_pit", "'read' index"),
+            ("/_bulk", "'write'"),
+            ("/_ilm/policy/p", "'manage_ilm'"),
+            ("/_index_template/t", "'manage_index_templates'"),
+            ("/_component_template/c", "'manage_index_templates'"),
+            ("/_template/t", "'manage_index_templates'"),
+            ("/_plugins/_ism/policies/p", "ISM permissions"),
+            ("/_cluster/state/metadata", "'monitor' cluster"),
+            ("/_scripts/s", "'manage' cluster"),
+            ("/idx/_mapping", "'manage' index"),
+            ("/idx", "'create_index'"),
+        ] {
+            let m = e(403, &format!("http://h:9200{path}"));
+            assert!(m.contains(want) && m.contains(path), "{path}: {m}");
+        }
+        assert!(!e(500, "http://h/").contains("privilege"));
     }
 
     #[test]

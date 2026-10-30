@@ -7,7 +7,7 @@ use reqwest::Method;
 use serde_json::{Map, Value, json};
 
 use super::MetaOptions;
-use super::http::{get_json_opt, get_json_q, send_json, status_of};
+use super::http::{get_json_opt, get_json_q, send_json};
 use crate::http::EsClient;
 use crate::pipeline::WriteReport;
 
@@ -20,14 +20,7 @@ pub async fn fetch(client: &EsClient, name: Option<&str>, opts: &MetaOptions) ->
         &[("filter_path", filter.as_str())],
         "GET _cluster/state/metadata (stored scripts)",
     )
-    .await
-    .map_err(|e| {
-        if status_of(&e) == Some(403) {
-            e.context("reading stored scripts needs the 'monitor' cluster privilege")
-        } else {
-            e
-        }
-    })?;
+    .await?;
     Ok(transform_state(&state))
 }
 
