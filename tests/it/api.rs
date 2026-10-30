@@ -2038,3 +2038,76 @@ pub(crate) async fn os_security_put(c: &Cluster, path: &str, body: Value) {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
+
+// L-432 (TST-API-056): server errors pass through with the server's `type` and `reason`
+// (index_not_found, mapping conflict = illegal_argument, mapper_parsing on a bulk item), and
+// no quoted body exceeds 2 KB.
+#[tokio::test]
+async fn server_error_passthrough_type_and_reason() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let p = unique("api_err");
+    let missing = format!("{p}_missing");
+    let out = tmp_path("api_err", "json");
+    let o = run_loud(io(
+        &c,
+        &c.url_with_auth(&missing),
+        out.to_str().unwrap(),
+        &[],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("HTTP 404: index_not_found_exception: no such index"),
+        "{err}"
+    );
+    // mapping conflict: n is long in the target, text in the file
+    let dst = format!("{p}_dst");
+    c.delete_index(&dst).await;
+    c.ok(
+        "PUT",
+        &dst,
+        Some(json!({"mappings": {"properties": {"n": {"type": "long"}}}})),
+    )
+    .await;
+    let mfile = tmp_path("api_err_map", "json");
+    std::fs::write(
+        &mfile,
+        format!(
+            "{{\"{dst}\":{{\"mappings\":{{\"properties\":{{\"n\":{{\"type\":\"text\"}}}}}}}}}}\n"
+        ),
+    )
+    .unwrap();
+    let o = run_loud(io(
+        &c,
+        mfile.to_str().unwrap(),
+        &c.url_with_auth(&dst),
+        &["--type", "mapping"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("HTTP 400: illegal_argument_exception: mapper [n] cannot be changed from type [long] to [text]"), "{err}");
+    // mapper_parsing on a bulk item: the item's type and reason are printed
+    let dfile = tmp_path("api_err_data", "json");
+    std::fs::write(
+        &dfile,
+        "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{\"n\":\"abc\"}}\n",
+    )
+    .unwrap();
+    let o = run_loud(io(&c, dfile.to_str().unwrap(), &c.url_with_auth(&dst), &[])).await;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        (err.contains("mapper_parsing_exception") || err.contains("document_parsing_exception"))
+            && err.contains("failed to parse field [n] of type [long]"),
+        "{err}"
+    );
+    for line in err.lines() {
+        assert!(line.len() <= 4096, "overlong line ({} bytes)", line.len());
+    }
+    for f in [&out, &mfile, &dfile] {
+        let _ = std::fs::remove_file(f);
+    }
+    c.delete_index(&dst).await;
+}

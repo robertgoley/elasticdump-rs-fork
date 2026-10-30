@@ -53,9 +53,13 @@ impl fmt::Display for EsHttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}Elasticsearch {} failed with HTTP {}: {}",
-            self.prefix, self.operation, self.status, self.body
+            "{}Elasticsearch {} failed with HTTP {}: ",
+            self.prefix, self.operation, self.status
         )?;
+        if let Some(summary) = server_error_summary(&self.body) {
+            write!(f, "{summary}; body: ")?;
+        }
+        f.write_str(&truncate_body(&self.body))?;
         match self.status {
             401 => write!(
                 f,
@@ -71,6 +75,53 @@ impl fmt::Display for EsHttpError {
             _ => Ok(()),
         }
     }
+}
+
+/// Largest part of a server body quoted in an error message (TST-API-056).
+pub const MAX_ERROR_BODY: usize = 2048;
+
+/// `type: reason` of an Elasticsearch/OpenSearch error body (`error.type` and
+/// `error.reason`, plus `caused_by` when it adds something).
+fn server_error_summary(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let e = v.get("error")?;
+    let ty = e.get("type")?.as_str()?;
+    let mut out = format!(
+        "{ty}: {}",
+        e.get("reason").and_then(|r| r.as_str()).unwrap_or("")
+    );
+    if let Some(c) = e.get("caused_by") {
+        if let (Some(cty), Some(cr)) = (
+            c.get("type").and_then(|x| x.as_str()),
+            c.get("reason").and_then(|x| x.as_str()),
+        ) {
+            out.push_str(&format!(" (caused by {cty}: {cr})"));
+        }
+    }
+    if out.len() > MAX_ERROR_BODY / 2 {
+        out = truncate_at(&out, MAX_ERROR_BODY / 2).to_string() + "…";
+    }
+    Some(out)
+}
+
+fn truncate_at(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut cut = max;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &s[..cut]
+}
+
+/// The body, cut at [`MAX_ERROR_BODY`] bytes with a note of how much was dropped.
+fn truncate_body(body: &str) -> std::borrow::Cow<'_, str> {
+    if body.len() <= MAX_ERROR_BODY {
+        return body.into();
+    }
+    let head = truncate_at(body, MAX_ERROR_BODY);
+    format!("{head}… ({} more bytes)", body.len() - head.len()).into()
 }
 
 /// The privilege a request path needs, for 403 messages (TST-API-054).
@@ -748,6 +799,38 @@ mod tests {
             assert!(m.contains(want) && m.contains(path), "{path}: {m}");
         }
         assert!(!e(500, "http://h/").contains("privilege"));
+    }
+
+    // L-432 (TST-API-056): server type and reason first, body capped at 2 KB.
+    #[test]
+    fn server_errors_pass_type_and_reason_and_cap_the_body() {
+        let e = |body: String| {
+            EsHttpError {
+                prefix: String::new(),
+                operation: "op".into(),
+                status: 400,
+                body,
+                endpoint: String::new(),
+            }
+            .to_string()
+        };
+        let m = e(r#"{"error":{"root_cause":[],"type":"mapper_parsing_exception","reason":"failed to parse field [n] of type [long]","caused_by":{"type":"illegal_argument_exception","reason":"For input string: \"abc\""}},"status":400}"#.into());
+        assert!(m.contains("HTTP 400: mapper_parsing_exception: failed to parse field [n] of type [long] (caused by illegal_argument_exception: For input string: \"abc\"); body: {"), "{m}");
+        let huge = format!(
+            r#"{{"error":{{"type":"illegal_argument_exception","reason":"{}"}}}}"#,
+            "é".repeat(5000)
+        );
+        let m = e(huge);
+        assert!(
+            m.starts_with("Elasticsearch op failed with HTTP 400: illegal_argument_exception: "),
+            "{m}"
+        );
+        assert!(m.len() <= 2 * MAX_ERROR_BODY + 200, "{}", m.len());
+        assert!(m.contains("more bytes)"));
+        assert_eq!(
+            e("plain text".into()),
+            "Elasticsearch op failed with HTTP 400: plain text"
+        );
     }
 
     #[test]
