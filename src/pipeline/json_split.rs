@@ -331,3 +331,189 @@ mod tests {
         ));
     }
 }
+
+/// L-501 (TST-API-080): properties of the splitter. T0 runs 10k cases per
+/// property (`PROPTEST_CASES` overrides; B runs 1M nightly).
+#[cfg(test)]
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::Value;
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000)
+    }
+
+    /// Strings full of the bytes that matter to the scanner.
+    fn tricky_string() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                Just('{'),
+                Just('}'),
+                Just('['),
+                Just(']'),
+                Just('"'),
+                Just('\\'),
+                Just(','),
+                Just(':'),
+                Just('\n'),
+                Just('\r'),
+                Just('\t'),
+                Just(' '),
+                Just('\u{feff}'),
+                Just('é'),
+                Just('😀'),
+                proptest::char::range('a', 'z'),
+            ],
+            0..12,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    fn json_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(Value::from),
+            any::<u64>().prop_map(Value::from),
+            tricky_string().prop_map(Value::String),
+        ];
+        leaf.prop_recursive(4, 32, 6, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..5).prop_map(Value::Array),
+                proptest::collection::vec((tricky_string(), inner), 0..5)
+                    .prop_map(|kv| Value::Object(kv.into_iter().collect())),
+            ]
+        })
+    }
+
+    /// Top-level values the way dumps hold them: objects (documents).
+    fn document() -> impl Strategy<Value = Value> {
+        proptest::collection::vec((tricky_string(), json_value()), 0..5)
+            .prop_map(|kv| Value::Object(kv.into_iter().collect()))
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum Layout {
+        Ndjson,
+        Crlf,
+        Pretty,
+        Concatenated,
+        CommaSeparated,
+    }
+
+    fn render(docs: &[Value], layout: Layout, bom: bool) -> Vec<u8> {
+        let mut out = Vec::new();
+        if bom {
+            out.extend_from_slice(b"\xEF\xBB\xBF");
+        }
+        for (i, d) in docs.iter().enumerate() {
+            match layout {
+                Layout::Ndjson => {
+                    out.extend(serde_json::to_vec(d).unwrap());
+                    out.push(b'\n');
+                }
+                Layout::Crlf => {
+                    out.extend(serde_json::to_vec(d).unwrap());
+                    out.extend_from_slice(b"\r\n");
+                }
+                Layout::Pretty => {
+                    out.extend(serde_json::to_vec_pretty(d).unwrap());
+                    out.push(b'\n');
+                }
+                Layout::Concatenated => out.extend(serde_json::to_vec(d).unwrap()),
+                Layout::CommaSeparated => {
+                    if i > 0 {
+                        out.extend_from_slice(b",\n");
+                    }
+                    out.extend(serde_json::to_vec(d).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    fn split_all(input: &[u8], chunks: &[usize]) -> Result<Vec<Vec<u8>>, String> {
+        let mut s = ValueSplitter::new();
+        let mut out = Vec::new();
+        let mut pos = 0;
+        let mut ci = 0;
+        while pos < input.len() {
+            let n = chunks
+                .get(ci % chunks.len().max(1))
+                .copied()
+                .unwrap_or(7)
+                .max(1);
+            ci += 1;
+            let end = (pos + n).min(input.len());
+            s.push(&input[pos..end]);
+            pos = end;
+            while let Some(v) = s.next_value(false)? {
+                out.push(v);
+            }
+        }
+        while let Some(v) = s.next_value(true)? {
+            out.push(v);
+        }
+        Ok(out)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
+
+        /// Every layout, any chunking: exactly the documents, in order, and
+        /// each one flattens to a single line that parses to the same value.
+        #[test]
+        fn documents_come_back_whole_in_order(
+            docs in proptest::collection::vec(document(), 0..6),
+            layout in prop_oneof![
+                Just(Layout::Ndjson), Just(Layout::Crlf), Just(Layout::Pretty),
+                Just(Layout::Concatenated), Just(Layout::CommaSeparated)
+            ],
+            bom in any::<bool>(),
+            chunks in proptest::collection::vec(1usize..64, 1..8),
+        ) {
+            let input = render(&docs, layout, bom);
+            let got = split_all(&input, &chunks).map_err(TestCaseError::fail)?;
+            prop_assert_eq!(got.len(), docs.len());
+            for (raw, want) in got.into_iter().zip(&docs) {
+                let line = single_line(raw);
+                prop_assert!(!line.contains(&b'\n') && !line.contains(&b'\r'));
+                let back: Value = serde_json::from_slice(&line).map_err(|e| TestCaseError::fail(e.to_string()))?;
+                prop_assert_eq!(&back, want);
+            }
+        }
+
+        /// Arbitrary bytes in arbitrary chunks never panic, and a value
+        /// returned is never longer than the input.
+        #[test]
+        fn arbitrary_bytes_never_panic(
+            input in proptest::collection::vec(any::<u8>(), 0..256),
+            chunks in proptest::collection::vec(1usize..32, 1..6),
+        ) {
+            if let Ok(values) = split_all(&input, &chunks) {
+                let total: usize = values.iter().map(Vec::len).sum();
+                prop_assert!(total <= input.len());
+            }
+        }
+
+        /// Chunking never changes the result.
+        #[test]
+        fn chunking_is_irrelevant(
+            input in proptest::collection::vec(
+                prop_oneof![Just(b'{'), Just(b'}'), Just(b'"'), Just(b'\\'), Just(b'\n'), Just(b'1'), Just(b' '), Just(b'[')],
+                0..64),
+            chunks in proptest::collection::vec(1usize..16, 1..6),
+        ) {
+            let whole = split_all(&input, &[input.len().max(1)]);
+            let parts = split_all(&input, &chunks);
+            prop_assert_eq!(whole.is_ok(), parts.is_ok());
+            if let (Ok(a), Ok(b)) = (whole, parts) {
+                prop_assert_eq!(a, b);
+            }
+        }
+    }
+}

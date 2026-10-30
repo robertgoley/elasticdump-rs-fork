@@ -79,6 +79,10 @@ version = "0.4.51"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
+[[exemptions.autocfg]]
+version = "1.5.1"
+criteria = "safe-to-run"
+
 [[exemptions.base64]]
 version = "0.23.1"
 criteria = "safe-to-deploy"
@@ -454,6 +458,10 @@ version = "0.4.7"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
+[[exemptions.num-traits]]
+version = "0.2.19"
+criteria = "safe-to-run"
+
 [[exemptions.once_cell]]
 version = "1.21.4"
 criteria = "safe-to-deploy"
@@ -524,6 +532,10 @@ version = "1.0.107"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
+[[exemptions.proptest]]
+version = "1.11.0"
+criteria = "safe-to-run"
+
 [[exemptions.ptr_meta]]
 version = "0.3.2"
 criteria = "safe-to-deploy"
@@ -563,6 +575,18 @@ notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (o
 version = "0.8.8"
 criteria = "safe-to-run"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.rand]]
+version = "0.9.5"
+criteria = "safe-to-run"
+
+[[exemptions.rand_chacha]]
+version = "0.9.0"
+criteria = "safe-to-run"
+
+[[exemptions.rand_xorshift]]
+version = "0.4.0"
+criteria = "safe-to-run"
 
 [[exemptions.redox_syscall]]
 version = "0.5.18"
@@ -858,6 +882,10 @@ notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (o
 version = "1.20.1"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.unarray]]
+version = "0.1.4"
+criteria = "safe-to-run"
 
 [[exemptions.unicode-ident]]
 version = "1.0.27"

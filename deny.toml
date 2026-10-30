@@ -89,6 +89,7 @@ allow-build-scripts = [
     { crate = "icu_normalizer_data" }, # cfg probe for baked data
     { crate = "icu_properties_data" }, # cfg probe for baked data
     { crate = "libc" }, # rustc version / target cfg probe
+    { crate = "num-traits" }, # autocfg rustc probe only (dev-only, via proptest; L-501)
     { crate = "parking_lot_core" }, # cfg probe
     { crate = "portable-atomic" }, # target-feature cfg probe
     { crate = "proc-macro2" }, # rustc version probe
