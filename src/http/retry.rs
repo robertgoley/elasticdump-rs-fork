@@ -257,6 +257,8 @@ pub enum RetryOutcome {
     Timeout,
     /// Any other transport failure (reset, broken pipe, body transfer).
     TransportError,
+    /// TLS verification or negotiation failed: permanent, never retried.
+    Tls,
     /// The server answered with this non-2xx status.
     Status(u16),
 }
@@ -266,6 +268,7 @@ pub fn should_retry(policy: &RetryPolicy, mode: RetryMode, outcome: &RetryOutcom
     match mode {
         RetryMode::Idempotent => match outcome {
             RetryOutcome::ConnectError | RetryOutcome::TransportError => on.network,
+            RetryOutcome::Tls => false,
             RetryOutcome::Timeout => on.timeout,
             RetryOutcome::Status(status) => on.status(*status),
         },
@@ -275,6 +278,53 @@ pub fn should_retry(policy: &RetryPolicy, mode: RetryMode, outcome: &RetryOutcom
             _ => false,
         },
     }
+}
+
+/// A plain-language explanation for TLS failures (TST-API-055), and whether
+/// the failure is permanent (a retry cannot fix it).
+pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
+    let has = |n: &str| chain.contains(n);
+    Some(if has("UnknownIssuer") {
+        (
+            true,
+            "TLS: the server certificate is not signed by a trusted CA; pass the cluster's CA with --input-ca/--output-ca (or --ca), or --insecure to skip verification (unsafe)",
+        )
+    } else if has("certificate expired") || has("Expired") {
+        (true, "TLS: the server certificate has expired")
+    } else if has("not valid yet") || has("NotValidYet") {
+        (
+            true,
+            "TLS: the server certificate is not valid yet; check the clocks of this machine and the server",
+        )
+    } else if has("not valid for name") || has("NotValidForName") {
+        (
+            true,
+            "TLS: hostname mismatch; connect with a host name or IP address listed in the certificate's subjectAltName",
+        )
+    } else if has("CertificateRequired") {
+        (
+            true,
+            "TLS: the server requires a client certificate; pass --input-cert/--input-key (or --cert/--key)",
+        )
+    } else if has("ProtocolVersion") || has("PeerIncompatible") || has("peer is incompatible") {
+        (
+            true,
+            "TLS: the server only offers a TLS version or cipher this tool does not support (TLS 1.2+ is required)",
+        )
+    } else if has("InvalidContentType") || has("corrupt message") {
+        (
+            true,
+            "TLS: the server did not answer with TLS; this port probably serves plain HTTP, so use http://",
+        )
+    } else if has("invalid peer certificate") || has("BadCertificate") || has("UnknownCA") {
+        (true, "TLS: certificate verification failed")
+    } else if plain_http
+        && (has("connection closed before message completed") || has("invalid HTTP version"))
+    {
+        (false, "if this port serves HTTPS, use https://")
+    } else {
+        return None;
+    })
 }
 
 fn classify(error: &reqwest::Error) -> RetryOutcome {
@@ -402,13 +452,21 @@ where
             Err(SendError::InvalidPath(m)) => {
                 return Err(anyhow!("{prefix}{operation}: {m}"));
             }
-            Err(SendError::Http(e)) => (
-                classify(&e),
-                anyhow!(
-                    "{prefix}Elasticsearch {operation} request failed: {}",
-                    error_chain(&e)
-                ),
-            ),
+            Err(SendError::Http(e)) => {
+                let chain = error_chain(&e);
+                let http = e.url().is_some_and(|u| u.scheme() == "http");
+                let hint = tls_hint(&chain, http);
+                let outcome = if hint.is_some_and(|(permanent, _)| permanent) {
+                    RetryOutcome::Tls
+                } else {
+                    classify(&e)
+                };
+                let hint = hint.map(|(_, h)| format!(" ({h})")).unwrap_or_default();
+                (
+                    outcome,
+                    anyhow!("{prefix}Elasticsearch {operation} request failed: {chain}{hint}"),
+                )
+            }
         };
 
         if attempt >= retry.attempts || !should_retry(&retry, mode, &outcome) {

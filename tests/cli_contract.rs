@@ -1621,3 +1621,283 @@ async fn partial_results_fail_and_commit_nothing() {
         }
     }
 }
+
+// L-431 (TST-API-055): TLS failures against `openssl s_server` endpoints built from the cert
+// factory (scripts/tls/certs.sh). Each failure: exit 1, one message naming the cause, no retry
+// loop (TLS errors are permanent). Success cases reach HTTP (s_server -www answers HTML, so the
+// run stops at "did not return JSON"). Skipped when openssl (>= 3.4 for -not_before) is missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tls_failures_have_one_clear_message() {
+    struct Srv(std::process::Child);
+    impl Drop for Srv {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let certs = dir.path().join("certs");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/tls/certs.sh");
+    let ok = std::process::Command::new("bash")
+        .arg(script)
+        .arg(&certs)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        println!("SKIP: openssl cert factory unavailable");
+        return;
+    }
+    let free_port = || {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let start = |cert: &str, extra: &[&str]| -> (Srv, u16) {
+        let port = free_port();
+        let child = std::process::Command::new("openssl")
+            .current_dir(&certs)
+            .args(["s_server", "-quiet", "-www", "-accept", &port.to_string()])
+            .args([
+                "-cert",
+                &format!("{cert}.pem"),
+                "-key",
+                &format!("{cert}.key"),
+            ])
+            .args(extra)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        (Srv(child), port)
+    };
+    let plain_port = free_port();
+    let plain = std::net::TcpListener::bind(("127.0.0.1", plain_port)).unwrap();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        for mut s in plain.incoming().flatten() {
+            let mut b = [0u8; 1024];
+            let _ = s.read(&mut b);
+            let _ = s.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    let ca = certs.join("ca.pem").to_str().unwrap().to_string();
+    let key = |n: &str| certs.join(n).to_str().unwrap().to_string();
+    let servers = [
+        ("ok", start("ok", &[])),
+        ("expired", start("expired", &[])),
+        ("future", start("future", &[])),
+        ("wrongname", start("wrongname", &[])),
+        ("iponly", start("iponly", &[])),
+        ("unknown", start("unknown", &[])),
+        ("mtls", start("ok", &["-Verify", "1", "-CAfile", "ca.pem"])),
+        (
+            "tls11",
+            start("ok", &["-tls1_1", "-cipher", "DEFAULT:@SECLEVEL=0"]),
+        ),
+    ];
+    let port = |n: &str| servers.iter().find(|(k, _)| *k == n).unwrap().1.1;
+    let reached_http = "did not return JSON";
+    type Env = Vec<(String, String)>;
+    let cases: Vec<(&str, String, Vec<String>, Env, &str)> = vec![
+        (
+            "valid",
+            format!("https://localhost:{}/idx", port("ok")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            reached_http,
+        ),
+        (
+            "valid by IP SAN",
+            format!("https://127.0.0.1:{}/idx", port("iponly")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            reached_http,
+        ),
+        (
+            "unknown CA",
+            format!("https://localhost:{}/idx", port("unknown")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "not signed by a trusted CA",
+        ),
+        (
+            "no CA given",
+            format!("https://localhost:{}/idx", port("ok")),
+            vec![],
+            vec![],
+            "not signed by a trusted CA",
+        ),
+        (
+            "expired",
+            format!("https://localhost:{}/idx", port("expired")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "certificate has expired",
+        ),
+        (
+            "not yet valid",
+            format!("https://localhost:{}/idx", port("future")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "not valid yet",
+        ),
+        (
+            "hostname mismatch",
+            format!("https://localhost:{}/idx", port("wrongname")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "hostname mismatch",
+        ),
+        (
+            "IP SAN only, by name",
+            format!("https://localhost:{}/idx", port("iponly")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "hostname mismatch",
+        ),
+        (
+            "client cert missing",
+            format!("https://localhost:{}/idx", port("mtls")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "requires a client certificate",
+        ),
+        (
+            "client cert",
+            format!("https://localhost:{}/idx", port("mtls")),
+            vec![
+                "--input-ca".into(),
+                ca.clone(),
+                "--input-cert".into(),
+                key("client.pem"),
+                "--input-key".into(),
+                key("client.key"),
+            ],
+            vec![],
+            reached_http,
+        ),
+        (
+            "encrypted key",
+            format!("https://localhost:{}/idx", port("mtls")),
+            vec![
+                "--input-ca".into(),
+                ca.clone(),
+                "--input-cert".into(),
+                key("client.pem"),
+                "--input-key".into(),
+                key("client-enc.key"),
+                "--input-pass".into(),
+                "clientpass".into(),
+            ],
+            vec![],
+            reached_http,
+        ),
+        (
+            "wrong --pass",
+            format!("https://localhost:{}/idx", port("mtls")),
+            vec![
+                "--input-ca".into(),
+                ca.clone(),
+                "--input-cert".into(),
+                key("client.pem"),
+                "--input-key".into(),
+                key("client-enc.key"),
+                "--input-pass".into(),
+                "WRONG-pass".into(),
+            ],
+            vec![],
+            "wrong --pass",
+        ),
+        (
+            "legacy encrypted PEM",
+            format!("https://localhost:{}/idx", port("mtls")),
+            vec![
+                "--input-ca".into(),
+                ca.clone(),
+                "--input-cert".into(),
+                key("client.pem"),
+                "--input-key".into(),
+                key("client-legacy.key"),
+                "--input-pass".into(),
+                "clientpass".into(),
+            ],
+            vec![],
+            "Legacy encrypted PEM key",
+        ),
+        (
+            "TLS 1.1 only",
+            format!("https://localhost:{}/idx", port("tls11")),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "TLS 1.2+ is required",
+        ),
+        (
+            "https to plain port",
+            format!("https://localhost:{plain_port}/idx"),
+            vec!["--input-ca".into(), ca.clone()],
+            vec![],
+            "use http://",
+        ),
+        (
+            "http to TLS port",
+            format!("http://localhost:{}/idx", port("ok")),
+            vec![],
+            vec![],
+            "use https://",
+        ),
+        (
+            "--insecure",
+            format!("https://localhost:{}/idx", port("unknown")),
+            vec!["--insecure".into()],
+            vec![],
+            "verification is DISABLED",
+        ),
+        (
+            "NODE_TLS_REJECT_UNAUTHORIZED=0",
+            format!("https://localhost:{}/idx", port("unknown")),
+            vec![],
+            vec![("NODE_TLS_REJECT_UNAUTHORIZED".into(), "0".into())],
+            "verification is DISABLED",
+        ),
+    ];
+    for (name, url, extra, env, want) in cases {
+        let mut args: Vec<String> = vec![
+            "--input".into(),
+            url,
+            "--output".into(),
+            dir.path().join("o.json").to_str().unwrap().into(),
+            "--type".into(),
+            "mapping".into(),
+            "--retryAttempts".into(),
+            "2".into(),
+            "--retryDelay".into(),
+            "1".into(),
+        ];
+        args.extend(extra);
+        let o = run_async(args, env).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        assert!(err.contains(want), "{name}: want {want:?}: {err}");
+        assert!(
+            !err.contains("clientpass") && !err.contains("WRONG-pass"),
+            "{name}: {err}"
+        );
+        if want != reached_http
+            && !name.starts_with("http to")
+            && !name.starts_with("--")
+            && !name.starts_with("NODE")
+        {
+            assert!(
+                !err.contains("retrying"),
+                "{name}: TLS failure was retried: {err}"
+            );
+        }
+        assert!(!dir.path().join("o.json").exists());
+    }
+    drop(servers);
+}
