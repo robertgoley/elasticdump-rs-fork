@@ -366,7 +366,10 @@ impl BulkSink {
         if !r.status().is_success() {
             return Ok(None);
         }
-        let Ok(v) = r.json::<serde_json::Value>().await else {
+        let Ok(b) = r.bytes().await else {
+            return Ok(None);
+        };
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&b) else {
             return Ok(None);
         };
         Ok(v.as_object()
