@@ -21,8 +21,10 @@ jobs:
       - run: cargo clippy --workspace --lib --bins --tests --features elasticdump-rs/load -- -D warnings
       # L-301 / INF-001: tiers from .config/nextest.toml (T0 unit, T1 contract); JUnit in target/nextest/<tier>/
       - run: cargo install --locked --version 0.9.150 cargo-nextest
-      - run: cargo nextest run --workspace --profile unit
-      - run: cargo nextest run --workspace --profile contract
+      # L-313 / INF-013: no auto-retry; quarantines need owner + date and expire after 14 days.
+      - run: scripts/sup/flake-policy.py
+      - run: cargo nextest run --workspace --profile unit -E "$(scripts/sup/flake-policy.py --filter)"
+      - run: cargo nextest run --workspace --profile contract -E "$(scripts/sup/flake-policy.py --filter)"
 
   # SUP-* supply-chain gates (TEST-REQUIREMENTS §7.3, TASKS-LOCAL A2).
   supply-chain:

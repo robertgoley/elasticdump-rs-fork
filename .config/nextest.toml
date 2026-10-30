@@ -7,6 +7,14 @@
 # Run one tier with `cargo nextest run --profile <tier> [--features ...]`.
 # Each profile writes JUnit XML to target/nextest/<tier>/junit.xml.
 # `default` (no profile) = unit + contract. Correctness tests never auto-retry (INF-013).
+#
+# Flake policy (INF-013, scripts/sup/flake-policy.py runs in CI):
+#  * `retries` stays 0 in every profile and override;
+#  * a flaky test may be quarantined for at most 14 days with one line per test:
+#      # quarantine: filter="test(=name)" owner="@someone" since="YYYY-MM-DD" reason="link or cause"
+#    CI excludes it with `-E "$(scripts/sup/flake-policy.py --filter)"` and fails once it is older than 14 days;
+#  * chaos tests print `CHAOS_SEED=<n>` (tests/support/chaos.rs) and replay with the same env var.
+# Quarantine list (empty):
 
 [profile.default]
 default-filter = "kind(lib) | kind(bin) | binary(cli_contract) | binary(injection) | binary(secrets) | binary(router_mock_selftest) | (kind(test) & (package(edgen) | package(edverify)))"

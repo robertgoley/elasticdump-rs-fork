@@ -340,3 +340,28 @@ async fn redirects() {
     let paths: Vec<_> = m.requests().iter().map(|r| r.path.clone()).collect();
     assert_eq!(paths, ["/old", "/new"]);
 }
+
+// ---- chaos seed helper (INF-013) ----
+
+#[test]
+fn chaos_seed_parses_and_replays() {
+    use support::chaos::{Rng, parse};
+    assert_eq!(parse("42"), Some(42));
+    assert_eq!(parse("0x2A"), Some(42));
+    assert_eq!(parse("nope"), None);
+    let a: Vec<u64> = {
+        let mut r = Rng::new(7);
+        (0..5).map(|_| r.next_u64()).collect()
+    };
+    let b: Vec<u64> = {
+        let mut r = Rng::new(7);
+        (0..5).map(|_| r.next_u64()).collect()
+    };
+    assert_eq!(a, b, "same seed, same sequence");
+    assert_ne!(a, {
+        let mut r = Rng::new(8);
+        (0..5).map(|_| r.next_u64()).collect::<Vec<_>>()
+    });
+    let mut r = Rng::new(1);
+    assert!((0..1000).all(|_| r.below(10) < 10));
+}
