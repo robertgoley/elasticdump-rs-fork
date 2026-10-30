@@ -139,6 +139,11 @@ pub struct BulkSink {
     /// 1-based number (in the input) of the next document handed to `write_batch`, so a
     /// rejected line can be located (TST-BRK-IN-005).
     next_doc: u64,
+    /// When the first batch was handed over (TST-BRK-SRV-008 re-creation check).
+    first_batch: Option<std::time::Instant>,
+    /// uuid of the single target index, noted once mid-run (TST-BRK-SRV-008).
+    target_uuid: Option<String>,
+    uuid_checked: bool,
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -320,7 +325,90 @@ impl BulkSink {
             inflight: JoinSet::new(),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             next_doc: 1,
+            first_batch: None,
+            target_uuid: None,
+            uuid_checked: false,
         }
+    }
+
+    /// The one concrete index every document goes to, when the output names one (no
+    /// rename, no wildcard or list); `None` otherwise.
+    fn single_target(&self) -> Option<String> {
+        if self.opts.rename.is_some() {
+            return None;
+        }
+        let i = self.opts.index.as_deref()?;
+        let name = format!("{}{}{}", self.opts.prefix, i, self.opts.suffix);
+        (!name.contains(['*', ',', '?'])).then_some(name)
+    }
+
+    /// `index.uuid` of `name` when it resolves to one index; `Err(())` on a 404.
+    async fn target_uuid(&self, name: &str) -> std::result::Result<Option<String>, ()> {
+        let Ok(r) = self
+            .client
+            .send(
+                Method::GET,
+                &[name, "_settings"],
+                &[("filter_path", "*.settings.index.uuid")],
+                false,
+                Body::Empty,
+            )
+            .await
+        else {
+            return Ok(None);
+        };
+        if r.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(());
+        }
+        if !r.status().is_success() {
+            return Ok(None);
+        }
+        let Ok(v) = r.json::<serde_json::Value>().await else {
+            return Ok(None);
+        };
+        Ok(v.as_object()
+            .filter(|o| o.len() == 1)
+            .and_then(|o| o.values().next())
+            .and_then(|i| i.pointer("/settings/index/uuid"))
+            .and_then(|u| u.as_str())
+            .map(str::to_string))
+    }
+
+    /// TST-BRK-SRV-008: in a restore that has run for [`UUID_CAPTURE_AFTER`] (short runs keep
+    /// Node's request shape), note the single target index's uuid once.
+    async fn note_target_uuid(&mut self) {
+        let now = std::time::Instant::now();
+        let first = *self.first_batch.get_or_insert(now);
+        if self.uuid_checked || now.duration_since(first) < UUID_CAPTURE_AFTER {
+            return;
+        }
+        self.uuid_checked = true;
+        if let Some(name) = self.single_target() {
+            self.target_uuid = self.target_uuid(&name).await.ok().flatten();
+        }
+    }
+
+    /// TST-BRK-SRV-008: at the end, the target must still be the index noted mid-run. A 404
+    /// means it was deleted; another uuid means it was deleted and re-created (auto-create,
+    /// dynamic mappings) while documents were written.
+    async fn check_target_index(&mut self) -> Result<()> {
+        let (Some(start), Some(name)) = (self.target_uuid.clone(), self.single_target()) else {
+            return Ok(());
+        };
+        let recreated = match self.target_uuid(&name).await {
+            Err(()) => false,
+            Ok(Some(end)) if end != start => true,
+            Ok(_) => return Ok(()),
+        };
+        Err(anyhow!(
+            "the target index '{name}' was deleted during the restore{}: documents written before that are gone{}. Re-create the index (with its mappings) and run the restore again",
+            if recreated { " and re-created" } else { "" },
+            if recreated {
+                ", and an automatically re-created index has dynamic mappings"
+            } else {
+                ""
+            }
+        ))
     }
 
     /// The input number of the next document (when `--offset` skipped some).
@@ -348,6 +436,9 @@ impl BulkSink {
             inflight: JoinSet::new(),
             refresh_lock: Arc::clone(&self.refresh_lock),
             next_doc: 1,
+            first_batch: None,
+            target_uuid: None,
+            uuid_checked: false,
         }
     }
 
@@ -368,6 +459,7 @@ impl BulkSink {
 
     /// Hand one batch to the writer. Sequential with `--concurrency 1`.
     pub async fn write_batch(&mut self, buf: &[u8]) -> Result<()> {
+        self.note_target_uuid().await;
         let first = self.next_doc;
         self.next_doc += buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count() as u64;
         if self.concurrency <= 1 {
@@ -407,7 +499,7 @@ impl BulkSink {
             let _g = self.refresh_lock.lock().await;
             self.refresh().await;
         }
-        Ok(())
+        self.check_target_index().await
     }
 
     pub fn abort(&mut self) {
@@ -1524,3 +1616,7 @@ mod prop_bulk {
         }
     }
 }
+
+/// Restores that have not run this long skip the target-index check (TST-BRK-SRV-008), so
+/// short runs send exactly Node's requests.
+const UUID_CAPTURE_AFTER: Duration = Duration::from_secs(5);

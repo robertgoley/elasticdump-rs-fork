@@ -76,7 +76,7 @@ pub(crate) fn context_lost_error(
         "--pitKeepAlive"
     };
     error.context(format!(
-        "Slice {slice_id}: the {kind} context no longer exists on the cluster: it expired (raise {knob} when pages are slow to write) or the node holding it restarted; nothing was committed. Re-run the dump"
+        "Slice {slice_id}: the {kind} context no longer exists on the cluster: it expired (raise {knob} when pages are slow to write), the index was deleted, or the node holding it restarted; nothing was committed. Re-run the dump"
     ))
 }
 

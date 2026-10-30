@@ -97,3 +97,62 @@ async fn l618_lost_search_context_names_the_keep_alive_flag() {
     }
     c.delete_index(&index).await;
 }
+
+// L-619 (TST-BRK-SRV-008): the index is deleted mid-dump, and the target index is deleted
+// mid-restore (auto-create then re-creates it with dynamic mappings). Dump: exit 1, nothing
+// committed, a message that names the deleted index as a cause. Restore (~13 s; the target's
+// uuid is noted after 5 s and re-read at the end): auto-create re-creates the index, the uuid
+// differs, and the tool exits 1 naming it as deleted and re-created.
+#[tokio::test]
+async fn l619_index_deleted_mid_dump_or_mid_restore_is_reported() {
+    let c = Cluster::from_env();
+    let src = unique("del_src");
+    seed_index(&c, &src, 60).await;
+    let (o, out) = dump_and_lose_context(
+        &c,
+        &src,
+        &[],
+        Duration::from_millis(2500),
+        ("DELETE", &src, None),
+    )
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(1), "dump: {err}");
+    assert!(
+        err.contains("index was deleted") || err.contains("index_not_found"),
+        "dump: {err}"
+    );
+    assert!(!out.exists(), "dump: nothing committed");
+
+    // restore: a slow restore into an existing index that is deleted part-way
+    let src = unique("del_src2");
+    let dst = unique("del_dst");
+    seed_index(&c, &src, 60).await;
+    let file = tmp_path("del", "json");
+    assert_success(&run(io_args(&c, &c.url_with_auth(&src), file.to_str().unwrap())).await);
+    c.copy_shape(&src, &dst).await;
+    let mut a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
+    a.extend(s(&[
+        "--limit",
+        "5",
+        "--throttleInterval",
+        "1000",
+        "--retryDelay",
+        "1",
+    ]));
+    let run_h = tokio::spawn(async move { run_loud(a).await });
+    tokio::time::sleep(Duration::from_millis(8000)).await;
+    c.delete_index(&dst).await;
+    let o = run_h.await.unwrap();
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_eq!(o.status.code(), Some(1), "restore: {err}");
+    assert!(
+        err.contains(&format!(
+            "the target index '{dst}' was deleted during the restore and re-created"
+        )),
+        "restore: {err}"
+    );
+    for i in [&src, &dst] {
+        c.delete_index(i).await;
+    }
+}
