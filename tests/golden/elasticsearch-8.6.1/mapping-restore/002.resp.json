@@ -1,0 +1,24 @@
+{
+  "status": 400,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json;charset=utf-8"
+  },
+  "body": {
+    "error": {
+      "root_cause": [
+        {
+          "type": "resource_already_exists_exception",
+          "reason": "index [golden_dst/<uuid>] already exists",
+          "index_uuid": "<uuid>",
+          "index": "golden_dst"
+        }
+      ],
+      "type": "resource_already_exists_exception",
+      "reason": "index [golden_dst/<uuid>] already exists",
+      "index_uuid": "<uuid>",
+      "index": "golden_dst"
+    },
+    "status": 400
+  }
+}

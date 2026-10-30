@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/_aliases",
+  "query": [],
+  "body": {
+    "actions": [
+      {
+        "add": {
+          "alias": "golden_alias",
+          "filter": {
+            "term": {
+              "k": "key1"
+            }
+          },
+          "index": "golden_src",
+          "index_routing": "r1",
+          "search_routing": "r1"
+        }
+      }
+    ]
+  }
+}

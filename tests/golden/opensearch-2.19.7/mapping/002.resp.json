@@ -17,7 +17,8 @@
             "type": "long"
           },
           "t": {
-            "type": "text"
+            "type": "text",
+            "analyzer": "golden_an"
           }
         }
       }

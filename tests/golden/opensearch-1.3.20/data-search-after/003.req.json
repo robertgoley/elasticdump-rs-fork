@@ -1,0 +1,24 @@
+{
+  "method": "POST",
+  "path": "/golden_src/_search",
+  "query": [
+    [
+      "allow_partial_search_results",
+      "false"
+    ]
+  ],
+  "body": {
+    "query": {
+      "match_all": {}
+    },
+    "search_after": [
+      "key4"
+    ],
+    "size": 10,
+    "sort": [
+      {
+        "k": "asc"
+      }
+    ]
+  }
+}

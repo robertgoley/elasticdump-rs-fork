@@ -1,0 +1,156 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": null,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_id": "g18",
+          "_score": null,
+          "_source": {
+            "k": "key18",
+            "n": 18,
+            "t": "golden doc 18"
+          },
+          "sort": [
+            "key18"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g19",
+          "_score": null,
+          "_source": {
+            "k": "key19",
+            "n": 19,
+            "t": "golden doc 19"
+          },
+          "sort": [
+            "key19"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g02",
+          "_score": null,
+          "_source": {
+            "k": "key2",
+            "n": 2,
+            "t": "golden doc 2"
+          },
+          "sort": [
+            "key2"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g20",
+          "_score": null,
+          "_source": {
+            "k": "key20",
+            "n": 20,
+            "t": "golden doc 20"
+          },
+          "sort": [
+            "key20"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g21",
+          "_score": null,
+          "_source": {
+            "k": "key21",
+            "n": 21,
+            "t": "golden doc 21"
+          },
+          "sort": [
+            "key21"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g22",
+          "_score": null,
+          "_source": {
+            "k": "key22",
+            "n": 22,
+            "t": "golden doc 22"
+          },
+          "sort": [
+            "key22"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g23",
+          "_score": null,
+          "_source": {
+            "k": "key23",
+            "n": 23,
+            "t": "golden doc 23"
+          },
+          "sort": [
+            "key23"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g24",
+          "_score": null,
+          "_source": {
+            "k": "key24",
+            "n": 24,
+            "t": "golden doc 24"
+          },
+          "sort": [
+            "key24"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g03",
+          "_score": null,
+          "_source": {
+            "k": "key3",
+            "n": 3,
+            "t": "golden doc 3"
+          },
+          "sort": [
+            "key3"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g04",
+          "_score": null,
+          "_source": {
+            "k": "key4",
+            "n": 4,
+            "t": "golden doc 4"
+          },
+          "sort": [
+            "key4"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "method": "POST",
+  "path": "/golden_src/_search",
+  "query": [
+    [
+      "allow_partial_search_results",
+      "false"
+    ],
+    [
+      "scroll",
+      "10m"
+    ]
+  ],
+  "body": {
+    "_source": true,
+    "query": {
+      "match_all": {}
+    },
+    "size": 7,
+    "stored_fields": [
+      "*"
+    ]
+  }
+}

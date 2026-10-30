@@ -1,1 +1,1 @@
-{"golden_src":{"mappings":{"properties":{"big":{"type":"keyword"},"k":{"type":"keyword"},"n":{"type":"long"},"t":{"type":"text"}}}}}
+{"golden_src":{"mappings":{"properties":{"big":{"type":"keyword"},"k":{"type":"keyword"},"n":{"type":"long"},"t":{"type":"text","analyzer":"golden_an"}}}}}

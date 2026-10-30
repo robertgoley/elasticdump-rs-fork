@@ -1,0 +1,1 @@
+"{\"golden_src\":{\"settings\":{\"index\":{\"routing\":{\"allocation\":{\"include\":{\"_tier_preference\":\"data_content\"}}},\"number_of_shards\":\"1\",\"analysis\":{\"analyzer\":{\"golden_an\":{\"filter\":[\"lowercase\"],\"type\":\"custom\",\"tokenizer\":\"whitespace\"}}},\"number_of_replicas\":\"0\"}}}}"

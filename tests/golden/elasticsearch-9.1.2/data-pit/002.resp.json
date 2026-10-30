@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "<pit:1>",
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    }
+  }
+}

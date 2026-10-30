@@ -4,7 +4,7 @@
 //! Replay of the committed files is `tests/golden_replay.rs` (offline, T1).
 
 use crate::harness::*;
-use crate::support::golden::{Meta, Recorder, golden_root};
+use crate::support::golden::{Meta, Recorder, Replay, golden_root};
 use serde_json::json;
 
 const SRC: &str = "golden_src";
@@ -17,8 +17,9 @@ async fn seed(c: &Cluster) {
         "PUT",
         SRC,
         Some(json!({
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
-            "mappings": {"properties": {"k": {"type": "keyword"}, "n": {"type": "long"}, "t": {"type": "text"}, "big": {"type": "keyword"}}}
+            "settings": {"number_of_shards": 1, "number_of_replicas": 0,
+                "analysis": {"analyzer": {"golden_an": {"type": "custom", "tokenizer": "whitespace", "filter": ["lowercase"]}}}},
+            "mappings": {"properties": {"k": {"type": "keyword"}, "n": {"type": "long"}, "t": {"type": "text", "analyzer": "golden_an"}, "big": {"type": "keyword"}}}
         })),
     )
     .await;
@@ -50,16 +51,48 @@ const RESTORE_INPUT: &str = concat!(
     "\n",
 );
 
+#[derive(Clone, Copy, PartialEq)]
+enum Setup {
+    None,
+    /// delete golden_dst (restore creates it)
+    FreshDst,
+    /// golden_dst with golden_src's shape (analyzer restore needs an existing index)
+    ShapedDst,
+    Alias,
+    LegacyTemplate,
+    ComposableTemplates,
+    Policy,
+    Script,
+}
+
 struct Case {
     name: &'static str,
+    setup: Setup,
+    /// Run first, straight against the cluster (`{{URL}}` = cluster), to make `{{DIR}}/input.json`.
+    prep: Option<&'static [&'static str]>,
     args: &'static [&'static str],
     output: bool,
+    /// Must exit 0 on every engine; otherwise the exit code is recorded (TST-API-002:
+    /// "not applicable" is the asserted specific failure, e.g. PIT on OpenSearch 1.3).
+    must_pass: bool,
+}
+
+const fn case(name: &'static str, args: &'static [&'static str], output: bool) -> Case {
+    Case {
+        name,
+        setup: Setup::None,
+        prep: None,
+        args,
+        output,
+        must_pass: true,
+    }
 }
 
 const CASES: &[Case] = &[
-    Case {
-        name: "data-scroll",
-        args: &[
+    // E1 info, E2/E3 scroll
+    case(
+        "data-scroll",
+        &[
             "--input",
             "{{URL}}/golden_src",
             "--output",
@@ -67,11 +100,76 @@ const CASES: &[Case] = &[
             "--limit",
             "7",
         ],
-        output: true,
-    },
+        true,
+    ),
+    // E4/E5 PIT (absent on ES 7.10 OSS and OpenSearch < 2.4: expected failure)
     Case {
-        name: "mapping",
-        args: &[
+        must_pass: false,
+        ..case(
+            "data-pit",
+            &[
+                "--input",
+                "{{URL}}/golden_src",
+                "--output",
+                "{{OUT}}",
+                "--searchType",
+                "pit",
+                "--limit",
+                "7",
+            ],
+            true,
+        )
+    },
+    // E6 search_after without PIT
+    case(
+        "data-search-after",
+        &[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{OUT}}",
+            "--searchAfter",
+            "--searchBody",
+            r#"{"query":{"match_all":{}},"sort":[{"k":"asc"}]}"#,
+            "--limit",
+            "10",
+        ],
+        true,
+    ),
+    // E7 render template
+    case(
+        "data-template",
+        &[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{OUT}}",
+            "--searchWithTemplate",
+            "--searchBody",
+            r#"{"source":{"query":{"term":{"k":"{{key}}"}}},"params":{"key":"key7"}}"#,
+        ],
+        true,
+    ),
+    // E8/E9 bulk + refresh
+    Case {
+        setup: Setup::FreshDst,
+        ..case(
+            "data-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.ndjson",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--limit",
+                "3",
+            ],
+            false,
+        )
+    },
+    // E10/E11/E12 index-scoped metadata, dump and restore
+    case(
+        "mapping",
+        &[
             "--input",
             "{{URL}}/golden_src",
             "--output",
@@ -79,11 +177,11 @@ const CASES: &[Case] = &[
             "--type",
             "mapping",
         ],
-        output: true,
-    },
-    Case {
-        name: "settings",
-        args: &[
+        true,
+    ),
+    case(
+        "settings",
+        &[
             "--input",
             "{{URL}}/golden_src",
             "--output",
@@ -91,21 +189,339 @@ const CASES: &[Case] = &[
             "--type",
             "settings",
         ],
-        output: true,
+        true,
+    ),
+    case(
+        "index",
+        &[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{OUT}}",
+            "--type",
+            "index",
+        ],
+        true,
+    ),
+    Case {
+        setup: Setup::FreshDst,
+        prep: Some(&[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{DIR}}/input.json",
+            "--type",
+            "settings",
+        ]),
+        ..case(
+            "settings-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.json",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--type",
+                "settings",
+            ],
+            false,
+        )
+    },
+    // after settings-restore (the index and its analyzer exist), as a real restore runs
+    Case {
+        setup: Setup::None,
+        prep: Some(&[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{DIR}}/input.json",
+            "--type",
+            "mapping",
+        ]),
+        ..case(
+            "mapping-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.json",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--type",
+                "mapping",
+            ],
+            false,
+        )
+    },
+    // E13/E21 analyzer: close, settings, open, health wait
+    Case {
+        setup: Setup::ShapedDst,
+        prep: Some(&[
+            "--input",
+            "{{URL}}/golden_src",
+            "--output",
+            "{{DIR}}/input.json",
+            "--type",
+            "analyzer",
+        ]),
+        ..case(
+            "analyzer-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.json",
+                "--output",
+                "{{URL}}/golden_dst",
+                "--type",
+                "analyzer",
+                "--closeIndex",
+            ],
+            false,
+        )
+    },
+    // E15 aliases
+    Case {
+        setup: Setup::Alias,
+        ..case(
+            "alias",
+            &[
+                "--input",
+                "{{URL}}/golden_src",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "alias",
+            ],
+            true,
+        )
     },
     Case {
-        name: "data-restore",
-        args: &[
+        setup: Setup::Alias,
+        prep: Some(&[
             "--input",
-            "{{DIR}}/input.ndjson",
+            "{{URL}}/golden_src",
             "--output",
-            "{{URL}}/golden_dst",
-            "--limit",
-            "3",
-        ],
-        output: false,
+            "{{DIR}}/input.json",
+            "--type",
+            "alias",
+        ]),
+        ..case(
+            "alias-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.json",
+                "--output",
+                "{{URL}}/",
+                "--type",
+                "alias",
+            ],
+            false,
+        )
+    },
+    // E16 legacy templates, E17 component + composable index templates
+    Case {
+        setup: Setup::LegacyTemplate,
+        ..case(
+            "template",
+            &[
+                "--input",
+                "{{URL}}/golden_tpl",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "template",
+            ],
+            true,
+        )
+    },
+    Case {
+        setup: Setup::ComposableTemplates,
+        ..case(
+            "component-template",
+            &[
+                "--input",
+                "{{URL}}/golden_comp*",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "component_template",
+            ],
+            true,
+        )
+    },
+    Case {
+        setup: Setup::ComposableTemplates,
+        ..case(
+            "index-template",
+            &[
+                "--input",
+                "{{URL}}/golden_itpl",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "index_template",
+            ],
+            true,
+        )
+    },
+    Case {
+        setup: Setup::ComposableTemplates,
+        prep: Some(&[
+            "--input",
+            "{{URL}}/golden_itpl",
+            "--output",
+            "{{DIR}}/input.json",
+            "--type",
+            "index_template",
+        ]),
+        ..case(
+            "index-template-restore",
+            &[
+                "--input",
+                "{{DIR}}/input.json",
+                "--output",
+                "{{URL}}/",
+                "--type",
+                "index_template",
+            ],
+            false,
+        )
+    },
+    // E18 ILM (Elasticsearch default distribution) / E19 ISM (OpenSearch); ES 7.10 OSS has neither
+    Case {
+        setup: Setup::Policy,
+        must_pass: false,
+        ..case(
+            "policy",
+            &[
+                "--input",
+                "{{URL}}/golden_pol*",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "policy",
+            ],
+            true,
+        )
+    },
+    // E20 stored scripts
+    Case {
+        setup: Setup::Script,
+        ..case(
+            "script",
+            &[
+                "--input",
+                "{{URL}}/golden_scr*",
+                "--output",
+                "{{OUT}}",
+                "--type",
+                "script",
+            ],
+            true,
+        )
     },
 ];
+
+async fn setup(c: &Cluster, s: Setup) {
+    match s {
+        Setup::None => {}
+        Setup::FreshDst => c.delete_index(DST).await,
+        Setup::ShapedDst => {
+            c.delete_index(DST).await;
+            c.copy_shape(SRC, DST).await;
+        }
+        Setup::Alias => {
+            c.call(
+                "POST",
+                "_aliases",
+                Some(json!({"actions": [{"remove": {"index": SRC, "alias": "golden_alias"}}]})),
+            )
+            .await;
+            c.ok(
+                "POST",
+                "_aliases",
+                Some(json!({"actions": [{"add": {"index": SRC, "alias": "golden_alias", "filter": {"term": {"k": "key1"}}, "routing": "r1"}}]})),
+            )
+            .await;
+        }
+        Setup::LegacyTemplate => {
+            let key = if c.major().await >= 7 || c.engine == Engine::OpenSearch {
+                "index_patterns"
+            } else {
+                "template"
+            };
+            c.ok(
+                "PUT",
+                "_template/golden_tpl",
+                Some(
+                    json!({key: ["golden-tpl-*"], "order": 3, "settings": {"number_of_shards": 1}}),
+                ),
+            )
+            .await;
+        }
+        Setup::ComposableTemplates => {
+            c.call("DELETE", "_index_template/golden_itpl", None).await;
+            c.call("DELETE", "_component_template/golden_comp", None)
+                .await;
+            c.ok(
+                "PUT",
+                "_component_template/golden_comp",
+                Some(json!({"template": {"settings": {"number_of_shards": 1}}})),
+            )
+            .await;
+            c.ok(
+                "PUT",
+                "_index_template/golden_itpl",
+                Some(json!({"index_patterns": ["golden-itpl-*"], "composed_of": ["golden_comp"], "priority": 7})),
+            )
+            .await;
+        }
+        Setup::Policy => match c.engine {
+            Engine::OpenSearch => {
+                c.call("DELETE", "_plugins/_ism/policies/golden_pol", None)
+                    .await;
+                c.ok(
+                    "PUT",
+                    "_plugins/_ism/policies/golden_pol",
+                    Some(
+                        json!({"policy": {"description": "golden", "default_state": "hot",
+                        "states": [{"name": "hot", "actions": [], "transitions": []}]}}),
+                    ),
+                )
+                .await;
+            }
+            Engine::Elasticsearch if !c.is_oss().await => {
+                c.call("DELETE", "_ilm/policy/golden_pol", None).await;
+                c.ok(
+                    "PUT",
+                    "_ilm/policy/golden_pol",
+                    Some(json!({"policy": {"phases": {"hot": {"actions": {"rollover": {"max_docs": 1000}}}}}})),
+                )
+                .await;
+            }
+            Engine::Elasticsearch => {}
+        },
+        Setup::Script => {
+            c.ok(
+                "PUT",
+                "_scripts/golden_scr",
+                Some(json!({"script": {"lang": "painless", "source": "ctx._source.n += 1"}})),
+            )
+            .await;
+        }
+    }
+}
+
+async fn cleanup(c: &Cluster) {
+    for p in [
+        "_index_template/golden_itpl",
+        "_component_template/golden_comp",
+        "_template/golden_tpl",
+        "_scripts/golden_scr",
+        "_plugins/_ism/policies/golden_pol",
+        "_ilm/policy/golden_pol",
+    ] {
+        c.call("DELETE", p, None).await;
+    }
+    c.delete_index(SRC).await;
+    c.delete_index(DST).await;
+}
 
 #[tokio::test]
 #[ignore = "recording only: scripts/golden/record.sh (IT_RECORD=1)"]
@@ -122,16 +538,33 @@ async fn record() {
         Engine::Elasticsearch => "elasticsearch",
     };
     let root = golden_root().join(format!("{engine}-{version}"));
+    let only = env("GOLDEN_CASE");
+    cleanup(&c).await;
     seed(&c).await;
     for case in CASES {
+        if only.as_deref().is_some_and(|o| o != case.name) {
+            continue;
+        }
         let dir = root.join(case.name);
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         if case.name == "data-restore" {
-            c.delete_index(DST).await;
             std::fs::write(dir.join("input.ndjson"), RESTORE_INPUT).unwrap();
         }
-        let rec = Recorder::start(&c.url_with_auth("")).await;
+        setup(&c, case.setup).await;
         let out = tmp_path(&format!("golden-{}", case.name), "out");
+        if let Some(prep) = case.prep {
+            let mut a: Vec<String> = prep
+                .iter()
+                .map(|x| {
+                    x.replace("{{URL}}", c.url_with_auth("").trim_end_matches('/'))
+                        .replace("{{DIR}}", dir.to_str().unwrap())
+                })
+                .collect();
+            a.extend(c.tls_args("input"));
+            assert_success(&run(a).await);
+        }
+        let rec = Recorder::start(&c.url_with_auth("")).await;
         let meta = Meta {
             case: case.name.into(),
             engine: engine.into(),
@@ -142,24 +575,53 @@ async fn record() {
             has_output: case.output,
         };
         let o = run(meta.expand(&rec.url(), &out, &dir)).await;
-        assert_success(&o);
+        if case.must_pass {
+            assert_success(&o);
+        }
+        let code = o.status.code().unwrap_or(-1);
         let n = rec.save(&dir).unwrap();
-        Meta {
-            exit_code: o.status.code().unwrap_or(-1),
+        let meta = Meta {
+            exit_code: code,
+            has_output: case.output && code == 0,
             ..meta
+        };
+        meta.write(&dir).unwrap();
+        // expected.out comes from replaying the recording, so volatile values in the output
+        // (e.g. ISM last_updated_time) are the normalised ones; the recording must replay cleanly.
+        let rp = Replay::start(&dir).await;
+        let rout = tmp_path(&format!("golden-{}-replay", case.name), "out");
+        let ro = run(meta.expand(&rp.url(), &rout, &dir)).await;
+        assert_eq!(
+            ro.status.code(),
+            Some(code),
+            "{}: replay exit differs: {}",
+            case.name,
+            String::from_utf8_lossy(&ro.stderr)
+        );
+        assert!(
+            rp.problems().is_empty(),
+            "{}: recording does not replay: {:#?}",
+            case.name,
+            rp.problems()
+        );
+        if meta.has_output {
+            let live = std::fs::read(&out).unwrap_or_default();
+            let replayed = std::fs::read(&rout).unwrap_or_default();
+            if live != replayed {
+                eprintln!(
+                    "golden: {}: live output differs from replay only in normalised values",
+                    case.name
+                );
+            }
+            std::fs::write(dir.join("expected.out"), replayed).unwrap();
         }
-        .write(&dir)
-        .unwrap();
-        if case.output {
-            std::fs::copy(&out, dir.join("expected.out")).unwrap();
-            let _ = std::fs::remove_file(&out);
-        }
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_file(&rout);
         eprintln!(
-            "golden: {}/{} recorded ({n} exchanges)",
+            "golden: {}/{} recorded ({n} exchanges, exit {code})",
             root.display(),
             case.name
         );
     }
-    c.delete_index(SRC).await;
-    c.delete_index(DST).await;
+    cleanup(&c).await;
 }

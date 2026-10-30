@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "succeeded": true,
+    "num_freed": 1
+  }
+}

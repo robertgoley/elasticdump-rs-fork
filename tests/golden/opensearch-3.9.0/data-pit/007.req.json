@@ -1,0 +1,10 @@
+{
+  "method": "DELETE",
+  "path": "/_search/point_in_time",
+  "query": [],
+  "body": {
+    "pit_id": [
+      "<pit:1>"
+    ]
+  }
+}

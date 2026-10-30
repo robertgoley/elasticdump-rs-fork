@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "component_templates": [
+      {
+        "name": "golden_comp",
+        "component_template": {
+          "template": {
+            "settings": {
+              "index": {
+                "number_of_shards": "1"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

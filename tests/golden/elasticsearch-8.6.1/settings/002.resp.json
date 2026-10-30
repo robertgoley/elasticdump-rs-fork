@@ -1,0 +1,41 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "golden_src": {
+      "settings": {
+        "index": {
+          "routing": {
+            "allocation": {
+              "include": {
+                "_tier_preference": "data_content"
+              }
+            }
+          },
+          "number_of_shards": "1",
+          "provided_name": "golden_src",
+          "creation_date": "<creation_date>",
+          "analysis": {
+            "analyzer": {
+              "golden_an": {
+                "filter": [
+                  "lowercase"
+                ],
+                "type": "custom",
+                "tokenizer": "whitespace"
+              }
+            }
+          },
+          "number_of_replicas": "0",
+          "uuid": "<uuid>",
+          "version": {
+            "created": "8060199"
+          }
+        }
+      }
+    }
+  }
+}

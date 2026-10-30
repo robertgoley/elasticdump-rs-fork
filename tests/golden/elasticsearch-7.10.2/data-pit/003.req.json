@@ -1,0 +1,35 @@
+{
+  "method": "POST",
+  "path": "/_search",
+  "query": [
+    [
+      "allow_partial_search_results",
+      "false"
+    ]
+  ],
+  "body": {
+    "_source": true,
+    "pit": {
+      "id": "<pit:1>",
+      "keep_alive": "5m"
+    },
+    "query": {
+      "match_all": {}
+    },
+    "size": 7,
+    "sort": [
+      {
+        "_doc": "asc"
+      },
+      {
+        "_id": {
+          "order": "asc",
+          "unmapped_type": "keyword"
+        }
+      }
+    ],
+    "stored_fields": [
+      "*"
+    ]
+  }
+}

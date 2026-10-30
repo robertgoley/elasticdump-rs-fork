@@ -1,1 +1,1 @@
-"{\"golden_src\":{\"settings\":{\"index\":{\"replication\":{\"type\":\"DOCUMENT\"},\"number_of_shards\":\"1\",\"number_of_replicas\":\"0\"}}}}"
+"{\"golden_src\":{\"settings\":{\"index\":{\"replication\":{\"type\":\"DOCUMENT\"},\"number_of_shards\":\"1\",\"analysis\":{\"analyzer\":{\"golden_an\":{\"filter\":[\"lowercase\"],\"type\":\"custom\",\"tokenizer\":\"whitespace\"}}},\"number_of_replicas\":\"0\"}}}}"

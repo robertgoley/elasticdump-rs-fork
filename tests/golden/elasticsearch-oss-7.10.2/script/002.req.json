@@ -1,0 +1,11 @@
+{
+  "method": "GET",
+  "path": "/_cluster/state/metadata",
+  "query": [
+    [
+      "filter_path",
+      "**.stored_scripts.golden_scr*"
+    ]
+  ],
+  "body": null
+}

@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "acknowledged": true,
+    "shards_acknowledged": true,
+    "index": "golden_dst"
+  }
+}

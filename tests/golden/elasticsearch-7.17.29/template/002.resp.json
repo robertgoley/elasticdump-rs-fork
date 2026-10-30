@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_tpl": {
+      "order": 3,
+      "index_patterns": [
+        "golden-tpl-*"
+      ],
+      "settings": {
+        "index": {
+          "number_of_shards": "1"
+        }
+      },
+      "mappings": {},
+      "aliases": {}
+    }
+  }
+}

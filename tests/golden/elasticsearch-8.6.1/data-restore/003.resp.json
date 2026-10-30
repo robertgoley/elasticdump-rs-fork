@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "_shards": {
+      "total": 2,
+      "successful": 1,
+      "failed": 0
+    }
+  }
+}

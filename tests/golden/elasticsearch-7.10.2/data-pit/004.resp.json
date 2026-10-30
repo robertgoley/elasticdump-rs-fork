@@ -1,0 +1,132 @@
+{
+  "status": 200,
+  "headers": {
+    "warning": "299 Elasticsearch-7.10.2-747e1cc71def077253878a59143c1f785afa92b9 \"Loading the fielddata on the _id field is deprecated and will be removed in future versions. If you require sorting or aggregating on this field you should also include the id in the body of your documents, and map this field as a keyword field that has [doc_values] enabled\"",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "pit_id": "<pit:1>",
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": null,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g07",
+          "_score": null,
+          "_source": {
+            "k": "key7",
+            "n": 7,
+            "t": "golden doc 7"
+          },
+          "sort": [
+            7,
+            "g07"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g08",
+          "_score": null,
+          "_source": {
+            "k": "key8",
+            "n": 8,
+            "t": "golden doc 8"
+          },
+          "sort": [
+            8,
+            "g08"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g09",
+          "_score": null,
+          "_source": {
+            "k": "key9",
+            "n": 9,
+            "t": "golden doc 9"
+          },
+          "sort": [
+            9,
+            "g09"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g10",
+          "_score": null,
+          "_source": {
+            "k": "key10",
+            "n": 10,
+            "t": "golden doc 10"
+          },
+          "sort": [
+            10,
+            "g10"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g11",
+          "_score": null,
+          "_source": {
+            "k": "key11",
+            "n": 11,
+            "t": "golden doc 11"
+          },
+          "sort": [
+            11,
+            "g11"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g12",
+          "_score": null,
+          "_source": {
+            "k": "key12",
+            "n": 12,
+            "t": "golden doc 12"
+          },
+          "sort": [
+            12,
+            "g12"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g13",
+          "_score": null,
+          "_source": {
+            "k": "key13",
+            "n": 13,
+            "t": "golden doc 13"
+          },
+          "sort": [
+            13,
+            "g13"
+          ]
+        }
+      ]
+    }
+  }
+}

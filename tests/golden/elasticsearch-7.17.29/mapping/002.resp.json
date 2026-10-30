@@ -1,0 +1,28 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_src": {
+      "mappings": {
+        "properties": {
+          "big": {
+            "type": "keyword"
+          },
+          "k": {
+            "type": "keyword"
+          },
+          "n": {
+            "type": "long"
+          },
+          "t": {
+            "type": "text",
+            "analyzer": "golden_an"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "method": "DELETE",
+  "path": "/_search/scroll",
+  "query": [],
+  "body": {
+    "scroll_id": [
+      "<scroll:1>"
+    ]
+  }
+}

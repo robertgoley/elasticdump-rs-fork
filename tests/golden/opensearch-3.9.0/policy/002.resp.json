@@ -1,0 +1,32 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "policies": [
+      {
+        "_id": "golden_pol",
+        "_seq_no": 1001,
+        "_primary_term": 1002,
+        "policy": {
+          "policy_id": "golden_pol",
+          "description": "golden",
+          "last_updated_time": 0,
+          "schema_version": 31,
+          "error_notification": null,
+          "default_state": "hot",
+          "states": [
+            {
+              "name": "hot",
+              "actions": [],
+              "transitions": []
+            }
+          ],
+          "ism_template": null
+        }
+      }
+    ],
+    "total_policies": 1
+  }
+}

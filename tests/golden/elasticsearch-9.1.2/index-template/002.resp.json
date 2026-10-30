@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "index_templates": [
+      {
+        "name": "golden_itpl",
+        "index_template": {
+          "index_patterns": [
+            "golden-itpl-*"
+          ],
+          "composed_of": [
+            "golden_comp"
+          ],
+          "priority": 7
+        }
+      }
+    ]
+  }
+}

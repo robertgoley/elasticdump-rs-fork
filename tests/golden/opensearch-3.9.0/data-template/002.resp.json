@@ -1,0 +1,36 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "_scroll_id": "<scroll:1>",
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 1,
+        "relation": "eq"
+      },
+      "max_score": 1.0,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_id": "g07",
+          "_score": 1.0,
+          "_source": {
+            "k": "key7",
+            "n": 7,
+            "t": "golden doc 7"
+          }
+        }
+      ]
+    }
+  }
+}

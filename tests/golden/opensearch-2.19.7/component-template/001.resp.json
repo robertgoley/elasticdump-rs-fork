@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "name": "<node>",
+    "cluster_name": "docker-cluster",
+    "cluster_uuid": "<uuid>",
+    "version": {
+      "distribution": "opensearch",
+      "number": "2.19.7",
+      "build_type": "tar",
+      "build_hash": "6dd9a042d889837fad5d6e2afc5d3d3ce99edad6",
+      "build_date": "2026-10-19T18:54:21.497276319Z",
+      "build_snapshot": false,
+      "lucene_version": "9.12.3",
+      "minimum_wire_compatibility_version": "7.10.0",
+      "minimum_index_compatibility_version": "7.0.0"
+    },
+    "tagline": "The OpenSearch Project: https://opensearch.org/"
+  }
+}

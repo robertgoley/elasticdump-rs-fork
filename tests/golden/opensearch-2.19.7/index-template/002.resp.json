@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "index_templates": [
+      {
+        "name": "golden_itpl",
+        "index_template": {
+          "index_patterns": [
+            "golden-itpl-*"
+          ],
+          "composed_of": [
+            "golden_comp"
+          ],
+          "priority": 7
+        }
+      }
+    ]
+  }
+}

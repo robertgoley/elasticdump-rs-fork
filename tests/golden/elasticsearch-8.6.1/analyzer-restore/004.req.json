@@ -1,0 +1,20 @@
+{
+  "method": "PUT",
+  "path": "/golden_dst/_settings",
+  "query": [],
+  "body": {
+    "index": {
+      "analysis": {
+        "analyzer": {
+          "golden_an": {
+            "filter": [
+              "lowercase"
+            ],
+            "tokenizer": "whitespace",
+            "type": "custom"
+          }
+        }
+      }
+    }
+  }
+}

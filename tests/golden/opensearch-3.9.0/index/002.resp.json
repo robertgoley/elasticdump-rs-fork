@@ -1,0 +1,54 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_src": {
+      "aliases": {},
+      "mappings": {
+        "properties": {
+          "big": {
+            "type": "keyword"
+          },
+          "k": {
+            "type": "keyword"
+          },
+          "n": {
+            "type": "long"
+          },
+          "t": {
+            "type": "text",
+            "analyzer": "golden_an"
+          }
+        }
+      },
+      "settings": {
+        "index": {
+          "replication": {
+            "type": "DOCUMENT"
+          },
+          "number_of_shards": "1",
+          "provided_name": "golden_src",
+          "creation_date": "<creation_date>",
+          "analysis": {
+            "analyzer": {
+              "golden_an": {
+                "filter": [
+                  "lowercase"
+                ],
+                "type": "custom",
+                "tokenizer": "whitespace"
+              }
+            }
+          },
+          "number_of_replicas": "0",
+          "uuid": "<uuid>",
+          "version": {
+            "created": "137307827"
+          }
+        }
+      }
+    }
+  }
+}

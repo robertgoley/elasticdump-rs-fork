@@ -1,0 +1,8 @@
+# golden case (TST-INF-003); regenerate with scripts/golden/record.sh
+case = "index"
+engine = "elasticsearch"
+version = "7.10.2"
+image = "docker.elastic.co/elasticsearch/elasticsearch:7.10.2@sha256:d528cec81720266974fdfe7a0f12fee928dc02e5a2c754b45b9a84c84695bfd9"
+args = ["--input","{{URL}}/golden_src","--output","{{OUT}}","--type","index"]
+exit_code = 0
+has_output = true

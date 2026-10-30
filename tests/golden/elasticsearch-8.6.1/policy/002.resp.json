@@ -1,0 +1,579 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    ".deprecation-indexing-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "10gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "30d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "ILM policy used for deprecation logs"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          ".deprecation-indexing-template"
+        ]
+      }
+    },
+    ".fleet-actions-results-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "300gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for fleet action results indices"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    ".monitoring-8-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "0ms",
+            "actions": {
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "3d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "3d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "defaults": {
+            "delete_min_age": "Using value of [3d] based on the monitoring plugin default"
+          },
+          "description": "Index lifecycle policy generated for [monitoring-*-8] data streams"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          ".monitoring-beats-mb",
+          ".monitoring-ent-search-mb",
+          ".monitoring-kibana-mb",
+          ".monitoring-es-mb",
+          ".monitoring-logstash-mb"
+        ]
+      }
+    },
+    "180-days-default": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "shrink": {
+                "number_of_shards": 1
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "cold": {
+            "min_age": "30d",
+            "actions": {}
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "180d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "built-in ILM policy using the hot, warm, and cold phases with a retention of 180 days"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "30-days-default": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "shrink": {
+                "number_of_shards": 1
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "30d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "built-in ILM policy using the hot and warm phases with a retention of 30 days"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "365-days-default": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "shrink": {
+                "number_of_shards": 1
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "cold": {
+            "min_age": "30d",
+            "actions": {}
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "365d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "built-in ILM policy using the hot, warm, and cold phases with a retention of 365 days"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "7-days-default": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "shrink": {
+                "number_of_shards": 1
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "7d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "7d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "built-in ILM policy using the hot and warm phases with a retention of 7 days"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "90-days-default": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "shrink": {
+                "number_of_shards": 1
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              }
+            }
+          },
+          "cold": {
+            "min_age": "30d",
+            "actions": {}
+          },
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "built-in ILM policy using the hot, warm, and cold phases with a retention of 90 days"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "golden_pol": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_docs": 1000
+              }
+            }
+          }
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": []
+      }
+    },
+    "ilm-history-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the ILM history indices"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          "ilm-history"
+        ]
+      }
+    },
+    "logs": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the logs index template installed by x-pack"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          "logs"
+        ]
+      }
+    },
+    "metrics": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the metrics index template installed by x-pack"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          "metrics"
+        ]
+      }
+    },
+    "slm-history-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the SLM history indices"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          ".slm-history"
+        ]
+      }
+    },
+    "synthetics": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the synthetics index template installed by x-pack"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          "synthetics"
+        ]
+      }
+    },
+    "watch-history-ilm-policy-16": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "3d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "4d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        },
+        "_meta": {
+          "managed": true,
+          "description": "default policy for the watcher history indices"
+        }
+      },
+      "in_use_by": {
+        "indices": [],
+        "data_streams": [],
+        "composable_templates": [
+          ".watch-history-16"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "<pit:1>"
+  }
+}

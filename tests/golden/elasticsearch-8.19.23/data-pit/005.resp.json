@@ -1,0 +1,118 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "pit_id": "<pit:1>",
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": null,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_id": "g14",
+          "_score": null,
+          "_source": {
+            "k": "key14",
+            "n": 14,
+            "t": "golden doc 14"
+          },
+          "sort": [
+            14
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g15",
+          "_score": null,
+          "_source": {
+            "k": "key15",
+            "n": 15,
+            "t": "golden doc 15"
+          },
+          "sort": [
+            15
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g16",
+          "_score": null,
+          "_source": {
+            "k": "key16",
+            "n": 16,
+            "t": "golden doc 16"
+          },
+          "sort": [
+            16
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g17",
+          "_score": null,
+          "_source": {
+            "k": "key17",
+            "n": 17,
+            "t": "golden doc 17"
+          },
+          "sort": [
+            17
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g18",
+          "_score": null,
+          "_source": {
+            "k": "key18",
+            "n": 18,
+            "t": "golden doc 18"
+          },
+          "sort": [
+            18
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g19",
+          "_score": null,
+          "_source": {
+            "k": "key19",
+            "n": 19,
+            "t": "golden doc 19"
+          },
+          "sort": [
+            19
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_id": "g20",
+          "_score": null,
+          "_source": {
+            "k": "key20",
+            "n": 20,
+            "t": "golden doc 20"
+          },
+          "sort": [
+            20
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,1 @@
+"{\"golden_pol\":{\"version\":1,\"modified_date\":\"<date>\",\"policy\":{\"phases\":{\"hot\":{\"min_age\":\"0ms\",\"actions\":{\"rollover\":{\"max_docs\":1000}}}}}}}"

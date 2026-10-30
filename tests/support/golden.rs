@@ -10,7 +10,9 @@
 //! `index_uuid`, `cluster_uuid` -> `"<uuid>"`; `creation_date` -> `"<creation_date>"`; the
 //! node `name` in `GET /` -> `"<node>"`; scroll and PIT ids -> `"<scroll:N>"`/`"<pit:N>"`
 //! (numbered by first appearance, and replaced wherever the same value reappears: request
-//! bodies, paths, query strings). Only `Content-Type`, `X-Elastic-Product` and `Warning`
+//! bodies, paths, query strings); ISM `_seq_no`/`_primary_term` -> 1001, 1002, ... (still
+//! numbers, also replaced in `if_seq_no`/`if_primary_term`); ILM `modified_date` -> `"<date>"`,
+//! `modified_date_millis`/ISM `last_updated_time`/`enabled_time` -> 0. Only `Content-Type`, `X-Elastic-Product` and `Warning`
 //! response headers are kept (`Date`, `X-Opaque-Id` and the rest are dropped); no request
 //! header is stored, so credentials never reach a golden file. Non-NDJSON request bodies are
 //! stored with sorted keys (the tool's search-body key order is not stable, finding G-1). `_shards` counts are kept:
@@ -37,6 +39,9 @@ type TokenTable = (HashMap<String, String>, HashMap<&'static str, usize>);
 #[derive(Default)]
 pub struct Normaliser {
     tokens: Mutex<TokenTable>,
+    /// ISM `_seq_no`/`_primary_term` (global counters in the ISM config index) -> 1001, 1002, ...
+    /// They stay numbers so the tool can echo them back as `if_seq_no`/`if_primary_term`.
+    nums: Mutex<HashMap<String, u64>>,
 }
 
 const ID_KEYS: &[(&str, &str)] = &[
@@ -62,7 +67,27 @@ impl Normaliser {
     }
 
     fn known(&self, v: &str) -> Option<String> {
-        self.tokens.lock().unwrap().0.get(v).cloned()
+        if let Some(t) = self.tokens.lock().unwrap().0.get(v).cloned() {
+            return Some(t);
+        }
+        self.nums.lock().unwrap().get(v).map(|n| n.to_string())
+    }
+
+    fn learn_nums(&self, v: &Value) {
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    if (k == "_seq_no" || k == "_primary_term") && x.is_u64() {
+                        let mut g = self.nums.lock().unwrap();
+                        let next = 1001 + g.len() as u64;
+                        g.entry(x.to_string()).or_insert(next);
+                    }
+                    self.learn_nums(x);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| self.learn_nums(x)),
+            _ => {}
+        }
     }
 
     /// Learn scroll/PIT ids from a response body (call before [`Self::apply`]).
@@ -76,6 +101,9 @@ impl Normaliser {
             }
         }
         self.learn_walk(v, None);
+        if path.contains("/_ism/") {
+            self.learn_nums(v);
+        }
     }
 
     fn learn_walk(&self, v: &Value, parent: Option<&str>) {
@@ -109,7 +137,25 @@ impl Normaliser {
                     top && m.contains_key("cluster_name") && m.contains_key("version");
                 for (k, x) in m.iter_mut() {
                     match k.as_str() {
-                        "took" | "ingest_took" | "creation_time" if x.is_number() => *x = json!(0),
+                        "took"
+                        | "ingest_took"
+                        | "creation_time"
+                        | "last_updated_time"
+                        | "enabled_time"
+                        | "modified_date_millis"
+                        | "task_max_waiting_in_queue_millis"
+                        | "number_of_pending_tasks"
+                        | "number_of_in_flight_fetch"
+                            if x.is_number() =>
+                        {
+                            *x = json!(0)
+                        }
+                        "modified_date" if x.is_string() => *x = json!("<date>"),
+                        "_seq_no" | "_primary_term" if x.is_u64() => {
+                            if let Some(n) = self.nums.lock().unwrap().get(&x.to_string()) {
+                                *x = json!(*n);
+                            }
+                        }
                         "uuid" | "index_uuid" | "cluster_uuid" if x.is_string() => {
                             *x = json!("<uuid>")
                         }
@@ -123,6 +169,9 @@ impl Normaliser {
             Value::String(s) => {
                 if let Some(t) = self.known(s) {
                     *s = t;
+                } else if s.contains('/') && s.contains('[') {
+                    // error reasons embed index uuids: "index [name/xSJ6dImnRFq_tVidr8iayw] ..."
+                    *s = index_uuid_re().replace_all(s, "[$1/<uuid>]").into_owned();
                 }
             }
             _ => {}
@@ -135,6 +184,11 @@ impl Normaliser {
             .collect::<Vec<_>>()
             .join("/")
     }
+}
+
+fn index_uuid_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\[([^/\]\[]+)/[A-Za-z0-9_-]{22}\]").unwrap())
 }
 
 fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {

@@ -1,0 +1,15 @@
+{
+  "method": "GET",
+  "path": "/_cluster/health/golden_dst",
+  "query": [
+    [
+      "timeout",
+      "60s"
+    ],
+    [
+      "wait_for_status",
+      "yellow"
+    ]
+  ],
+  "body": null
+}

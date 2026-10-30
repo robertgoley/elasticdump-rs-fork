@@ -114,8 +114,76 @@ machine-maintained list, and CI runs `matrix-md.py --check`.
 <!-- BEGIN generated:goldens -->
 | Engine-version | Cases | Exchanges |
 |---|---|---|
-| opensearch-2.19.7 | 4 | 15 |
+| elasticsearch-7.10.2 | 19 | 59 |
+| elasticsearch-7.17.29 | 19 | 59 |
+| elasticsearch-8.19.23 | 19 | 59 |
+| elasticsearch-8.6.1 | 19 | 59 |
+| elasticsearch-9.1.2 | 19 | 59 |
+| elasticsearch-oss-7.10.2 | 19 | 58 |
+| opensearch-1.3.20 | 19 | 59 |
+| opensearch-2.19.7 | 19 | 59 |
+| opensearch-3.9.0 | 19 | 59 |
 <!-- END generated:goldens -->
+
+### Per-version contract (API-002, generated)
+
+From the committed goldens (`tests/golden/<engine>-<version>/`), which `tests/golden_replay.rs`
+replays offline on every PR and `scripts/golden/record.sh <profile> --check` re-records live
+(nightly drift job). A cell is green only when the recording replays exactly; an expected
+failure (for example `--type policy` on Elasticsearch OSS, which has no ILM/ISM) is recorded
+with its exit code and asserted, not skipped.
+
+<!-- BEGIN generated:contract -->
+Endpoint x engine-version:
+
+| Endpoint | elasticsearch-7.10.2 | elasticsearch-7.17.29 | elasticsearch-8.19.23 | elasticsearch-8.6.1 | elasticsearch-9.1.2 | elasticsearch-oss-7.10.2 | opensearch-1.3.20 | opensearch-2.19.7 | opensearch-3.9.0 |
+|---|---|---|---|---|---|---|---|---|---|
+| E1 cluster info | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E2 scroll search | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E3 scroll continuation and clear | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E4 PIT open/close | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | n/a | ✓ | ✓ |
+| E5 PIT search with search_after | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | n/a | ✓ | ✓ |
+| E6 search without scroll | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E7 render search template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E8 bulk write | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E9 refresh | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E10 mapping get/put | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E11 settings get / index create | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E13 close/open | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E15 aliases | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E16 legacy templates | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E17 component and composable index templates | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E18 ILM policies | ✓ | ✓ | ✓ | ✓ | ✓ | n/a | n/a | n/a | n/a |
+| E19 ISM policies | n/a | n/a | n/a | n/a | n/a | n/a | ✓ | ✓ | ✓ |
+| E20 stored scripts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E21 cluster health wait | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| E12 index get/create/delete | ✓/400 | ✓/400 | ✓/400 | ✓/400 | ✓/400 | ✓/400 | ✓/400 | ✓/400 | ✓/400 |
+| E14 existence checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Case x engine-version:
+
+| Case | elasticsearch-7.10.2 | elasticsearch-7.17.29 | elasticsearch-8.19.23 | elasticsearch-8.6.1 | elasticsearch-9.1.2 | elasticsearch-oss-7.10.2 | opensearch-1.3.20 | opensearch-2.19.7 | opensearch-3.9.0 |
+|---|---|---|---|---|---|---|---|---|---|
+| alias | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| alias-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| analyzer-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| component-template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| data-pit | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ scroll | ✓ scroll | ✓ | ✓ |
+| data-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| data-scroll | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| data-search-after | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| data-template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| index | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| index-template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| index-template-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| mapping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| mapping-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| policy | ✓ | ✓ | ✓ | ✓ | ✓ | fails (exit 1) | ✓ | ✓ | ✓ |
+| script | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| settings | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| settings-restore | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| template | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+<!-- END generated:contract -->
 
 ### Cross-version expectation table (API-071, generated)
 

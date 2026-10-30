@@ -1,0 +1,14 @@
+{
+  "method": "PUT",
+  "path": "/_index_template/golden_itpl",
+  "query": [],
+  "body": {
+    "composed_of": [
+      "golden_comp"
+    ],
+    "index_patterns": [
+      "golden-itpl-*"
+    ],
+    "priority": 7
+  }
+}

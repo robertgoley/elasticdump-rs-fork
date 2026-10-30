@@ -17,3 +17,14 @@ Finding G-1 (L-303): the tool's search request bodies are `sonic_rs` objects who
 the object is mutated (e.g. `size` inserted). Elasticsearch/OpenSearch ignore key order, so this is harmless on the wire, but
 the user's `--searchBody` key order is not preserved. The golden normaliser therefore stores non-NDJSON request bodies with
 sorted keys; `_bulk` NDJSON keeps exact line and key order.
+
+Coverage (L-402, API-002): 19 cases (`tests/it/golden.rs`: data via scroll / PIT / search_after / search template,
+data restore, mapping, settings, index, analyzer, alias, legacy / component / composable templates, ILM-ISM policy,
+stored script, and their restores) on 9 engine versions: OpenSearch 1.3.20, 2.19.7, 3.9.0; Elasticsearch 7.10.2 OSS
+(bitnamilegacy), 7.10.2 default, 7.17.29, 8.6.1, 8.19.23, 9.1.2. The generated endpoint x version and case x version
+tables are in TESTING-MATRIX.md ("Per-version contract"). `expected.out` is produced by replaying the fresh recording
+(so volatile values in the output, e.g. ISM `last_updated_time`, are the normalised ones) and the recorder asserts
+that the recording replays with the live exit code. Expected failures are recorded, not skipped: `--type policy` on
+Elasticsearch OSS 7.10.2 exits 1 (no ILM/ISM API). `--searchWithPit` on versions without a PIT API (ES OSS 7.10,
+OpenSearch 1.3) falls back to scroll; the recording asserts the scroll request shape.
+Single case: `GOLDEN_CASE=<name> scripts/golden/record.sh <profile>`.

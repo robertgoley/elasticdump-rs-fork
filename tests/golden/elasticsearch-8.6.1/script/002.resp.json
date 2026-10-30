@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "metadata": {
+      "stored_scripts": {
+        "golden_scr": {
+          "lang": "painless",
+          "source": "ctx._source.n += 1"
+        }
+      }
+    }
+  }
+}

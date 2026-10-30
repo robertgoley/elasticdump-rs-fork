@@ -1,0 +1,26 @@
+{"_index":"golden_src","_id":"g00","_score":null,"_source":{"k":"key0","n":0,"t":"golden doc 0"},"sort":[0,"g00"]}
+{"_index":"golden_src","_id":"g01","_score":null,"_source":{"k":"key1","n":1,"t":"golden doc 1"},"sort":[1,"g01"]}
+{"_index":"golden_src","_id":"g02","_score":null,"_source":{"k":"key2","n":2,"t":"golden doc 2"},"sort":[2,"g02"]}
+{"_index":"golden_src","_id":"g03","_score":null,"_source":{"k":"key3","n":3,"t":"golden doc 3"},"sort":[3,"g03"]}
+{"_index":"golden_src","_id":"g04","_score":null,"_source":{"k":"key4","n":4,"t":"golden doc 4"},"sort":[4,"g04"]}
+{"_index":"golden_src","_id":"g05","_score":null,"_source":{"k":"key5","n":5,"t":"golden doc 5"},"sort":[5,"g05"]}
+{"_index":"golden_src","_id":"g06","_score":null,"_source":{"k":"key6","n":6,"t":"golden doc 6"},"sort":[6,"g06"]}
+{"_index":"golden_src","_id":"g07","_score":null,"_source":{"k":"key7","n":7,"t":"golden doc 7"},"sort":[7,"g07"]}
+{"_index":"golden_src","_id":"g08","_score":null,"_source":{"k":"key8","n":8,"t":"golden doc 8"},"sort":[8,"g08"]}
+{"_index":"golden_src","_id":"g09","_score":null,"_source":{"k":"key9","n":9,"t":"golden doc 9"},"sort":[9,"g09"]}
+{"_index":"golden_src","_id":"g10","_score":null,"_source":{"k":"key10","n":10,"t":"golden doc 10"},"sort":[10,"g10"]}
+{"_index":"golden_src","_id":"g11","_score":null,"_source":{"k":"key11","n":11,"t":"golden doc 11"},"sort":[11,"g11"]}
+{"_index":"golden_src","_id":"g12","_score":null,"_source":{"k":"key12","n":12,"t":"golden doc 12"},"sort":[12,"g12"]}
+{"_index":"golden_src","_id":"g13","_score":null,"_source":{"k":"key13","n":13,"t":"golden doc 13"},"sort":[13,"g13"]}
+{"_index":"golden_src","_id":"g14","_score":null,"_source":{"k":"key14","n":14,"t":"golden doc 14"},"sort":[14,"g14"]}
+{"_index":"golden_src","_id":"g15","_score":null,"_source":{"k":"key15","n":15,"t":"golden doc 15"},"sort":[15,"g15"]}
+{"_index":"golden_src","_id":"g16","_score":null,"_source":{"k":"key16","n":16,"t":"golden doc 16"},"sort":[16,"g16"]}
+{"_index":"golden_src","_id":"g17","_score":null,"_source":{"k":"key17","n":17,"t":"golden doc 17"},"sort":[17,"g17"]}
+{"_index":"golden_src","_id":"g18","_score":null,"_source":{"k":"key18","n":18,"t":"golden doc 18"},"sort":[18,"g18"]}
+{"_index":"golden_src","_id":"g19","_score":null,"_source":{"k":"key19","n":19,"t":"golden doc 19"},"sort":[19,"g19"]}
+{"_index":"golden_src","_id":"g20","_score":null,"_source":{"k":"key20","n":20,"t":"golden doc 20"},"sort":[20,"g20"]}
+{"_index":"golden_src","_id":"g21","_score":null,"_source":{"k":"key21","n":21,"t":"golden doc 21"},"sort":[21,"g21"]}
+{"_index":"golden_src","_id":"g22","_score":null,"_source":{"k":"key22","n":22,"t":"golden doc 22"},"sort":[22,"g22"]}
+{"_index":"golden_src","_id":"g23","_score":null,"_source":{"k":"key23","n":23,"t":"golden doc 23"},"sort":[23,"g23"]}
+{"_index":"golden_src","_id":"g24","_score":null,"_source":{"k":"key24","n":24,"t":"golden doc 24"},"sort":[24,"g24"]}
+{"_index":"golden_src","_id":"adv","_score":null,"_source":{"k":"unicode-✓-漢字","t":"line\nbreak \"q\"","n":1,"big":123456789012345678901234567890},"sort":[25,"adv"]}

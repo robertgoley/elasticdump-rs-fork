@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "metadata": {
+      "stored_scripts": {
+        "golden_scr": {
+          "lang": "painless",
+          "source": "ctx._source.n += 1"
+        }
+      }
+    }
+  }
+}

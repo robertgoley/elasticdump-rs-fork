@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "warning": "299 Elasticsearch-7.17.29-580aff1a0064ce4c93293aaab6fcc55e22c10d1c \"the default value for the ?wait_for_active_shards parameter will change from '0' to 'index-setting' in version 8; specify '?wait_for_active_shards=index-setting' to adopt the future default behaviour, or '?wait_for_active_shards=0' to preserve today's behaviour\"",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "acknowledged": true,
+    "shards_acknowledged": true,
+    "indices": {
+      "golden_dst": {
+        "closed": true
+      }
+    }
+  }
+}

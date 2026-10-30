@@ -1,0 +1,8 @@
+# golden case (TST-INF-003); regenerate with scripts/golden/record.sh
+case = "data-search-after"
+engine = "elasticsearch"
+version = "7.17.29"
+image = "docker.elastic.co/elasticsearch/elasticsearch:7.17.29@sha256:3f55a7f6f29b95345dc33808d6e914f81d125d4ca90a414e26c81a3521400980"
+args = ["--input","{{URL}}/golden_src","--output","{{OUT}}","--searchAfter","--searchBody","{\"query\":{\"match_all\":{}},\"sort\":[{\"k\":\"asc\"}]}","--limit","10"]
+exit_code = 0
+has_output = true

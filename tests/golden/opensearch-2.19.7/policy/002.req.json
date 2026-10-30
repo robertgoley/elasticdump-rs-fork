@@ -1,0 +1,15 @@
+{
+  "method": "GET",
+  "path": "/_plugins/_ism/policies",
+  "query": [
+    [
+      "from",
+      "0"
+    ],
+    [
+      "size",
+      "1000"
+    ]
+  ],
+  "body": null
+}

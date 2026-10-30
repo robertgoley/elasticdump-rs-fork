@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_src": {
+      "aliases": {
+        "golden_alias": {
+          "filter": {
+            "term": {
+              "k": "key1"
+            }
+          },
+          "index_routing": "r1",
+          "search_routing": "r1"
+        }
+      }
+    }
+  }
+}

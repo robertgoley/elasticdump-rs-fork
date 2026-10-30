@@ -1,0 +1,98 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "pit_id": "<pit:1>",
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": null,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g21",
+          "_score": null,
+          "_source": {
+            "k": "key21",
+            "n": 21,
+            "t": "golden doc 21"
+          },
+          "sort": [
+            21
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g22",
+          "_score": null,
+          "_source": {
+            "k": "key22",
+            "n": 22,
+            "t": "golden doc 22"
+          },
+          "sort": [
+            22
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g23",
+          "_score": null,
+          "_source": {
+            "k": "key23",
+            "n": 23,
+            "t": "golden doc 23"
+          },
+          "sort": [
+            23
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g24",
+          "_score": null,
+          "_source": {
+            "k": "key24",
+            "n": 24,
+            "t": "golden doc 24"
+          },
+          "sort": [
+            24
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "adv",
+          "_score": null,
+          "_source": {
+            "k": "unicode-✓-漢字",
+            "t": "line\nbreak \"q\"",
+            "n": 1,
+            "big": 123456789012345678901234567890
+          },
+          "sort": [
+            25
+          ]
+        }
+      ]
+    }
+  }
+}

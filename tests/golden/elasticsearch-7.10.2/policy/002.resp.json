@@ -1,0 +1,141 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_pol": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_docs": 1000
+              }
+            }
+          }
+        }
+      }
+    },
+    "ilm-history-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "logs": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        }
+      }
+    },
+    "slm-history-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "synthetics": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "50gb",
+                "max_age": "30d"
+              }
+            }
+          }
+        }
+      }
+    },
+    "watch-history-ilm-policy": {
+      "version": 1,
+      "modified_date": "<date>",
+      "policy": {
+        "phases": {
+          "delete": {
+            "min_age": "7d",
+            "actions": {
+              "delete": {
+                "delete_searchable_snapshot": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

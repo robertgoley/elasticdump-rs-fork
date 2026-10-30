@@ -1,0 +1,111 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "took": 0,
+    "timed_out": false,
+    "_shards": {
+      "total": 1,
+      "successful": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "hits": {
+      "total": {
+        "value": 26,
+        "relation": "eq"
+      },
+      "max_score": null,
+      "hits": [
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g05",
+          "_score": null,
+          "_source": {
+            "k": "key5",
+            "n": 5,
+            "t": "golden doc 5"
+          },
+          "sort": [
+            "key5"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g06",
+          "_score": null,
+          "_source": {
+            "k": "key6",
+            "n": 6,
+            "t": "golden doc 6"
+          },
+          "sort": [
+            "key6"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g07",
+          "_score": null,
+          "_source": {
+            "k": "key7",
+            "n": 7,
+            "t": "golden doc 7"
+          },
+          "sort": [
+            "key7"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g08",
+          "_score": null,
+          "_source": {
+            "k": "key8",
+            "n": 8,
+            "t": "golden doc 8"
+          },
+          "sort": [
+            "key8"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "g09",
+          "_score": null,
+          "_source": {
+            "k": "key9",
+            "n": 9,
+            "t": "golden doc 9"
+          },
+          "sort": [
+            "key9"
+          ]
+        },
+        {
+          "_index": "golden_src",
+          "_type": "_doc",
+          "_id": "adv",
+          "_score": null,
+          "_source": {
+            "k": "unicode-✓-漢字",
+            "t": "line\nbreak \"q\"",
+            "n": 1,
+            "big": 123456789012345678901234567890
+          },
+          "sort": [
+            "unicode-✓-漢字"
+          ]
+        }
+      ]
+    }
+  }
+}

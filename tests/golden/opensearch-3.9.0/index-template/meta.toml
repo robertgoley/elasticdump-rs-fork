@@ -1,0 +1,8 @@
+# golden case (TST-INF-003); regenerate with scripts/golden/record.sh
+case = "index-template"
+engine = "opensearch"
+version = "3.9.0"
+image = "docker.io/opensearchproject/opensearch:3@sha256:3b55f6b6249cfdb92b52ee59adc8a266203ba9ef9f5d82544fad6f1af2f3609e"
+args = ["--input","{{URL}}/golden_itpl","--output","{{OUT}}","--type","index_template"]
+exit_code = 0
+has_output = true

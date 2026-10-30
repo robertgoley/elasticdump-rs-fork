@@ -1,0 +1,23 @@
+{
+  "status": 400,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "error": {
+      "root_cause": [
+        {
+          "type": "resource_already_exists_exception",
+          "reason": "index [golden_dst/<uuid>] already exists",
+          "index": "golden_dst",
+          "index_uuid": "<uuid>"
+        }
+      ],
+      "type": "resource_already_exists_exception",
+      "reason": "index [golden_dst/<uuid>] already exists",
+      "index": "golden_dst",
+      "index_uuid": "<uuid>"
+    },
+    "status": 400
+  }
+}

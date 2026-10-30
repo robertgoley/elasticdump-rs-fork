@@ -1,0 +1,22 @@
+{
+  "method": "PUT",
+  "path": "/golden_dst/_mapping",
+  "query": [],
+  "body": {
+    "properties": {
+      "big": {
+        "type": "keyword"
+      },
+      "k": {
+        "type": "keyword"
+      },
+      "n": {
+        "type": "long"
+      },
+      "t": {
+        "analyzer": "golden_an",
+        "type": "text"
+      }
+    }
+  }
+}

@@ -12,9 +12,9 @@
 
 [[endpoint]]
 id = "E1"
-title = "cluster info"
+title = "cluster info (under a proxy path prefix it is indistinguishable from E12)"
 method = ["GET"]
-path = "^(/[^_/][^/]*)*/?$"
+path = "^/$"
 reads = ["version.number:string", "version.distribution?:string", "version.build_flavor?:string"]
 
 [[endpoint]]

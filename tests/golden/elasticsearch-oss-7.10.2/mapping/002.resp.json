@@ -1,0 +1,27 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "golden_src": {
+      "mappings": {
+        "properties": {
+          "big": {
+            "type": "keyword"
+          },
+          "k": {
+            "type": "keyword"
+          },
+          "n": {
+            "type": "long"
+          },
+          "t": {
+            "type": "text",
+            "analyzer": "golden_an"
+          }
+        }
+      }
+    }
+  }
+}

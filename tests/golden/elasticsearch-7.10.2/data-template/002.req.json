@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/golden_src/_search",
+  "query": [
+    [
+      "allow_partial_search_results",
+      "false"
+    ],
+    [
+      "scroll",
+      "10m"
+    ]
+  ],
+  "body": {
+    "query": {
+      "term": {
+        "k": "key7"
+      }
+    },
+    "size": 100
+  }
+}

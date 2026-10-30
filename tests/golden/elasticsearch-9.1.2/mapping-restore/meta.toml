@@ -1,0 +1,8 @@
+# golden case (TST-INF-003); regenerate with scripts/golden/record.sh
+case = "mapping-restore"
+engine = "elasticsearch"
+version = "9.1.2"
+image = "docker.io/bitnamilegacy/elasticsearch:9.1.2-debian-12-r0@sha256:00176a47afa0c0cfc9d11bdbafda13cbad7c9098ff1e6092112df2c751de301a"
+args = ["--input","{{DIR}}/input.json","--output","{{URL}}/golden_dst","--type","mapping"]
+exit_code = 0
+has_output = false

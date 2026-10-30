@@ -1,0 +1,27 @@
+{
+  "method": "PUT",
+  "path": "/golden_dst",
+  "query": [],
+  "body": {
+    "settings": {
+      "index": {
+        "analysis": {
+          "analyzer": {
+            "golden_an": {
+              "filter": [
+                "lowercase"
+              ],
+              "tokenizer": "whitespace",
+              "type": "custom"
+            }
+          }
+        },
+        "number_of_replicas": "0",
+        "number_of_shards": "1",
+        "replication": {
+          "type": "DOCUMENT"
+        }
+      }
+    }
+  }
+}

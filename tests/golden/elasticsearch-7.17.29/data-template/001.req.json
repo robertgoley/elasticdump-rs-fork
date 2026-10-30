@@ -1,0 +1,17 @@
+{
+  "method": "POST",
+  "path": "/_render/template",
+  "query": [],
+  "body": {
+    "params": {
+      "key": "key7"
+    },
+    "source": {
+      "query": {
+        "term": {
+          "k": "{{key}}"
+        }
+      }
+    }
+  }
+}

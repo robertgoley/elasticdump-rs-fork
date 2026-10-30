@@ -1,0 +1,1 @@
+"{\"golden_src\":{\"aliases\":{\"golden_alias\":{\"filter\":{\"term\":{\"k\":\"key1\"}},\"index_routing\":\"r1\",\"search_routing\":\"r1\"}}}}"

@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=UTF-8"
+  },
+  "body": {
+    "pits": [
+      {
+        "successful": true,
+        "pit_id": "<pit:1>"
+      }
+    ]
+  }
+}

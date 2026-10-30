@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "headers": {
+    "x-elastic-product": "Elasticsearch",
+    "content-type": "application/json"
+  },
+  "body": {
+    "template_output": {
+      "query": {
+        "term": {
+          "k": "key7"
+        }
+      }
+    }
+  }
+}

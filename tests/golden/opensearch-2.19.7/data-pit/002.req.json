@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/golden_src/_search/point_in_time",
+  "query": [
+    [
+      "keep_alive",
+      "5m"
+    ]
+  ],
+  "body": null
+}

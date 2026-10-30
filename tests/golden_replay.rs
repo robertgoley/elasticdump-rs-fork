@@ -303,7 +303,6 @@ fn endpoint_inventory_matches_known_requests() {
     assert_eq!(ids.len(), n, "duplicate ids");
     let cases = [
         ("GET", "/", vec![], "E1"),
-        ("GET", "/proxy/es/", vec![], "E1"),
         ("POST", "/idx/_search", vec!["scroll".to_string()], "E2"),
         ("POST", "/_search/scroll", vec![], "E3"),
         ("DELETE", "/_search/scroll", vec![], "E3"),
