@@ -77,3 +77,4 @@ from path segments, so an index name `lo\ngs` (e.g. a metadata key from a file) 
 | url_segments | 300 s | 10,727,995 | 425 | ok |
 | meta_names | 300 s | 54,495,383 | 147 | ok |
 | extract_batch | 300 s | - | - | CRASH (see PROGRESS/notes) |
+| renamer_new_index | 300 s | 574,383 | 13632 | ok |
