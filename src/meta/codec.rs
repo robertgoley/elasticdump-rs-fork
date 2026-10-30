@@ -37,6 +37,10 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
         }
         while let Some(v) = splitter.next_value(n == 0).map_err(|e| anyhow!(e))? {
             if first.is_none() {
+                let v = match repair_lone_surrogates(&String::from_utf8_lossy(&v)) {
+                    Some(fixed) => fixed.into_bytes(),
+                    None => v.to_vec(),
+                };
                 first = Some(serde_json::from_slice(&v).map_err(|e| {
                     let name = path
                         .as_ref()
@@ -67,16 +71,88 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
 pub fn decode_any(v: Value) -> Result<Value> {
     match v {
         Value::String(s) => {
+            let s = repair_lone_surrogates(&s).unwrap_or(s);
             let inner: Value =
                 serde_json::from_str(&s).context("the string in the input is not JSON")?;
-            if !inner.is_object() {
-                bail!("the input must hold a JSON object (or a string literal of one)");
+            match inner {
+                Value::Object(_) => Ok(inner),
+                Value::String(_) => bail!(
+                    "the input is a JSON string holding another JSON string (encoded more than twice); elasticdump writes metadata as an object or as one string literal of it"
+                ),
+                other => bail!(
+                    "the input must hold a JSON object (or a string literal of one), got a string holding {}",
+                    kind(&other)
+                ),
             }
-            Ok(inner)
         }
         v @ Value::Object(_) => Ok(v),
-        _ => bail!("the input must hold a JSON object (or a string literal of one)"),
+        other => bail!(
+            "the input must hold a JSON object (or a string literal of one), got {}",
+            kind(&other)
+        ),
     }
+}
+
+fn kind(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// Node (>= 12) writes a lone UTF-16 surrogate as an escape (`"\ud800"`), which serde_json
+/// refuses (TST-BRK-IN-013). Each unpaired `\uD800`-`\uDFFF` escape becomes `\ufffd`, with a
+/// warning; `None` when there is none. Backslashes only occur inside strings, and an escaped
+/// backslash (`\\`) is skipped as a pair, so `\\ud800` (a literal text) is left alone.
+pub fn repair_lone_surrogates(s: &str) -> Option<String> {
+    fn hex4(b: &[u8]) -> Option<u32> {
+        let t = std::str::from_utf8(b.get(..4)?).ok()?;
+        u32::from_str_radix(t, 16).ok()
+    }
+    let b = s.as_bytes();
+    memchr::memmem::find(b, b"\\u")?;
+    let mut out = Vec::with_capacity(b.len());
+    let (mut i, mut fixed) = (0usize, 0usize);
+    while i < b.len() {
+        if b[i] != b'\\' {
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        if b.get(i + 1) == Some(&b'u') {
+            if let Some(cp) = hex4(&b[i + 2..]) {
+                let low_next = b.get(i + 6) == Some(&b'\\')
+                    && b.get(i + 7) == Some(&b'u')
+                    && hex4(&b[(i + 8).min(b.len())..])
+                        .is_some_and(|c| (0xdc00..=0xdfff).contains(&c));
+                if (0xd800..=0xdbff).contains(&cp) && low_next {
+                    out.extend_from_slice(&b[i..i + 12]);
+                    i += 12;
+                    continue;
+                }
+                if (0xd800..=0xdfff).contains(&cp) {
+                    out.extend_from_slice(b"\\ufffd");
+                    fixed += 1;
+                    i += 6;
+                    continue;
+                }
+            }
+        }
+        // any other escape: copy the backslash and the escaped character together
+        out.extend_from_slice(&b[i..(i + 2).min(b.len())]);
+        i += 2;
+    }
+    if fixed == 0 {
+        return None;
+    }
+    log::warn!(
+        "{fixed} unpaired UTF-16 surrogate escape(s) (as Node writes them) replaced by U+FFFD; Elasticsearch/OpenSearch cannot store them as text"
+    );
+    String::from_utf8(out).ok()
 }
 
 pub fn encode_line(doc: &Value, enc: LineEncoding) -> Result<String> {
@@ -306,5 +382,23 @@ mod props {
             }
             other => other.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod surrogate_tests {
+    use super::repair_lone_surrogates as r;
+    #[test]
+    fn lone_surrogates_become_replacement_chars() {
+        assert_eq!(r(r#"{"s":"a\ud800b"}"#).unwrap(), r#"{"s":"a\ufffdb"}"#);
+        assert_eq!(r(r#"{"s":"\udc00"}"#).unwrap(), r#"{"s":"\ufffd"}"#);
+        // a valid pair, an escaped backslash before u, and plain escapes are untouched
+        assert_eq!(r(r#"{"s":"\ud83d\ude00"}"#), None);
+        assert_eq!(r(r#"{"s":"\\ud800"}"#), None);
+        assert_eq!(r(r#"{"s":"\u0000\n"}"#), None);
+        assert_eq!(
+            r(r#"{"s":"\ud83d\ud83d\ude00"}"#).unwrap(),
+            r#"{"s":"\ufffd\ud83d\ude00"}"#
+        );
     }
 }

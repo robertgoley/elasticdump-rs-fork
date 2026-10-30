@@ -2483,3 +2483,74 @@ async fn l630_special_characters_in_ids_and_index_names() {
         assert!(m.requests().is_empty(), "{ix}: no request before the check");
     }
 }
+
+// L-631 (TST-BRK-IN-013): metadata files as Node writes them restore: an object line, a string
+// literal of it, several values (first used), `\u0000`, and a lone surrogate escape (`\ud800`,
+// which serde_json refused; now U+FFFD with a warning). What Node never writes is refused by
+// name: triple encoding, a string holding an array, a bare number.
+#[tokio::test]
+async fn l631_node_meta_encodings_restore_or_are_refused_by_name() {
+    let m = serde_json::json!({"x":{"mappings":{"properties":{"t":{"type":"text"}}}}});
+    let obj = m.to_string().replace(
+        r#""type":"text""#,
+        r#""type":"text","meta":{"s":"a\u0000b\ud800c"}"#,
+    );
+    let q = |s: &str| serde_json::to_string(s).unwrap();
+    let cases: Vec<(&str, String, Option<&str>)> = vec![
+        ("obj", obj.clone(), None),
+        ("dbl", q(&obj), None),
+        ("multi", format!("{}\n{}", q(&obj), q(&obj)), None),
+        ("triple", q(&q(&obj)), Some("encoded more than twice")),
+        (
+            "arr",
+            q(&format!("[{obj}]")),
+            Some("got a string holding an array"),
+        ),
+        ("num", "42".into(), Some("got a number")),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text, want) in cases {
+        let input = dir.path().join(format!("{name}.json"));
+        std::fs::write(&input, text + "\n").unwrap();
+        let mock = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+            .route(Route::prefix("GET", "/x").reply(Reply::json(404, r#"{"status":404}"#)))
+            .fallback(Reply::ok(r#"{"acknowledged":true}"#))
+            .start()
+            .await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/x", mock.url()),
+                "--type",
+                "mapping",
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        match want {
+            None => {
+                assert!(o.status.success(), "{name}: {err}");
+                let put = mock
+                    .requests()
+                    .into_iter()
+                    .find(|r| r.method == "PUT" && r.path.ends_with("/_mapping"))
+                    .expect("mapping PUT");
+                assert!(
+                    put.body_str().contains(r#"a\u0000b\uFFFDc"#)
+                        || put.body_str().contains("a\\u0000b\u{fffd}c"),
+                    "{name}: {}",
+                    put.body_str()
+                );
+                assert!(err.contains("unpaired UTF-16 surrogate"), "{name}: {err}");
+            }
+            Some(w) => {
+                assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+                assert!(err.contains(w), "{name}: {err}");
+            }
+        }
+    }
+}
