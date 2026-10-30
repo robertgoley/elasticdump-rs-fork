@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::json;
+use support::endpoints::{Inventory, check_read};
 use support::golden::{self, Meta, Normaliser, Recorder, Replay};
 use support::router_mock::{Reply, Route, RouterMock};
 
@@ -208,6 +209,7 @@ async fn record_twice_gives_zero_diff_and_replay_reproduces_output() {
 async fn committed_goldens_replay() {
     let root = golden::golden_root();
     let cases = golden::cases(&root);
+    let inv = Inventory::load();
     let mut failures = vec![];
     for dir in &cases {
         let meta = Meta::read(dir);
@@ -240,10 +242,103 @@ async fn committed_goldens_replay() {
                 ));
             }
         }
+        // TST-API-001: every recorded request is in the endpoint inventory, and every 2xx
+        // response has the pointers that row says the tool reads.
+        problems.extend(inventory_problems(dir, &inv));
         if !problems.is_empty() {
             failures.push(format!("{}:\n  {}", rel.display(), problems.join("\n  ")));
         }
     }
     eprintln!("golden replay: {} cases", cases.len());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn inventory_problems(dir: &Path, inv: &Inventory) -> Vec<String> {
+    let mut out = vec![];
+    for i in 1.. {
+        let rq = dir.join(format!("{i:03}.req.json"));
+        if !rq.is_file() {
+            break;
+        }
+        let req: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&rq).unwrap()).unwrap();
+        let resp: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join(format!("{i:03}.resp.json"))).unwrap(),
+        )
+        .unwrap();
+        let method = req["method"].as_str().unwrap_or("");
+        let path = req["path"].as_str().unwrap_or("");
+        let q: Vec<String> = req["query"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|kv| kv[0].as_str().map(String::from))
+            .collect();
+        let Some(row) = inv.matching(method, path, &q) else {
+            out.push(format!(
+                "{i:03}: {method} {path} matches no endpoint inventory row"
+            ));
+            continue;
+        };
+        let status = resp["status"].as_u64().unwrap_or(0);
+        if (200..300).contains(&status) {
+            for r in &row.reads {
+                if let Err(e) = check_read(&resp["body"], r) {
+                    out.push(format!("{i:03} ({}): {e}", row.id));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// TST-API-001: the inventory parses, ids are unique, and the matcher picks the intended rows.
+#[test]
+fn endpoint_inventory_matches_known_requests() {
+    let inv = Inventory::load();
+    let mut ids: Vec<_> = inv.rows.iter().map(|r| r.id.clone()).collect();
+    ids.sort();
+    let n = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), n, "duplicate ids");
+    let cases = [
+        ("GET", "/", vec![], "E1"),
+        ("GET", "/proxy/es/", vec![], "E1"),
+        ("POST", "/idx/_search", vec!["scroll".to_string()], "E2"),
+        ("POST", "/_search/scroll", vec![], "E3"),
+        ("DELETE", "/_search/scroll", vec![], "E3"),
+        ("POST", "/idx/_pit", vec!["keep_alive".to_string()], "E4"),
+        ("DELETE", "/_search/point_in_time", vec![], "E4"),
+        ("POST", "/_search", vec![], "E5"),
+        ("POST", "/idx/_search", vec![], "E6"),
+        ("POST", "/_render/template", vec![], "E7"),
+        ("POST", "/idx/_bulk", vec![], "E8"),
+        ("POST", "/_bulk", vec![], "E8"),
+        ("POST", "/idx/_refresh", vec![], "E9"),
+        ("PUT", "/idx/_mapping", vec![], "E10"),
+        ("GET", "/idx/_settings", vec![], "E11"),
+        ("PUT", "/idx", vec![], "E12"),
+        ("POST", "/idx/_close", vec![], "E13"),
+        ("HEAD", "/idx", vec![], "E14"),
+        ("POST", "/_aliases", vec![], "E15"),
+        ("GET", "/_template/t", vec![], "E16"),
+        ("PUT", "/_index_template/t", vec![], "E17"),
+        ("GET", "/_ilm/policy", vec![], "E18"),
+        ("GET", "/_plugins/_ism/policies", vec![], "E19"),
+        ("GET", "/_cluster/state/metadata", vec![], "E20"),
+    ];
+    for (m, p, q, want) in cases {
+        let got = inv.matching(m, p, &q).map(|r| r.id.as_str());
+        assert_eq!(got, Some(want), "{m} {p}");
+    }
+    assert!(inv.matching("POST", "/_security/user/x", &[]).is_none());
+    assert!(
+        inv.matching("DELETE", "/_all", &[]).is_none(),
+        "the tool never deletes everything"
+    );
+    let body = json!({"hits": {"hits": [{"_id": "1"}, {"_id": 2}]}, "_shards": {"failed": 0}});
+    assert!(check_read(&body, "_shards.failed:int").is_ok());
+    assert!(check_read(&body, "hits.hits[*]._id:string").is_err());
+    assert!(check_read(&body, "pit_id?:string").is_ok());
+    assert!(check_read(&body, "pit_id:string").is_err());
 }

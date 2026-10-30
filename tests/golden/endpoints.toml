@@ -1,0 +1,159 @@
+# Endpoint inventory (TST-API-001): every request the binary may send, with the response JSON
+# pointers it reads. Rows E1-E20 follow TEST-REQUIREMENTS.md section 4.1.
+#
+# `path` is a regex matched against the end of the request path (any proxy path prefix is allowed);
+# `query` names a query parameter that must be present for the row to match (rows are tried in
+# order, so a row with `query` comes before the same path without it). `reads` lists
+# `pointer:type[|type]`: `a.b[*].c` walks arrays, a trailing `?` on the pointer means optional,
+# types are string|int|number|bool|object|array|null. The guard (tests/support/endpoints.rs) fails
+# when the binary sends a request that matches no row; the golden replay also checks that each
+# recorded 2xx response has every non-optional pointer with the declared type.
+# Values use the JSON-compatible subset of TOML (no backslashes in regexes).
+
+[[endpoint]]
+id = "E1"
+title = "cluster info"
+method = ["GET"]
+path = "^(/[^_/][^/]*)*/?$"
+reads = ["version.number:string", "version.distribution?:string", "version.build_flavor?:string"]
+
+[[endpoint]]
+id = "E2"
+title = "scroll search (initial page, optional slice)"
+method = ["POST", "GET"]
+path = "/[^/_][^/]*/_search$"
+query = "scroll"
+reads = ["_scroll_id?:string", "hits.hits:array", "hits.hits[*]._id:string", "hits.total?:int|object", "_shards.failed?:int"]
+
+[[endpoint]]
+id = "E3"
+title = "scroll continuation and clear"
+method = ["POST", "GET", "DELETE"]
+path = "/_search/scroll(/[^/]+)?$"
+reads = ["_scroll_id?:string", "hits.hits?:array"]
+
+[[endpoint]]
+id = "E4"
+title = "PIT open/close (ES _pit, OpenSearch point_in_time)"
+method = ["POST", "DELETE"]
+path = "(/[^/]+)?/(_pit|_search/point_in_time)(/_all)?$"
+reads = ["id?:string", "pit_id?:string"]
+
+[[endpoint]]
+id = "E5"
+title = "PIT search with search_after (no index in the path)"
+method = ["POST", "GET"]
+path = "^/_search$"
+reads = ["pit_id?:string", "hits.hits:array", "hits.hits[*].sort?:array"]
+
+[[endpoint]]
+id = "E6"
+title = "search without scroll (search_after, size-limited dumps)"
+method = ["POST", "GET"]
+path = "/[^/_][^/]*/_search$"
+reads = ["hits.hits:array", "hits.hits[*]._id:string"]
+
+[[endpoint]]
+id = "E7"
+title = "render search template"
+method = ["POST", "GET"]
+path = "/_render/template(/[^/]+)?$"
+reads = ["template_output:object"]
+
+[[endpoint]]
+id = "E8"
+title = "bulk write"
+method = ["POST", "PUT"]
+path = "(/[^/_][^/]*)?/_bulk$"
+reads = ["errors:bool", "items:array"]
+
+[[endpoint]]
+id = "E9"
+title = "refresh"
+method = ["POST", "GET"]
+path = "(/[^/]+)?/_refresh$"
+reads = []
+
+[[endpoint]]
+id = "E10"
+title = "mapping get/put"
+method = ["GET", "PUT", "POST"]
+path = "/[^/]+/_mapping(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E11"
+title = "settings get / index create"
+method = ["GET", "PUT"]
+path = "/[^/]+/_settings$"
+reads = []
+
+[[endpoint]]
+id = "E13"
+title = "close/open (analyzer updates)"
+method = ["POST"]
+path = "/[^/]+/_(close|open)$"
+reads = []
+
+[[endpoint]]
+id = "E15"
+title = "aliases"
+method = ["GET", "POST"]
+path = "((/[^/]+)?/_alias(/[^/]+)?|/_aliases)$"
+reads = []
+
+[[endpoint]]
+id = "E16"
+title = "legacy templates"
+method = ["GET", "PUT", "POST"]
+path = "/_template(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E17"
+title = "component and composable index templates"
+method = ["GET", "PUT", "POST"]
+path = "/_(component|index)_template(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E18"
+title = "ILM policies"
+method = ["GET", "PUT"]
+path = "/_ilm/policy(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E19"
+title = "ISM policies"
+method = ["GET", "PUT"]
+path = "/_plugins/_ism/policies(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E20"
+title = "stored scripts (cluster state metadata read, script put)"
+method = ["GET", "PUT", "POST"]
+path = "(/_cluster/state/metadata(/[^/]+)*|/_scripts/[^/]+)$"
+reads = []
+
+[[endpoint]]
+id = "E21"
+title = "cluster health wait (after reopening an index)"
+method = ["GET"]
+path = "/_cluster/health(/[^/]+)?$"
+reads = []
+
+[[endpoint]]
+id = "E12"
+title = "index get/create/delete (--type index, target creation)"
+method = ["GET", "PUT", "DELETE"]
+path = "^(/[^_/][^/]*)*/[^_/][^/]*$"
+reads = []
+
+[[endpoint]]
+id = "E14"
+title = "existence checks"
+method = ["HEAD"]
+path = ".*"
+reads = []

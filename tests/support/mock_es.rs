@@ -63,8 +63,42 @@ impl MockEs {
         self.inner.requests().iter().map(|r| r.raw_head()).collect()
     }
 
+    /// Requests that match no row of the endpoint inventory (TST-API-001).
+    pub fn unlisted_requests(&self) -> Vec<String> {
+        endpoint_guard(&self.inner)
+    }
+
     /// `http://127.0.0.1:PORT/INDEX` input URL for the binary's `--input`.
     pub fn input_url(&self, index: &str) -> String {
         format!("{}/{}", self.inner.url(), index)
     }
+}
+
+/// TST-API-001 guard: every request the binary sent must match a row of
+/// `tests/golden/endpoints.toml`. Checked when the mock is dropped (not while unwinding).
+impl Drop for MockEs {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let bad = endpoint_guard(&self.inner);
+        assert!(
+            bad.is_empty(),
+            "the binary sent requests that match no row of tests/golden/endpoints.toml \
+             (add the endpoint to the inventory and record goldens):\n  {}",
+            bad.join("\n  ")
+        );
+    }
+}
+
+pub fn endpoint_guard(m: &RouterMock) -> Vec<String> {
+    let inv = super::endpoints::Inventory::load();
+    let reqs = m.requests();
+    inv.unlisted(reqs.iter().map(|r| {
+        (
+            r.method.as_str(),
+            r.path.as_str(),
+            r.query.iter().map(|(k, _)| k.clone()).collect(),
+        )
+    }))
 }

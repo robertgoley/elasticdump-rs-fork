@@ -145,6 +145,10 @@ fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {
 
 /// Decode a body for the golden file: gunzip, then NDJSON (array of lines), JSON, or text.
 pub fn decode_body(raw: &[u8], headers: &[(String, String)], path: &str) -> Value {
+    decode(raw, headers, path, true)
+}
+
+fn decode(raw: &[u8], headers: &[(String, String)], path: &str, request: bool) -> Value {
     let mut bytes = raw.to_vec();
     if header(headers, "content-encoding").is_some_and(|e| e.contains("gzip")) {
         let mut out = Vec::new();
@@ -160,8 +164,7 @@ pub fn decode_body(raw: &[u8], headers: &[(String, String)], path: &str) -> Valu
     }
     let text = String::from_utf8_lossy(&bytes).into_owned();
     let ndjson = header(headers, "content-type").is_some_and(|c| c.contains("ndjson"))
-        || path.ends_with("/_bulk")
-        || path.ends_with("/_msearch");
+        || (request && (path.ends_with("/_bulk") || path.ends_with("/_msearch")));
     if ndjson {
         let lines: Vec<Value> = text
             .lines()
@@ -223,7 +226,7 @@ pub fn response_doc(
     headers: &[(String, String)],
     body: &[u8],
 ) -> Value {
-    let mut b = decode_body(body, &[], path);
+    let mut b = decode(body, &[], path, false);
     n.learn(path, &b);
     n.apply(&mut b);
     let mut h = Map::new();

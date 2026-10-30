@@ -6,6 +6,7 @@
 //! targets. It is pulled into `integration_test.rs` via `mod support;`.
 
 pub mod chaos;
+pub mod endpoints;
 pub mod es_shim;
 pub mod fault_proxy;
 pub mod golden;
