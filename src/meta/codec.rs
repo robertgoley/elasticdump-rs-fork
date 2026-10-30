@@ -247,8 +247,15 @@ mod props {
         );
         let node = String::from_utf8(out.stdout).unwrap();
         let mut mismatches = 0;
+        let mut reordered = 0;
         for (d, want) in docs.iter().zip(node.lines()) {
-            let got = encode_line(d, LineEncoding::StringLiteral).unwrap();
+            let mut got = encode_line(d, LineEncoding::StringLiteral).unwrap();
+            if got != want {
+                // The one documented difference (NODE-DIFFERENCES): JavaScript
+                // objects list integer-like keys first, in numeric order.
+                got = encode_line(&js_key_order(d), LineEncoding::StringLiteral).unwrap();
+                reordered += 1;
+            }
             if got != want {
                 mismatches += 1;
                 if mismatches <= 3 {
@@ -257,6 +264,36 @@ mod props {
             }
         }
         assert_eq!(node.lines().count(), docs.len());
-        assert_eq!(mismatches, 0);
+        assert_eq!(
+            mismatches, 0,
+            "{reordered} differed only in integer-key order"
+        );
+    }
+
+    /// Object keys in JavaScript property order: array-index keys
+    /// (`0`..`4294967294`, no leading zeros) ascending, then the rest.
+    fn js_key_order(v: &Value) -> Value {
+        let is_index = |k: &str| {
+            !k.is_empty()
+                && (k == "0" || !k.starts_with('0'))
+                && k.bytes().all(|b| b.is_ascii_digit())
+                && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64)
+        };
+        match v {
+            Value::Array(a) => Value::Array(a.iter().map(js_key_order).collect()),
+            Value::Object(o) => {
+                let mut idx: Vec<(&String, &Value)> =
+                    o.iter().filter(|(k, _)| is_index(k)).collect();
+                idx.sort_by_key(|(k, _)| k.parse::<u64>().unwrap());
+                let rest = o.iter().filter(|(k, _)| !is_index(k));
+                Value::Object(
+                    idx.into_iter()
+                        .chain(rest)
+                        .map(|(k, v)| (k.clone(), js_key_order(v)))
+                        .collect(),
+                )
+            }
+            other => other.clone(),
+        }
     }
 }
