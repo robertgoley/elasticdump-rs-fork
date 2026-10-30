@@ -2141,3 +2141,85 @@ async fn stale_keep_alive_connections_do_not_fail_continuations() {
         );
     }
 }
+
+// L-444 (TST-BRK-SRV-001, Q3): bulk items keep failing (a 429 storm longer than the retry
+// budget, a flood-stage `cluster_block_exception` 429, `index.blocks.write` 403 items). By
+// default the run continues past them but exits 3 ("finished with failed writes"); only an
+// explicit --ignore-es-write-errors (or --ignore-errors) gives 0; `false` stops with 1.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_writes_exit_non_zero_unless_accepted_explicitly() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        format!("{}\n{}\n", hit("1", "{\"a\":1}"), hit("2", "{\"a\":2}")),
+    )
+    .unwrap();
+    let item = |status: u16, ty: &str| {
+        format!(
+            r#"{{"index":{{"status":{status},"error":{{"type":"{ty}","reason":"{ty} reason"}}}}}}"#
+        )
+    };
+    let cases = [
+        ("429 storm", item(429, "es_rejected_execution_exception")),
+        ("flood stage", item(429, "cluster_block_exception")),
+        ("write block", item(403, "cluster_block_exception")),
+    ];
+    for (label, failing) in cases {
+        let body = format!(
+            r#"{{"took":1,"errors":true,"items":[{{"index":{{"status":201}}}},{failing}]}}"#
+        );
+        let retry_body = format!(r#"{{"took":1,"errors":true,"items":[{failing}]}}"#);
+        for (flags, code) in [
+            (vec![], 3),
+            (vec!["--ignore-es-write-errors"], 0),
+            (vec!["--ignore-errors"], 0),
+            (vec!["--ignore-es-write-errors", "false"], 1),
+        ] {
+            let m = RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+                .route(
+                    Route::contains("POST", "/_bulk")
+                        .replies([Reply::ok(body.clone()), Reply::ok(retry_body.clone())]),
+                )
+                .fallback(Reply::ok(
+                    r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+                ))
+                .start()
+                .await;
+            let mut args: Vec<String> = vec![
+                "--input".into(),
+                input.to_str().unwrap().into(),
+                "--output".into(),
+                format!("{}/dst", m.url()),
+                "--noRefresh".into(),
+                "--retryAttempts".into(),
+                "1".into(),
+                "--retryDelay".into(),
+                "1".into(),
+            ];
+            args.extend(flags.iter().map(|f| f.to_string()));
+            let o = run_async(args, vec![]).await;
+            let err = stderr(&o);
+            assert_eq!(o.status.code(), Some(code), "{label} {flags:?}: {err}");
+            assert!(
+                err.contains("cluster_block_exception")
+                    || err.contains("es_rejected_execution_exception"),
+                "{label}: {err}"
+            );
+            if code == 3 {
+                assert!(
+                    err.contains("Failed Writes: 1")
+                        && err.contains("1 document(s) were not written")
+                        && err.contains("--ignore-es-write-errors"),
+                    "{label}: {err}"
+                );
+            }
+            if code == 0 {
+                assert!(err.contains("Failed Writes: 1"), "{label}: {err}");
+            }
+        }
+    }
+}

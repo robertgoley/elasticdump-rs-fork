@@ -74,7 +74,7 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   `--searchWithTemplate`, `--scrollTime`, `--scrollId`, `--searchAfter`, `--pit`, `--pitKeepAlive`,
   `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`).
 * **Writing:** `--bulkAction index|create|update|delete`, `--handleVersion`, `--versionType`, `--noRefresh`,
-  `--ignore-errors`, `--ignore-es-write-errors` (default true), `--parseExtraFields`.
+  `--ignore-errors`, `--ignore-es-write-errors` (default: continue past failed items), `--parseExtraFields`.
 * **Files:** `--fsCompress`, `--compressionType gzip|zstd`, `--compressionLevel`, `--fileSize`, `--maxRows`.
 * **Throughput:** `--concurrency`, `--throttleInterval`, `--intervalCap`, `--concurrencyInterval`,
   `--carryoverConcurrencyCount`, `--maxSockets`, `--timeout`.
@@ -94,7 +94,13 @@ Input safety: every hit is written as exactly one NDJSON line (pretty-printed `_
 a bulk input line that is not exactly one JSON object, has duplicate top-level keys, a non-object
 `_source`, a non-string `_id`/`routing`/`parent`, a non-integer `version` or an invalid index name
 (`*`, `?`, `,`, `_all`, `.`, `..`, leading `-_+`, upper case, > 255 bytes) is rejected on its own and
-makes the run exit 1. `--headers` with CR/LF/NUL is a usage error. `--debug` masks query values
+makes the run exit 1. `--headers` with CR/LF/NUL is a usage error.
+
+Exit status: 0 success; 1 error; 2 usage error; **3 finished, but documents were not written**
+(`Failed Writes` > 0: bulk item errors such as 429 storms, flood-stage or write blocks, mapping errors,
+conflicts). Like Node, the run continues past failed items by default, but unlike Node it does not exit 0
+then; pass `--ignore-es-write-errors` (or `--ignore-errors`) explicitly to accept failed writes with status 0,
+or `--ignore-es-write-errors false` to stop at the first one with status 1. `--debug` masks query values
 except a small allow-list (`scroll`, `size`, ...).
 
 Metadata types: `index`, `analyzer`, `alias`, `template`, `component_template`, `index_template`, `policy`

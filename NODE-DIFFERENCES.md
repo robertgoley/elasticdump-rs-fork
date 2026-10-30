@@ -51,3 +51,8 @@ documents (a silent no-op on Node's side). Node with `--support-big-int` writes 
 form (`1.2345678901234567890123456789e+29`), which is value-equal but not byte-equal; Rust keeps the original
 digits. Split parts: `--fileSize` counts UTF-8 bytes in Rust and JavaScript string length in Node, so non-ASCII
 data splits into more Rust parts (7 vs 5 in the test). Node's own bigint fixtures round-trip byte for byte.
+
+Exit status for failed writes (L-444, Q3): Node exits 0 when bulk items fail (default
+`--ignore-es-write-errors true`). elasticdump-rs continues past failed items the same way but exits **3**
+("finished with failed writes") unless `--ignore-es-write-errors` or `--ignore-errors` is given explicitly;
+`--ignore-es-write-errors false` stops at the first failed item with status 1, as in Node.

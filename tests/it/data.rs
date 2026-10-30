@@ -222,14 +222,18 @@ async fn bulk_item_errors_respect_ignore_flags() {
     )
     .unwrap();
 
-    // default: ignore-es-write-errors=true → exit 0, item on stderr
+    // default: the run continues past the item error, then exits 3 (L-444, Q3)
     let mut a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
     a.push("--noImplicitRetry".into());
     let o = run_env(a.clone(), vec![]).await;
-    assert_success(&o);
     let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(3), "{err}");
     assert!(err.contains("strict_dynamic_mapping_exception"), "{err}");
     assert_eq!(c.count(&dst).await, 2);
+    // explicit --ignore-es-write-errors: exit 0 (Node's default)
+    let mut b = a.clone();
+    b.push("--ignore-es-write-errors".into());
+    assert_success(&run_env(b, vec![]).await);
 
     // ignore-es-write-errors=false → exit 1
     a.extend(s(&["--ignore-es-write-errors", "false"]));

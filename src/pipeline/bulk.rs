@@ -590,8 +590,11 @@ impl BulkSink {
                 return Ok(());
             }
             if attempt >= self.opts.retry.attempts {
-                for &i in &rejected {
-                    self.report_failure(chunk[i], "rejected (429/503) after retries")?;
+                for (i, item) in &rejected {
+                    self.report_failure(
+                        chunk[*i],
+                        &format!("rejected (429/503) after {attempt} retries: {item}"),
+                    )?;
                 }
                 return Ok(());
             }
@@ -611,10 +614,10 @@ impl BulkSink {
             }
             attempt += 1;
             body = Vec::new();
-            for &i in &rejected {
-                self.encode_doc(chunk[i], &mut body)?;
+            for (i, _) in &rejected {
+                self.encode_doc(chunk[*i], &mut body)?;
             }
-            pending = rejected;
+            pending = rejected.into_iter().map(|(i, _)| i).collect();
         }
     }
 
@@ -652,14 +655,14 @@ impl BulkSink {
     }
 
     /// Account the response for `pending` (indices into `chunk`); returns the
-    /// item indices rejected with 429/503 for retry.
+    /// item indices rejected with 429/503 for retry, with the item's response.
     fn handle_response(
         &mut self,
         resp: &[u8],
         chunk: &[&[u8]],
         pending: &[usize],
         resent: bool,
-    ) -> Result<Vec<usize>> {
+    ) -> Result<Vec<(usize, String)>> {
         let errors = get(resp, &["errors"]).and_then(|v| v.as_bool());
         if errors == Some(false) {
             self.report.written += pending.len() as u64;
@@ -692,7 +695,7 @@ impl BulkSink {
                 self.report.written += 1;
                 created_earlier += 1;
             } else if (status == 429 || status == 503) && self.opts.retry.attempts > 0 {
-                rejected.push(doc_idx);
+                rejected.push((doc_idx, item.as_raw_str().to_string()));
             } else {
                 self.report_failure(chunk[doc_idx], item.as_raw_str())?;
             }
@@ -940,7 +943,7 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert_eq!(r, vec![1, 2]);
+        assert_eq!(r.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![1, 2]);
     }
 
     #[test]

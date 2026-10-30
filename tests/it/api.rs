@@ -1624,7 +1624,8 @@ async fn scripts_round_trip_empty_and_monitor_privilege() {
 
 // L-429 (TST-API-053): version conflicts. `create` on existing ids and `--handleVersion
 // --versionType external` with a lower version are counted per item like the server reports
-// them; the exit code follows --ignore-es-write-errors (default true: exit 0 + Failed Writes).
+// them; the exit code follows --ignore-es-write-errors (default: continue, exit 3 + Failed
+// Writes since L-444; explicit true: exit 0; false: exit 1).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn version_conflicts_counted_and_exit_follows_ignore_flags() {
     use serde_json::json;
@@ -1668,7 +1669,7 @@ async fn version_conflicts_counted_and_exit_follows_ignore_flags() {
     ))
     .await;
     let err = String::from_utf8_lossy(&o.stderr);
-    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert_eq!(o.status.code(), Some(3), "{err}");
     assert_eq!(report_counts(&o), (5, 5), "{err}");
     assert!(err.contains("version_conflict_engine_exception"), "{err}");
     // the same with --ignore-es-write-errors false: exit 1, counts unchanged semantics
@@ -1723,7 +1724,8 @@ async fn version_conflicts_counted_and_exit_follows_ignore_flags() {
     ))
     .await;
     let err = String::from_utf8_lossy(&o.stderr);
-    assert_eq!(o.status.code(), Some(0), "{err}");
+    // the skipped older versions are failed writes too: exit 3 unless accepted explicitly
+    assert_eq!(o.status.code(), Some(3), "{err}");
     assert_eq!(report_counts(&o), (2, 3), "{err}");
     c.ok("POST", &format!("{dst}/_refresh"), None).await;
     for i in 0..5 {
@@ -1896,8 +1898,8 @@ async fn auth_failures_name_endpoint_and_privilege() {
     assert_success(&o);
     // 5. separate credentials: admin input, low-privilege output -> write privilege on the
     // output. Elasticsearch rejects the whole _bulk (403); OpenSearch accepts it and fails each
-    // item with a 403 security_exception, so exit 1 needs --ignore-es-write-errors false (the
-    // default-exit policy for item failures is L-444).
+    // item with a 403 security_exception (exit 3 by default since L-444; exit 1 with
+    // --ignore-es-write-errors false, used here).
     let dst = format!("{p}_dst");
     let o = run_loud(io(
         &c,

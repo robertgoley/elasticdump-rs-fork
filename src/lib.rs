@@ -62,10 +62,30 @@ fn parse_extra_fields(raw: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Exit status for an error returned by [`run`].
+/// The run finished, but documents were not written and the user did not accept that
+/// explicitly (TST-BRK-SRV-001, Q3): exit status 3.
+#[derive(Debug)]
+pub struct WriteFailures(pub u64);
+
+impl std::fmt::Display for WriteFailures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} document(s) were not written (see Failed Writes and the item errors above); the run continued past them. Exit status 3 means \"finished with failed writes\": pass --ignore-es-write-errors explicitly to accept them with status 0 (Node elasticdump's default), or --ignore-es-write-errors false to stop at the first one",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for WriteFailures {}
+
+/// Exit status for an error returned by [`run`]: 2 usage, 3 finished with failed writes,
+/// 1 anything else.
 pub fn exit_code(error: &anyhow::Error) -> i32 {
     if error.downcast_ref::<UsageError>().is_some() {
         2
+    } else if error.downcast_ref::<WriteFailures>().is_some() {
+        3
     } else {
         1
     }
@@ -662,6 +682,13 @@ pub async fn run() -> Result<()> {
             "{} document line(s) were rejected because they were not exactly one JSON object; nothing was written for them",
             report.rejected
         ));
+    }
+    // Item-level failures (429 storms, flood-stage blocks, mapping errors, conflicts): the
+    // run continues past them by default like Node, but only an explicit opt-in turns them
+    // into exit status 0 (Q3, safest option).
+    let accepted = cli.ignore_es_write_errors == Some(true) || cli.ignore_errors();
+    if report.failed > 0 && !accepted {
+        return Err(anyhow::Error::new(WriteFailures(report.failed)));
     }
     Ok(())
 }

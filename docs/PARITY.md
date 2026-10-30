@@ -62,7 +62,7 @@ Legend:
 | `--bulkAction` | index | ✅ | `index` / `create` / `update` (`{"doc":…}`) / `delete` (no body line). Value validated | M2 |
 | `--handleVersion` / `--versionType` | false / null | ✅ | Copy `_version` (or `version`) → `version`; pass `version_type` through | M2 |
 | `--noRefresh` | false | ✅ | Default: `POST {index}/_refresh` after each bulk call (parity). `--noRefresh` skips it | M2 |
-| `--ignore-es-write-errors` | **true** | ✅ | Failed items are logged to stderr as JSON lines and counted. `false` → fail on the first failed item | M2 |
+| `--ignore-es-write-errors` | **true** | ✅ (exit status differs) | Failed items are logged to stderr as JSON lines and counted. `false` → fail on the first failed item. Not given: the run continues like Node but exits **3** when any document was not written (L-444, Q3); given explicitly (`true`): exit 0 like Node | M2 |
 | `--ignore-errors` | false | ✅ | Batch-level errors (an HTTP failure after retries) are logged and skipped, and the loop continues | M2 |
 | `--skip-existing` | false | ✅ | Extension: settings/mapping sinks treat `resource_already_exists_exception` as success | M3 |
 | `--esCompress` (requests) | false | ✅ | gzip the bulk body, `Content-Encoding: gzip` | M2 |
