@@ -704,14 +704,18 @@ pub fn emfile_hint(msg: String) -> String {
 }
 
 /// Soft `RLIMIT_NOFILE` from /proc/self/limits.
+/// Read once at start: when the limit has run out, /proc/self/limits cannot be opened.
 fn open_file_limit() -> Option<u64> {
-    std::fs::read_to_string("/proc/self/limits")
-        .ok()
-        .and_then(|l| {
-            l.lines()
-                .find(|x| x.starts_with("Max open files"))
-                .and_then(|x| x.split_whitespace().nth(3)?.parse().ok())
-        })
+    static LIMIT: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::fs::read_to_string("/proc/self/limits")
+            .ok()
+            .and_then(|l| {
+                l.lines()
+                    .find(|x| x.starts_with("Max open files"))
+                    .and_then(|x| x.split_whitespace().nth(3)?.parse().ok())
+            })
+    })
 }
 
 pub async fn run() -> Result<()> {

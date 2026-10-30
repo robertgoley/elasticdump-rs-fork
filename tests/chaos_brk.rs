@@ -2894,11 +2894,15 @@ async fn l637_fd_limit_is_survived_or_explained() {
     .await;
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(std::fs::read_dir(&parts).unwrap().count() >= 30);
-    let o = sh(format!("ulimit -n 12; '{b}' --input '{inp}' --output '{url}' --concurrency 64 --limit 10 --retryAttempts 0 --noImplicitRetry")).await;
+    let o = sh(format!("ulimit -n 32; '{b}' --input '{inp}' --output '{url}' --concurrency 64 --limit 10 --retryAttempts 0 --noImplicitRetry")).await;
     let err = stderr(&o);
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(
-        err.contains("Too many open files") && err.contains("ulimit -n = 12"),
+        err.contains("may need ~154 open files but the limit (ulimit -n) is 32"),
+        "{err}"
+    );
+    assert!(
+        err.contains("Too many open files") && err.contains("ulimit -n = 32"),
         "{err}"
     );
 }
