@@ -2932,3 +2932,68 @@ async fn hits_without_source_are_refused_unless_allowed() {
         }
     }
 }
+
+// L-456 (BRK-XV-003): documents from a data stream's backing index go back to the stream
+// with --bulkAction create; with index the run stops before writing.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_stream_documents_need_create_and_target_the_stream() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let ok = r#"{"took":1,"errors":false,"items":[{"create":{"status":201}},{"create":{"status":201}}]}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\".ds-logs-a-2026.10.30-000001\",\"_id\":\"1\",\"_source\":{\"@timestamp\":\"2026-10-30T00:00:00Z\"}}\n{\"_index\":\".ds-logs-a-2026.10.30-000002\",\"_id\":\"2\",\"_source\":{\"@timestamp\":\"2026-10-30T00:00:01Z\"}}\n",
+    )
+    .unwrap();
+    for (action, ok_run) in [("index", false), ("create", true)] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok)))
+            .fallback(Reply::ok(
+                r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+            ))
+            .start()
+            .await;
+        let o = run_async(
+            vec![
+                "--input".into(),
+                input.to_str().unwrap().into(),
+                "--output".into(),
+                m.url(),
+                "--bulkAction".into(),
+                action.into(),
+                "--noRefresh".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        let bulks: Vec<String> = m
+            .requests()
+            .iter()
+            .filter(|r| r.path.ends_with("/_bulk"))
+            .map(|r| r.body_str())
+            .collect();
+        if ok_run {
+            assert_eq!(o.status.code(), Some(0), "{err}");
+            assert_eq!(bulks.len(), 1);
+            assert_eq!(
+                bulks[0].matches(r#"{"create":{"_index":"logs-a""#).count(),
+                2,
+                "{}",
+                bulks[0]
+            );
+            assert!(!bulks[0].contains(".ds-"), "{}", bulks[0]);
+        } else {
+            assert_eq!(o.status.code(), Some(1), "{err}");
+            assert!(
+                err.contains("data stream 'logs-a'") && err.contains("--bulkAction create"),
+                "{err}"
+            );
+            assert!(!err.contains("rejected document"), "{err}");
+            assert!(bulks.is_empty(), "{err}");
+        }
+    }
+}

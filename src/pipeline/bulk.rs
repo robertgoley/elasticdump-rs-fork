@@ -15,6 +15,44 @@ use tokio_util::sync::CancellationToken;
 
 use crate::http::{Body, ClusterInfo, EsClient, RetryMode, RetryPolicy, send_with_retry};
 
+/// A per-document error that must stop the run (it would apply to every
+/// document alike), never a per-line rejection.
+#[derive(Debug)]
+pub struct FatalDoc(pub String);
+
+impl std::fmt::Display for FatalDoc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FatalDoc {}
+
+/// The data stream behind a backing index name: `.ds-<stream>-<yyyy.MM.dd>-<gen>`
+/// (7.11+, OpenSearch) or `.ds-<stream>-<gen>` (7.9/7.10) (TST-BRK-XV-003).
+pub fn data_stream_of(index: &str) -> Option<&str> {
+    let rest = index.strip_prefix(".ds-")?;
+    let (head, generation) = rest.rsplit_once('-')?;
+    if generation.len() != 6 || !generation.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let is_date = |d: &str| {
+        d.len() == 10
+            && d.bytes().enumerate().all(|(i, b)| {
+                if i == 4 || i == 7 {
+                    b == b'.'
+                } else {
+                    b.is_ascii_digit()
+                }
+            })
+    };
+    let stream = match head.rsplit_once('-') {
+        Some((stream, date)) if is_date(date) => stream,
+        _ => head,
+    };
+    (!stream.is_empty()).then_some(stream)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BulkAction {
     Index,
@@ -342,12 +380,26 @@ impl BulkSink {
     }
 
     fn index_for(&self, top: &Top) -> Result<String> {
-        let base = match &self.opts.index {
+        let mut base = match &self.opts.index {
             Some(i) => i.clone(),
             None => top.str("_index").ok_or_else(|| {
                 anyhow!("document has no _index and no output index was given (--output-index)")
             })?,
         };
+        if self.opts.index.is_none() {
+            if let Some(stream) = data_stream_of(&base) {
+                match self.opts.action {
+                    // update/delete must address the backing index itself
+                    BulkAction::Update | BulkAction::Delete => {}
+                    BulkAction::Create => base = stream.to_string(),
+                    BulkAction::Index => {
+                        return Err(anyhow::Error::new(FatalDoc(format!(
+                            "document from '{base}', a backing index of data stream '{stream}': data streams accept only --bulkAction create (written to the stream '{stream}', which picks the backing index); with index it would land in a plain index named '{base}' instead of the stream"
+                        ))));
+                    }
+                }
+            }
+        }
         if self.opts.index.is_none() {
             if let Some(r) = &self.opts.rename {
                 return r.index(&base);
@@ -526,7 +578,9 @@ impl BulkSink {
                 Ok(()) => docs.push((line, at..encoded.len())),
                 Err(e) => {
                     encoded.truncate(at);
-                    if e.downcast_ref::<crate::rename::MergeRefused>().is_some() {
+                    if e.downcast_ref::<crate::rename::MergeRefused>().is_some()
+                        || e.downcast_ref::<FatalDoc>().is_some()
+                    {
                         return Err(anyhow!(
                             "{e:#}. Stopped at document {no} of the input before sending its batch; {} document(s) of earlier batches were already written",
                             self.report.written
@@ -1051,5 +1105,31 @@ mod inj_f1_tests {
         assert_eq!(t.duplicate_key(), Some("_index"));
         let t = Top::parse(br#"{"_index":"a","_id":"1"}"#).unwrap();
         assert_eq!(t.duplicate_key(), None);
+    }
+}
+
+#[cfg(test)]
+mod data_stream_tests {
+    use super::data_stream_of;
+
+    #[test]
+    fn backing_indices_map_back_to_their_stream() {
+        for (idx, want) in [
+            (
+                ".ds-logs-app-default-2026.10.30-000001",
+                Some("logs-app-default"),
+            ),
+            (".ds-logs-000002", Some("logs")),
+            (
+                ".ds-my-stream-2026.1.30-000001",
+                Some("my-stream-2026.1.30"),
+            ),
+            (".ds-x-2026.10.30-00001", None),
+            ("logs-app", None),
+            (".ds--000001", None),
+            (".ds-", None),
+        ] {
+            assert_eq!(data_stream_of(idx), want, "{idx}");
+        }
     }
 }
