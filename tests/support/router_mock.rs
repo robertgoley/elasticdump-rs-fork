@@ -59,6 +59,8 @@ pub enum Fault {
     TruncateAt(usize),
     /// Close with a TCP RST (SO_LINGER 0) right after reading the request.
     Reset,
+    /// Send the first `n` bytes of the full response, then close with a TCP RST.
+    ResetAt(usize),
     /// Send the response in `chunk`-byte pieces every `every`.
     SlowDrip { chunk: usize, every: Duration },
     /// Advertise `Content-Length` = real length + `delta`, then close.
@@ -488,6 +490,18 @@ async fn serve_conn(mut sock: TcpStream, conn: usize, shared: Arc<Shared>) {
             drop(sock);
             return;
         }
+        if let Fault::ResetAt(n) = reply.fault {
+            let mut full = reply.clone();
+            full.fault = Fault::None;
+            let wire = render(&full, true);
+            let _ = sock.write_all(&wire[..n.min(wire.len())]).await;
+            let _ = sock.flush().await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            #[allow(deprecated)]
+            let _ = sock.set_linger(Some(Duration::ZERO));
+            drop(sock);
+            return;
+        }
         let close = client_close || shared.close_always;
         match send_reply(&mut sock, &reply, close).await {
             Ok(true) if !close => continue,
@@ -600,18 +614,16 @@ async fn read_request(sock: &mut TcpStream, buf: &mut Vec<u8>) -> Option<(Record
 }
 
 /// Send a reply. Returns `Ok(true)` when the connection may be reused.
-async fn send_reply(sock: &mut TcpStream, r: &Reply, close: bool) -> std::io::Result<bool> {
-    if let Fault::Delay(d) = r.fault {
-        tokio::time::sleep(d).await;
-    }
+/// The full wire bytes of a reply: (bytes, header length, whether the connection ends).
+fn render_parts(r: &Reply, close: bool) -> (Vec<u8>, usize, bool) {
     let mut body = r.body.clone();
     let mut headers: Vec<(String, String)> = r.headers.clone();
     if r.gzip {
         use flate2::{Compression, write::GzEncoder};
         use std::io::Write;
         let mut e = GzEncoder::new(Vec::new(), Compression::fast());
-        e.write_all(&body)?;
-        body = e.finish()?;
+        e.write_all(&body).expect("gzip");
+        body = e.finish().expect("gzip");
         headers.push(("Content-Encoding".into(), "gzip".into()));
     }
     if let Fault::GzipPlainBody = r.fault {
@@ -660,6 +672,18 @@ async fn send_reply(sock: &mut TcpStream, r: &Reply, close: bool) -> std::io::Re
     } else {
         wire.extend_from_slice(&body);
     }
+    (wire, head_len, ends_conn)
+}
+
+fn render(r: &Reply, close: bool) -> Vec<u8> {
+    render_parts(r, close).0
+}
+
+async fn send_reply(sock: &mut TcpStream, r: &Reply, close: bool) -> std::io::Result<bool> {
+    if let Fault::Delay(d) = r.fault {
+        tokio::time::sleep(d).await;
+    }
+    let (wire, head_len, ends_conn) = render_parts(r, close);
     match &r.fault {
         Fault::StallAfterHeaders(d) => {
             sock.write_all(&wire[..head_len]).await?;

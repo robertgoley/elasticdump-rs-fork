@@ -3,10 +3,10 @@
 #   contract  T1  CLI contract, injection, secrets and tool tests    mock servers only
 #   it        T2  live single-engine suites (tests/it; integration_test is plain-profile only)   needs scripts/it/up.sh
 #   load      T3  long live-cluster tests (feature `load`)           needs a cluster
-#   chaos     T5  fault-injection suites (feature `chaos`; none yet)
+#   chaos     T5  fault-injection suites against in-process mocks (tests/chaos_brk.rs, phase A6)
 # Run one tier with `cargo nextest run --profile <tier> [--features ...]`.
 # Each profile writes JUnit XML to target/nextest/<tier>/junit.xml.
-# `default` (no profile) = unit + contract. Correctness tests never auto-retry (INF-013).
+# `default` (no profile) = unit + contract + chaos. Correctness tests never auto-retry (INF-013).
 #
 # Flake policy (INF-013, scripts/sup/flake-policy.py runs in CI):
 #  * `retries` stays 0 in every profile and override;
@@ -17,7 +17,7 @@
 # Quarantine list (empty):
 
 [profile.default]
-default-filter = "kind(lib) | kind(bin) | binary(cli_contract) | binary(injection) | binary(secrets) | binary(router_mock_selftest) | binary(golden_replay) | binary(fault_conformance) | (kind(test) & (package(edgen) | package(edverify)))"
+default-filter = "kind(lib) | kind(bin) | binary(chaos_brk) | binary(cli_contract) | binary(injection) | binary(secrets) | binary(router_mock_selftest) | binary(golden_replay) | binary(fault_conformance) | (kind(test) & (package(edgen) | package(edverify)))"
 retries = 0
 fail-fast = false
 slow-timeout = { period = "60s", terminate-after = 5 }
@@ -54,7 +54,7 @@ slow-timeout = { period = "300s", terminate-after = 6 }
 path = "junit.xml"
 
 [profile.chaos]
-default-filter = "none()"
+default-filter = "binary(chaos_brk)"
 test-threads = 1
 slow-timeout = { period = "120s", terminate-after = 5 }
 [profile.chaos.junit]

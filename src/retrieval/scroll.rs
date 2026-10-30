@@ -32,7 +32,7 @@ fn continuation_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error 
         return error;
     }
     error.context(format!(
-        "Slice {slice_id}: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page; nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resumes only from a still-open scroll and the page in flight may be missing)"
+        "Slice {slice_id}: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resumes only from a still-open scroll and the page in flight may be missing)"
     ))
 }
 
