@@ -2206,3 +2206,58 @@ async fn l626_deep_documents_in_search_pages_never_crash() {
         }
     }
 }
+
+// L-627 (TST-BRK-IN-009): duplicate keys. Duplicated metadata keys (`_id`, `_index`, `_source`,
+// `_routing`) are rejected by name (tests/injection.rs guards_duplicate_keys_*; Node keeps the
+// last). Duplicates inside `_source` are forwarded byte-exact: the engine decides (Elasticsearch
+// and OpenSearch answer 400 "Duplicate field"), where Node would silently keep the last value.
+#[tokio::test]
+async fn l627_duplicate_keys_inside_source_are_forwarded_verbatim() {
+    let line = r#"{"_index":"x","_id":"a","_source":{"k":1,"k":2}}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("dup.json");
+    std::fs::write(&input, format!("{line}\n")).unwrap();
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(
+            r#"{"errors":false,"items":[{"index":{"status":201}}]}"#,
+        )))
+        .fallback(Reply::ok("{}"))
+        .start()
+        .await;
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/z", m.url()),
+        ]),
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let bulk: Vec<_> = m
+        .requests()
+        .into_iter()
+        .filter(|r| r.path.contains("_bulk"))
+        .collect();
+    assert_eq!(bulk.len(), 1);
+    assert!(
+        String::from_utf8_lossy(&bulk[0].body).contains(r#"{"k":1,"k":2}"#),
+        "{:?}",
+        String::from_utf8_lossy(&bulk[0].body)
+    );
+    let out = dir.path().join("o.json");
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ]),
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), format!("{line}\n"));
+}
