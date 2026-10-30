@@ -475,7 +475,12 @@ impl EsClient {
                         crate::endpoint::redacted_url(&self.0.base)
                     )
                 })?;
-                let info = ClusterInfo::parse(&body);
+                let info = ClusterInfo::parse(&body).with_context(|| {
+                    format!(
+                        "Failed to detect the engine at {}",
+                        crate::endpoint::redacted_url(&self.0.base)
+                    )
+                })?;
                 log::debug!(
                     "Detected {} {} at {}",
                     info.flavor_name(),

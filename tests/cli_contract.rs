@@ -1317,3 +1317,83 @@ async fn script_403_names_the_monitor_privilege() {
         assert!(!out.exists());
     }
 }
+
+// L-424 (TST-API-040): `GET /` variants. A proxy/login page or a version-less body fails
+// with a clear message (never a silent "Elasticsearch 5.0.0"); OpenSearch 1.x with
+// `compatibility.override_main_response_version` is detected by its tagline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cluster_info_variants_never_fall_back_silently() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    for (body, needle) in [
+        (
+            "<html><title>Proxy login</title></html>",
+            "did not return JSON",
+        ),
+        (
+            r#"{"name":"n","cluster_name":"c"}"#,
+            "without version.number",
+        ),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(body)))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("o.json");
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--type".into(),
+                "mapping".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains(needle) && err.contains("Failed to detect the engine"),
+            "{err}"
+        );
+        assert!(!err.contains("5.0.0"), "{err}");
+        assert!(!out.exists());
+    }
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"number":"7.10.2","build_flavor":"oss"},"tagline":"The OpenSearch Project: https://opensearch.org/"}"#,
+        )))
+        .route(Route::exact("GET", "/_plugins/_ism/policies").reply(Reply::ok(
+            r#"{"policies":[],"total_policies":0}"#,
+        )))
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p.json");
+    let o = run_async(
+        vec![
+            "--input".into(),
+            m.url(),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--type".into(),
+            "policy".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("compatibility.override_main_response_version"),
+        "{err}"
+    );
+    assert!(
+        m.requests()
+            .iter()
+            .any(|r| r.path.starts_with("/_plugins/_ism/policies"))
+    );
+    assert!(!m.requests().iter().any(|r| r.path.starts_with("/_ilm")));
+}
