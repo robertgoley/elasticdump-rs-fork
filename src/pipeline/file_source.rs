@@ -123,7 +123,15 @@ fn read_loop(
                 .next_value(eof)
                 .map_err(|e| anyhow!("Invalid JSON in {name}: {e}"))?;
             let Some(value) = value else { break };
-            batch.buf.extend_from_slice(&single_line(value));
+            let line = single_line(value);
+            if docs_read == 0 {
+                if let Some(found) = crate::meta::metadata_dump_type(&line) {
+                    return Err(anyhow::Error::new(crate::UsageError(format!(
+                        "{name}: this input looks like a --type {found} dump, not --type data (its first line is {found} metadata, which would be indexed as a document); use --type {found}. Nothing was written"
+                    ))));
+                }
+            }
+            batch.buf.extend_from_slice(&line);
             batch.buf.push(b'\n');
             batch.docs += 1;
             docs_read += 1;

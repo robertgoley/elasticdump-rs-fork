@@ -2323,3 +2323,99 @@ async fn scroll_total_mismatch_is_an_error() {
     let o = run_async(args(&["--size", "2"]), vec![]).await;
     assert!(o.status.success(), "{}", stderr(&o));
 }
+
+// L-448 (TST-BRK-IN-004): a metadata dump restored with --type data is refused before
+// anything is written (exit 2, "looks like a --type X dump"); a data dump restored with a
+// metadata --type is refused the same way; ordinary --sourceOnly documents that merely contain
+// keys like `settings` are not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wrong_type_inputs_are_refused_before_writing() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+        .fallback(Reply::ok(r#"{"took":1,"errors":false,"items":[]}"#))
+        .start()
+        .await;
+    let fx = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/node");
+    for engine in ["opensearch-2.19.7", "elasticsearch-8.19.23"] {
+        for ty in [
+            "mapping",
+            "settings",
+            "analyzer",
+            "alias",
+            "index",
+            "template",
+            "component_template",
+            "index_template",
+            "policy",
+            "script",
+        ] {
+            let f = fx.join(engine).join(format!("{ty}.json"));
+            let o = run_async(
+                vec![
+                    "--input".into(),
+                    f.to_str().unwrap().into(),
+                    "--output".into(),
+                    format!("{}/dst", m.url()),
+                    "--type".into(),
+                    "data".into(),
+                ],
+                vec![],
+            )
+            .await;
+            let err = stderr(&o);
+            assert_eq!(o.status.code(), Some(2), "{engine} {ty}: {err}");
+            assert!(
+                err.contains("looks like a --type") && err.contains("not --type data"),
+                "{engine} {ty}: {err}"
+            );
+        }
+        // a data dump with a metadata type
+        let f = fx.join(engine).join("data.json");
+        let o = run_async(
+            vec![
+                "--input".into(),
+                f.to_str().unwrap().into(),
+                "--output".into(),
+                format!("{}/dst", m.url()),
+                "--type".into(),
+                "mapping".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_ne!(o.status.code(), Some(0), "{engine}: {err}");
+        assert!(
+            err.contains("looks like a --type data dump"),
+            "{engine}: {err}"
+        );
+    }
+    let bulks = m
+        .requests()
+        .iter()
+        .filter(|r| r.path.contains("_bulk") || r.method == "PUT")
+        .count();
+    assert_eq!(bulks, 0, "nothing written");
+    // plain documents that only look similar are restored
+    let dir = tempfile::tempdir().unwrap();
+    let f = dir.path().join("docs.json");
+    std::fs::write(
+        &f,
+        "{\"user\":{\"settings\":{\"theme\":\"dark\"}}}\n{\"a\":{\"mappings\":{\"x\":1}}}\n",
+    )
+    .unwrap();
+    let out = dir.path().join("out.json");
+    let o = run_async(
+        vec![
+            "--input".into(),
+            f.to_str().unwrap().into(),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+}

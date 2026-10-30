@@ -190,6 +190,12 @@ pub fn classify(v: &Value) -> Option<&'static str> {
     if obj.is_empty() {
         return None;
     }
+    // a data dump line (a search hit)
+    if obj.get("_source").is_some_and(Value::is_object)
+        || (obj.get("_id").is_some_and(Value::is_string) && obj.contains_key("_index"))
+    {
+        return Some("data");
+    }
     if obj.get("stored_scripts").is_some_and(Value::is_array) {
         return Some("script");
     }
@@ -241,6 +247,43 @@ pub fn classify(v: &Value) -> Option<&'static str> {
         return Some("index");
     }
     None
+}
+
+/// For `--type data` input (TST-BRK-IN-004): the first line of a metadata dump, with the
+/// type that wrote it. Stricter than [`classify`] so that ordinary `--sourceOnly` documents
+/// are never refused: a JSON string line (Node's string meta format) holding a metadata
+/// object, a top-level key only metadata responses have, or `{name: {settings: {index: {}}}}`
+/// / `{name: {mappings: {properties: {}}}}` / `{name: {aliases: {..objects..}}}` shapes.
+pub fn metadata_dump_type(line: &[u8]) -> Option<&'static str> {
+    let v: Value = serde_json::from_slice(line).ok()?;
+    let v = match v {
+        Value::String(s) => serde_json::from_str(&s).ok()?,
+        v => v,
+    };
+    let found = classify(&v)?;
+    let inner = |o: &Value, key: &str, sub: &str| {
+        o.get(key)
+            .and_then(|x| x.get(sub))
+            .is_some_and(Value::is_object)
+    };
+    let values = || v.as_object().into_iter().flat_map(|o| o.values());
+    let strict = match found {
+        "data" => false,
+        "script" | "index_template" | "component_template" | "policy" => true,
+        "settings" => values().all(|o| inner(o, "settings", "index")),
+        "mapping" => values().all(|o| inner(o, "mappings", "properties")),
+        "index" => values().all(|o| {
+            inner(o, "settings", "index") && o.get("mappings").is_some_and(Value::is_object)
+        }),
+        "alias" => values().all(|o| {
+            o.get("aliases")
+                .and_then(Value::as_object)
+                .is_some_and(|a| !a.is_empty() && a.values().all(Value::is_object))
+        }),
+        "template" => values().all(|o| o.get("index_patterns").is_some_and(Value::is_array)),
+        _ => false,
+    };
+    strict.then_some(found)
 }
 
 /// Refuse a file that was clearly written by another `--type`.
