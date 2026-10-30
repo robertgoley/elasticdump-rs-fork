@@ -12,3 +12,4 @@ Short smoke runs only (<= 300 s per target, one at a time, `-rss_limit_mb=1024`,
 | bulk_encode_doc | 300 s | 5,135,888 | 4311 | ok |
 | bulk_handle_response | 300 s | 4,086,084 | 2154 | ok |
 | codec_decode | 300 s | 8,094,539 | 2010 | ok |
+| endpoint_parse | 300 s | 1,253,924 | 4193 | ok |
