@@ -541,3 +541,119 @@ async fn bulk_item_errors_are_counted_like_the_server() {
     let _ = std::fs::remove_file(missing);
     c.delete_index(&dst).await;
 }
+
+/// `GET <index>/_mapping` body without the index name.
+async fn mapping_of(c: &Cluster, index: &str) -> Value {
+    let v = c.ok("GET", &format!("{index}/_mapping"), None).await;
+    v[index]["mappings"].clone()
+}
+
+// L-414 (TST-API-030): same-engine mapping round trips (dump `--type mapping` to a file,
+// restore into a new index) are lossless for each mapping feature the version supports:
+// a field literally named `properties`, runtime fields (ES >= 7.11), `flattened` (ES default
+// distribution) / `flat_object` (OS >= 2.7), `dense_vector` / `knn_vector`, `_source`
+// disabled, synthetic `_source` (ES >= 8.4 where the licence allows it), `subobjects: false`
+// (ES >= 8.3). Cross-engine conversion is the expectation table (L-438/L-439).
+#[tokio::test]
+async fn mapping_round_trips_are_lossless_per_feature() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let v = c.vnum().await;
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let oss = c.is_oss().await;
+    let mut variants: Vec<(&str, Value)> = vec![
+        (
+            "base",
+            json!({"properties": {"k": {"type": "keyword"}, "n": {"type": "long"}, "obj": {"properties": {"properties": {"type": "keyword"}, "x": {"type": "integer"}}}}}),
+        ),
+        (
+            "source_disabled",
+            json!({"_source": {"enabled": false}, "properties": {"k": {"type": "keyword"}}}),
+        ),
+    ];
+    if es && v >= (7, 11) {
+        variants.push(("runtime", json!({"runtime": {"rt": {"type": "keyword", "script": {"source": "emit('x')"}}}, "properties": {"k": {"type": "keyword"}}})));
+    }
+    if es && !oss {
+        variants.push((
+            "flattened",
+            json!({"properties": {"fl": {"type": "flattened"}}}),
+        ));
+        variants.push((
+            "dense_vector",
+            json!({"properties": {"dv": {"type": "dense_vector", "dims": 3}}}),
+        ));
+    }
+    if !es && v >= (2, 7) {
+        variants.push((
+            "flat_object",
+            json!({"properties": {"fo": {"type": "flat_object"}}}),
+        ));
+    }
+    if !es {
+        variants.push((
+            "knn_vector",
+            json!({"properties": {"kv": {"type": "knn_vector", "dimension": 3}}}),
+        ));
+    }
+    if es && v >= (8, 3) {
+        variants.push((
+            "subobjects_false",
+            json!({"subobjects": false, "properties": {"a.b": {"type": "keyword"}}}),
+        ));
+    }
+    if es && v >= (8, 4) {
+        variants.push((
+            "synthetic_source",
+            json!({"_source": {"mode": "synthetic"}, "properties": {"k": {"type": "keyword"}}}),
+        ));
+    }
+    let mut done = vec![];
+    for (name, mapping) in variants {
+        let src = unique(&format!("api_map_{name}"));
+        let dst = format!("{src}_dst");
+        c.delete_index(&src).await;
+        c.delete_index(&dst).await;
+        let (st, body) = c
+            .call(
+                "PUT",
+                &src,
+                Some(json!({"settings": {"number_of_replicas": 0}, "mappings": mapping})),
+            )
+            .await;
+        if st != 200 {
+            // e.g. synthetic _source needs an enterprise licence on ES >= 8.17
+            println!("SKIP: mapping variant {name} not accepted by this version: {body}");
+            continue;
+        }
+        let file = tmp_path(&format!("api_map_{name}"), "json");
+        let o = run(io(
+            &c,
+            &c.url_with_auth(&src),
+            file.to_str().unwrap(),
+            &["--type", "mapping"],
+        ))
+        .await;
+        assert_success(&o);
+        let o = run(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&dst),
+            &["--type", "mapping"],
+        ))
+        .await;
+        assert_success(&o);
+        assert_eq!(
+            mapping_of(&c, &dst).await,
+            mapping_of(&c, &src).await,
+            "{name}"
+        );
+        let _ = std::fs::remove_file(file);
+        c.delete_index(&src).await;
+        c.delete_index(&dst).await;
+        done.push(name);
+    }
+    println!("mapping round trips: {done:?}");
+    assert!(done.contains(&"base") && done.contains(&"source_disabled"));
+}
+
