@@ -98,3 +98,165 @@ mod tests {
         assert!(decode_any(json!("[1]")).is_err());
     }
 }
+
+/// L-502 (TST-API-081): the double-encoded (string literal) metadata line format.
+#[cfg(test)]
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::{Config, TestRunner};
+
+    fn text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                Just('"'),
+                Just('\\'),
+                Just('/'),
+                Just('\n'),
+                Just('\u{0}'),
+                Just('\u{1f}'),
+                Just('\u{7f}'),
+                Just('\u{2028}'),
+                Just('é'),
+                Just('😀'),
+                proptest::char::range(' ', '~'),
+            ],
+            0..10,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    /// Objects as metadata responses hold them. Integers stay within ±2^53
+    /// so JavaScript reads them exactly (the Node comparison below).
+    fn object() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            (-(1i64 << 53)..(1i64 << 53)).prop_map(Value::from),
+            text().prop_map(Value::String),
+        ];
+        let inner = leaf.prop_recursive(4, 24, 5, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                proptest::collection::vec((text(), inner), 0..4)
+                    .prop_map(|kv| Value::Object(kv.into_iter().collect())),
+            ]
+        });
+        proptest::collection::vec((text(), inner), 0..5)
+            .prop_map(|kv| Value::Object(kv.into_iter().collect()))
+    }
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10_000)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
+
+        #[test]
+        fn both_encodings_round_trip_on_one_line(doc in object()) {
+            for enc in [LineEncoding::StringLiteral, LineEncoding::Object] {
+                let line = encode_line(&doc, enc).unwrap();
+                prop_assert!(!line.contains('\n') && !line.contains('\r'));
+                let parsed: Value = serde_json::from_str(&line).unwrap();
+                prop_assert_eq!(&decode_any(parsed).unwrap(), &doc);
+            }
+        }
+    }
+
+    /// Every metadata line Node elasticdump wrote in the committed corpus
+    /// re-encodes byte for byte.
+    #[test]
+    fn node_corpus_reencodes_byte_equal() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/node");
+        let mut checked = 0;
+        for dir in std::fs::read_dir(&root).unwrap() {
+            let dir = dir.unwrap().path();
+            if !dir.is_dir() {
+                continue;
+            }
+            for f in std::fs::read_dir(&dir).unwrap() {
+                let f = f.unwrap().path();
+                if f.file_name().unwrap() == "data.json"
+                    || f.extension().is_none_or(|e| e != "json")
+                {
+                    continue;
+                }
+                for line in std::fs::read_to_string(&f).unwrap().lines() {
+                    let v: Value = serde_json::from_str(line).unwrap();
+                    let enc = if v.is_string() {
+                        LineEncoding::StringLiteral
+                    } else {
+                        LineEncoding::Object
+                    };
+                    let doc = decode_any(v).unwrap();
+                    assert_eq!(encode_line(&doc, enc).unwrap(), line, "{}", f.display());
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 20, "{checked} lines");
+    }
+
+    /// Random documents: `encode_line(StringLiteral)` equals Node's
+    /// `JSON.stringify(JSON.stringify(doc))` byte for byte.
+    #[test]
+    fn string_literal_matches_node_json_stringify() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("SKIP: node not installed");
+            return;
+        }
+        let n: u32 = std::env::var("CODEC_NODE_DOCS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2_000);
+        let mut runner = TestRunner::new(Config::default());
+        let strategy = object();
+        let docs: Vec<Value> = (0..n)
+            .map(|_| strategy.new_tree(&mut runner).unwrap().current())
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("docs.ndjson");
+        let mut body = String::new();
+        for d in &docs {
+            body.push_str(&serde_json::to_string(d).unwrap());
+            body.push('\n');
+        }
+        std::fs::write(&input, body).unwrap();
+        let out = std::process::Command::new("node")
+            .arg("-e")
+            .arg(
+                "const fs=require('fs');const ls=fs.readFileSync(process.argv[1],'utf8').split('\\n').filter(Boolean);\
+                 process.stdout.write(ls.map(l=>JSON.stringify(JSON.stringify(JSON.parse(l)))).join('\\n')+'\\n');",
+            )
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let node = String::from_utf8(out.stdout).unwrap();
+        let mut mismatches = 0;
+        for (d, want) in docs.iter().zip(node.lines()) {
+            let got = encode_line(d, LineEncoding::StringLiteral).unwrap();
+            if got != want {
+                mismatches += 1;
+                if mismatches <= 3 {
+                    eprintln!("rust: {got}\nnode: {want}");
+                }
+            }
+        }
+        assert_eq!(node.lines().count(), docs.len());
+        assert_eq!(mismatches, 0);
+    }
+}
