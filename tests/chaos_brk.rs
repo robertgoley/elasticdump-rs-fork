@@ -1514,3 +1514,84 @@ async fn l613_ssl_cert_env_is_honoured_or_falls_back_loudly() {
         }
     }
 }
+
+// L-614 (TST-BRK-SRV-002): `_bulk` answers 5xx longer than the retry budget. Without
+// --ignore-errors the run stops with exit 1 naming the status. With --ignore-errors (Q3: an
+// explicit opt-in) it goes on, and every lost document is counted: "Failed Writes" equals
+// the documents of the failed batches, "Total Writes" the rest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l614_bulk_5xx_beyond_the_retry_budget_is_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let lines: String = (0..10)
+        .map(|i| format!("{}\n", hit(&i.to_string(), "{}")))
+        .collect();
+    std::fs::write(&input, lines).unwrap();
+    let ok2 =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    for status in [500u16, 502, 503] {
+        for ignore in [false, true] {
+            let tag = format!("HTTP {status} ignore-errors={ignore}");
+            // 5 batches of 2; batch 2 (all 3 attempts) and batch 4 (all 3 attempts) fail
+            let fail = || Reply::json(status, r#"{"error":"overloaded"}"#);
+            let replies: Vec<Reply> = vec![
+                Reply::ok(ok2),
+                fail(),
+                fail(),
+                fail(),
+                Reply::ok(ok2),
+                fail(),
+                fail(),
+                fail(),
+                Reply::ok(ok2),
+            ];
+            let m = RouterMock::builder()
+                .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+                .route(Route::contains("POST", "/_bulk").replies(replies))
+                .fallback(Reply::ok(
+                    r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+                ))
+                .start()
+                .await;
+            let mut a = s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/dst", m.url()),
+                "--noRefresh",
+                "--limit",
+                "2",
+                "--concurrency",
+                "1",
+                "--retryAttempts",
+                "2",
+                "--retryDelay",
+                "1",
+            ]);
+            if ignore {
+                a.push("--ignore-errors".into());
+            }
+            let o = run_async(a, vec![]).await;
+            let err = stderr(&o);
+            println!(
+                "L-614 {tag}: exit {:?}; {}",
+                o.status.code(),
+                err.lines()
+                    .filter(|l| l.contains("Writes") || l.starts_with("Error"))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            );
+            if ignore {
+                assert_eq!(o.status.code(), Some(0), "{tag}: {err}");
+                assert!(
+                    err.contains("Total Writes: 6") && err.contains("Failed Writes: 4"),
+                    "{tag}: {err}"
+                );
+                assert_eq!(count(&m.requests(), "POST", "/dst/_bulk"), 9, "{tag}");
+            } else {
+                assert_eq!(o.status.code(), Some(1), "{tag}: {err}");
+                assert!(err.contains(&format!("HTTP {status}")), "{tag}: {err}");
+            }
+        }
+    }
+}
