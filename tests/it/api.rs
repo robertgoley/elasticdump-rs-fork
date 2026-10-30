@@ -274,3 +274,159 @@ async fn search_templates_inline_and_stored_match_plain_query() {
     c.delete_index(&src).await;
 }
 
+// L-410 (TST-API-015): `--searchBody` variants are passed through and their output shapes
+// hold on every version; `size` is overridden by `--limit`; a user `sort` and a user `slice`
+// are honoured; restore takes routing from `fields._routing` (meta order `X`, `_X`,
+// `fields.X`, `fields._X`, unit-tested in pipeline::bulk).
+#[tokio::test]
+async fn search_body_variants_and_meta_from_fields() {
+    let c = Cluster::from_env();
+    let src = unique("api_sbv");
+    c.delete_index(&src).await;
+    c.ok(
+        "PUT",
+        &src,
+        Some(serde_json::json!({
+            "settings": {"number_of_shards": 2, "number_of_replicas": 0},
+            "mappings": {"properties": {"n": {"type": "long"}, "k": {"type": "keyword"}, "x": {"type": "keyword", "store": true}}}
+        })),
+    )
+    .await;
+    let mut nd = String::new();
+    for i in 0..300 {
+        nd.push_str(&format!(
+            "{{\"index\":{{\"_index\":\"{src}\",\"_id\":\"{i}\",\"routing\":\"r{}\"}}}}\n",
+            i % 3
+        ));
+        nd.push_str(&format!(
+            "{{\"n\":{i},\"k\":\"k{i}\",\"x\":\"x{i}\",\"y\":{{\"z\":{i}}}}}\n"
+        ));
+    }
+    c.bulk_raw(nd).await;
+    c.ok("POST", &format!("{src}/_refresh"), None).await;
+    let parsed = |f: &Path| -> Vec<Value> {
+        lines(f)
+            .iter()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    };
+    let check = |name: &str, docs: &[Value], pred: &dyn Fn(&Value) -> bool| {
+        assert_eq!(docs.len(), 300, "{name}");
+        for d in docs {
+            assert!(pred(d), "{name}: {d}");
+            assert!(d["_routing"].is_string(), "{name}: routing kept: {d}");
+        }
+    };
+    type Pred = Box<dyn Fn(&Value) -> bool>;
+    let variants: Vec<(&str, &str, Pred)> = vec![
+        (
+            "includes",
+            r#"{"_source":{"includes":["n"]}}"#,
+            Box::new(|d| d["_source"].as_object().unwrap().keys().eq(["n"].iter())),
+        ),
+        (
+            "excludes",
+            r#"{"_source":{"excludes":["y"]}}"#,
+            Box::new(|d| d["_source"].get("y").is_none() && d["_source"]["k"].is_string()),
+        ),
+        (
+            "stored_fields",
+            r#"{"stored_fields":["x"]}"#,
+            Box::new(|d| d["fields"]["x"][0].is_string() && d.get("_source").is_none()),
+        ),
+        (
+            "docvalue_fields",
+            r#"{"docvalue_fields":["k"]}"#,
+            Box::new(|d| d["fields"]["k"][0] == d["_source"]["k"]),
+        ),
+        (
+            "fields",
+            r#"{"fields":["k"],"_source":false}"#,
+            Box::new(|d| d["fields"]["k"][0].is_string() && d.get("_source").is_none()),
+        ),
+        (
+            "size override",
+            r#"{"query":{"match_all":{}},"size":5}"#,
+            Box::new(|d| d["_source"]["n"].is_u64()),
+        ),
+    ];
+    for (name, body, pred) in &variants {
+        let (f, o) = dump(&c, &src, &["--limit", "50", "--searchBody", body]).await;
+        assert_success(&o);
+        check(name, &parsed(&f), pred.as_ref());
+        let _ = std::fs::remove_file(f);
+    }
+    // user sort is kept (descending n)
+    let (f, o) = dump(
+        &c,
+        &src,
+        &[
+            "--limit",
+            "50",
+            "--searchBody",
+            r#"{"sort":[{"n":"desc"}]}"#,
+        ],
+    )
+    .await;
+    assert_success(&o);
+    let ns: Vec<u64> = parsed(&f)
+        .iter()
+        .map(|d| d["_source"]["n"].as_u64().unwrap())
+        .collect();
+    assert_eq!(ns, (0..300).rev().collect::<Vec<_>>(), "user sort");
+    let _ = std::fs::remove_file(f);
+    // a user slice is honoured: same ids as the server's own sliced search
+    let sliced = r#"{"query":{"match_all":{}},"slice":{"id":0,"max":2}}"#;
+    let (f, o) = dump(&c, &src, &["--limit", "50", "--searchBody", sliced]).await;
+    assert_success(&o);
+    let got: std::collections::BTreeSet<String> = parsed(&f)
+        .iter()
+        .map(|d| d["_id"].as_str().unwrap().to_string())
+        .collect();
+    let v = c
+        .ok(
+            "POST",
+            &format!("{src}/_search?scroll=1m"),
+            Some(serde_json::json!({"size": 1000, "slice": {"id": 0, "max": 2}, "_source": false})),
+        )
+        .await;
+    let want: std::collections::BTreeSet<String> = v["hits"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["_id"].as_str().unwrap().to_string())
+        .collect();
+    if let Some(sid) = v["_scroll_id"].as_str() {
+        let _ = c
+            .call(
+                "DELETE",
+                "_search/scroll",
+                Some(serde_json::json!({"scroll_id": [sid]})),
+            )
+            .await;
+    }
+    assert!(!got.is_empty() && got.len() < 300);
+    assert_eq!(got, want, "user slice");
+    let _ = std::fs::remove_file(f);
+    // restore: routing only in fields._routing (array form) is applied
+    let dst = unique("api_sbv_dst");
+    c.delete_index(&dst).await;
+    c.ok(
+        "PUT",
+        &dst,
+        Some(serde_json::json!({"settings": {"number_of_shards": 2, "number_of_replicas": 0}})),
+    )
+    .await;
+    let file = tmp_path("api_fields_routing", "json");
+    std::fs::write(&file, "{\"_index\":\"x\",\"_id\":\"a\",\"fields\":{\"_routing\":[\"rq\"]},\"_source\":{\"v\":1}}\n").unwrap();
+    let o = run(io(&c, file.to_str().unwrap(), &c.url_with_auth(&dst), &[])).await;
+    assert_success(&o);
+    let (st, d) = c
+        .call("GET", &format!("{dst}/_doc/a?routing=rq"), None)
+        .await;
+    assert_eq!(st, 200, "{d}");
+    assert_eq!(d["_routing"], "rq", "{d}");
+    let _ = std::fs::remove_file(file);
+    c.delete_index(&src).await;
+    c.delete_index(&dst).await;
+}

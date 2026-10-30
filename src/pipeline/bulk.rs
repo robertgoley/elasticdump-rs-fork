@@ -737,6 +737,29 @@ mod tests {
     }
 
     #[test]
+    fn meta_lookup_order_matches_elasticdump() {
+        // TST-API-015: `X`, then `_X`, then `fields.X`, then `fields._X`; one-element arrays unwrap
+        let t = Top::parse(
+            br#"{"routing":"a","_routing":"b","fields":{"routing":["c"],"_routing":["d"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(super::meta(&t, "routing").as_deref(), Some("\"a\""));
+        let t =
+            Top::parse(br#"{"_routing":"b","fields":{"routing":["c"],"_routing":["d"]}}"#).unwrap();
+        assert_eq!(super::meta(&t, "routing").as_deref(), Some("\"b\""));
+        let t = Top::parse(br#"{"fields":{"routing":["c"],"_routing":["d"]}}"#).unwrap();
+        assert_eq!(super::meta(&t, "routing").as_deref(), Some("\"c\""));
+        let t = Top::parse(br#"{"fields":{"_routing":["d"]}}"#).unwrap();
+        assert_eq!(super::meta(&t, "routing").as_deref(), Some("\"d\""));
+        let t = Top::parse(br#"{"fields":{"_routing":["d","e"]}}"#).unwrap();
+        assert_eq!(
+            super::meta(&t, "routing"),
+            None,
+            "multi-valued is not a meta value"
+        );
+    }
+
+    #[test]
     fn index_action_keeps_raw_source_and_routing() {
         let mut s = sink(os(), |_| {});
         assert_eq!(
