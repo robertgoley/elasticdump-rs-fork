@@ -17,15 +17,17 @@ pub use sink::{FileSink, Sink};
 pub use window::DocWindow;
 
 /// Copy documents from a file (or stdin) into `sink`, honouring
-/// `--offset`/`--size`. Returns the number of documents written.
+/// `--offset`/`--size`; documents over `max_doc` bytes (`--maxDocMb`) are
+/// a fatal error. Returns the number of documents written.
 pub async fn file_to_sink(
     input: Option<PathBuf>,
     limit: usize,
+    max_doc: Option<usize>,
     mut window: DocWindow,
     mut sink: Sink,
     cancel: CancellationToken,
 ) -> Result<WriteReport> {
-    let mut rx = file_source::spawn_file_source(input, limit, 4, cancel.clone());
+    let mut rx = file_source::spawn_file_source(input, limit, max_doc, 4, cancel.clone());
     let result: Result<()> = async {
         if window.is_exhausted() {
             return Ok(());

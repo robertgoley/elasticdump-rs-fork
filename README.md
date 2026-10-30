@@ -87,7 +87,7 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices`, `--workers`, `--bufferSize`,
 `--searchType scroll|pit`, `--skip-existing`, `--excludeSettings`, `--maxBulkBytes`, `--retryOn`,
 `--retryBackoff`, `--noImplicitRetry`, `--insecure`/`--input-insecure`/`--output-insecure`, `--username`/`--password`
-(input), `--caFile`, `--requestTimeout`, `--idleTimeout` (seconds of server silence before a request fails or is retried; default 300, 0 = never; unlike Node, a stalled server cannot hang a run), `--maxResponseMb` (largest response body read into memory, default 256, 0 = unlimited; a bigger page fails with a hint to lower `--limit` instead of an OOM kill), `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
+(input), `--caFile`, `--requestTimeout`, `--idleTimeout` (seconds of server silence before a request fails or is retried; default 300, 0 = never; unlike Node, a stalled server cannot hang a run), `--maxResponseMb` (largest response body read into memory, default 256, 0 = unlimited; a bigger page fails with a hint to lower `--limit` instead of an OOM kill), `--maxDocMb` (largest single document read from a file or stdin, default 100 like `http.max_content_length`, 0 = unlimited; a bigger one stops the run naming its position instead of being buffered whole), `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
 environment proxy is used, a warning names it).
 
 Input safety: every hit is written as exactly one NDJSON line (pretty-printed `_source` is flattened),

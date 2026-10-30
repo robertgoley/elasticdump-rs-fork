@@ -2526,3 +2526,71 @@ async fn malformed_values_are_rejected_per_line_with_their_number() {
         0
     );
 }
+
+// L-450 (BRK-IN-007): a giant single value stops the run with its position and
+// a --maxDocMb hint instead of being buffered whole; nothing of that batch is sent.
+#[tokio::test(flavor = "multi_thread")]
+async fn giant_documents_are_refused_with_a_size_hint() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let big = "x".repeat(3 << 20);
+    std::fs::write(
+        &input,
+        format!(
+            "{}\n{{\"_id\":\"big\",\"_source\":{{\"v\":\"{big}\"}}}}\n{}\n",
+            r#"{"_id":"g1","_source":{"a":1}}"#, r#"{"_id":"g2","_source":{"a":2}}"#
+        ),
+    )
+    .unwrap();
+    let ok = r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    let mock = || {
+        RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok)))
+            .fallback(Reply::ok(
+                r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+            ))
+            .start()
+    };
+    let m = mock().await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m.url()),
+            "--maxDocMb".into(),
+            "1".into(),
+            "--noRefresh".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(err.contains("document 2 of the input"), "{err}");
+    assert!(err.contains("larger than 1 MB"), "{err}");
+    assert!(err.contains("--maxDocMb"), "{err}");
+    let bulks = m
+        .requests()
+        .iter()
+        .filter(|r| r.path.ends_with("/_bulk"))
+        .count();
+    assert_eq!(bulks, 0, "{err}");
+    // with the default cap (100 MB) the same input goes through
+    let m2 = mock().await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m2.url()),
+            "--noRefresh".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+}

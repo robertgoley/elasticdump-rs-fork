@@ -656,6 +656,7 @@ pub async fn run() -> Result<()> {
                     pipeline::file_to_sink(
                         file_path(inp),
                         cli.limit,
+                        (cli.max_doc_mb > 0).then_some(cli.max_doc_mb << 20),
                         window,
                         sink,
                         tokio_util::sync::CancellationToken::new(),

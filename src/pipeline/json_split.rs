@@ -16,6 +16,10 @@ pub struct ValueSplitter {
     escaped: bool,
     /// Scalar top-level value (number/literal/string) being scanned.
     scalar: bool,
+    /// Largest value accepted, in bytes (`None` = unlimited). Buffering
+    /// stops as soon as a value grows past it, so a giant value cannot
+    /// exhaust memory.
+    max_value: Option<usize>,
 }
 
 fn is_ws(b: u8) -> bool {
@@ -25,6 +29,24 @@ fn is_ws(b: u8) -> bool {
 impl ValueSplitter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Refuse values larger than `max` bytes (see [`ValueSplitter::next_value`]).
+    pub fn with_max_value(max: Option<usize>) -> Self {
+        Self {
+            max_value: max,
+            ..Self::default()
+        }
+    }
+
+    fn check_size(&self, len: usize) -> Result<(), String> {
+        match self.max_value {
+            Some(max) if len > max => Err(format!(
+                "a single document is larger than {} (it was not read further)",
+                human_size(max)
+            )),
+            _ => Ok(()),
+        }
     }
 
     pub fn push(&mut self, data: &[u8]) {
@@ -50,6 +72,7 @@ impl ValueSplitter {
                 if eof {
                     if let Some(start) = self.start {
                         if self.scalar && !self.in_string {
+                            self.check_size(self.buf.len() - start)?;
                             let v = self.buf[start..].to_vec();
                             self.reset_value();
                             self.buf.clear();
@@ -58,6 +81,9 @@ impl ValueSplitter {
                         }
                         return Err("unexpected end of input inside a JSON value".to_string());
                     }
+                }
+                if let Some(start) = self.start {
+                    self.check_size(self.buf.len() - start)?;
                 }
                 self.compact();
                 return Ok(None);
@@ -97,6 +123,7 @@ impl ValueSplitter {
                     }
                     if self.scalar {
                         if is_ws(b) || b == b',' || b == b'{' || b == b'[' {
+                            self.check_size(self.pos - start)?;
                             let v = self.buf[start..self.pos].to_vec();
                             self.reset_value();
                             return Ok(Some(v));
@@ -114,6 +141,7 @@ impl ValueSplitter {
                             self.depth -= 1;
                             if self.depth == 0 {
                                 self.pos += 1;
+                                self.check_size(self.pos - start)?;
                                 let v = self.buf[start..self.pos].to_vec();
                                 self.reset_value();
                                 return Ok(Some(v));
@@ -133,6 +161,14 @@ impl ValueSplitter {
         self.in_string = false;
         self.escaped = false;
         self.scalar = false;
+    }
+}
+
+fn human_size(n: usize) -> String {
+    if n >= 1 << 20 && n % (1 << 20) == 0 {
+        format!("{} MB", n >> 20)
+    } else {
+        format!("{n} bytes")
     }
 }
 
@@ -243,6 +279,35 @@ mod tests {
             all(b"\"{\\\"x\\\":1}\"\n42", 2),
             vec![r#""{\"x\":1}""#, "42"]
         );
+    }
+
+    #[test]
+    fn values_over_the_size_cap_are_refused_without_buffering_them() {
+        // a complete value just over the cap, inside one chunk
+        let mut s = ValueSplitter::with_max_value(Some(16));
+        s.push(b"{\"a\":1}\n{\"b\":\"0123456789abcdef\"}\n");
+        assert_eq!(s.next_value(false).unwrap().unwrap(), b"{\"a\":1}");
+        let e = s.next_value(false).unwrap_err();
+        assert!(e.contains("larger than 16 bytes"), "{e}");
+        // an unterminated giant value is refused once the buffer passes the cap
+        let mut s = ValueSplitter::with_max_value(Some(1 << 20));
+        s.push(b"{\"big\":\"");
+        let chunk = vec![b'x'; 64 << 10];
+        let mut refused = None;
+        for i in 0..64 {
+            s.push(&chunk);
+            if let Err(e) = s.next_value(false) {
+                refused = Some((i, e));
+                break;
+            }
+        }
+        let (i, e) = refused.expect("refused");
+        assert!(i <= 16, "refused after {i} chunks");
+        assert!(e.contains("larger than 1 MB"), "{e}");
+        // a scalar at EOF and at the cap exactly is fine
+        let mut s = ValueSplitter::with_max_value(Some(4));
+        s.push(b"1234");
+        assert_eq!(s.next_value(true).unwrap().unwrap(), b"1234");
     }
 
     #[test]

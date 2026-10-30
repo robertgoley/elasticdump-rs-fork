@@ -402,6 +402,12 @@ pub struct Cli {
     #[arg(long = "maxResponseMb", default_value_t = crate::http::DEFAULT_MAX_RESPONSE_MB)]
     pub max_response_mb: usize,
 
+    /// Extension: largest single document read from a file or stdin, in MB (0 = unlimited);
+    /// a bigger one stops the run with its position instead of being buffered whole.
+    /// The default matches the http.max_content_length default of Elasticsearch/OpenSearch
+    #[arg(long = "maxDocMb", default_value_t = 100)]
+    pub max_doc_mb: usize,
+
     // ------------------------------------------------------------ retries
     /// Retries per request (0 = 4 implicit retries unless --noImplicitRetry)
     #[arg(long = "retryAttempts", default_value_t = 0)]

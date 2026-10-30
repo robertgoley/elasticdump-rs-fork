@@ -86,6 +86,7 @@ pub fn open_reader_counted(
 fn read_loop(
     path: Option<PathBuf>,
     limit: usize,
+    max_doc: Option<usize>,
     tx: &mpsc::Sender<Result<FileBatch>>,
     cancel: &CancellationToken,
 ) -> Result<()> {
@@ -97,7 +98,7 @@ fn read_loop(
     let mut reader = open_reader_counted(path.as_ref(), Arc::clone(&raw_bytes))?;
     let mut decoded = 0u64;
     let mut docs_read = 0u64;
-    let mut splitter = ValueSplitter::new();
+    let mut splitter = ValueSplitter::with_max_value(max_doc);
     let mut chunk = vec![0u8; READ_CHUNK];
     let mut batch = FileBatch::default();
     let mut eof = false;
@@ -121,7 +122,16 @@ fn read_loop(
         loop {
             let value = splitter
                 .next_value(eof)
-                .map_err(|e| anyhow!("Invalid JSON in {name}: {e}"))?;
+                .map_err(|e| {
+                    if e.starts_with("a single document is larger") {
+                        anyhow!(
+                            "{name}: document {} of the input: {e}; the {docs_read} documents before it were read. Raise --maxDocMb (0 = unlimited) if the destination accepts requests that big (Elasticsearch/OpenSearch refuse bodies over http.max_content_length, 100 MB by default), or remove the document from the input",
+                            docs_read + 1
+                        )
+                    } else {
+                        anyhow!("Invalid JSON in {name}: {e}")
+                    }
+                })?;
             let Some(value) = value else { break };
             let line = single_line(value);
             if docs_read == 0 {
@@ -154,12 +164,13 @@ fn read_loop(
 pub fn spawn_file_source(
     path: Option<PathBuf>,
     limit: usize,
+    max_doc: Option<usize>,
     buffer: usize,
     cancel: CancellationToken,
 ) -> mpsc::Receiver<Result<FileBatch>> {
     let (tx, rx) = mpsc::channel(buffer.max(1));
     tokio::task::spawn_blocking(move || {
-        if let Err(e) = read_loop(path, limit, &tx, &cancel) {
+        if let Err(e) = read_loop(path, limit, max_doc, &tx, &cancel) {
             let _ = tx.blocking_send(Err(e));
         }
     });
@@ -172,7 +183,7 @@ mod tests {
     use std::io::Write;
 
     async fn collect(path: PathBuf, limit: usize) -> Vec<(String, u64)> {
-        let mut rx = spawn_file_source(Some(path), limit, 2, CancellationToken::new());
+        let mut rx = spawn_file_source(Some(path), limit, None, 2, CancellationToken::new());
         let mut out = vec![];
         while let Some(b) = rx.recv().await {
             let b = b.unwrap();
@@ -216,7 +227,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("bad.json");
         std::fs::write(&p, "{\"a\":1}\n{\"a\":").unwrap();
-        let mut rx = spawn_file_source(Some(p), 10, 2, CancellationToken::new());
+        let mut rx = spawn_file_source(Some(p), 10, None, 2, CancellationToken::new());
         let mut saw_err = false;
         while let Some(b) = rx.recv().await {
             if b.is_err() {
@@ -248,7 +259,7 @@ mod tests {
             for cut in (2..full.len()).step_by(step) {
                 let p = dir.path().join(format!("t{cut}.json.{ext}"));
                 std::fs::write(&p, &full[..cut]).unwrap();
-                let mut rx = spawn_file_source(Some(p), 500, 2, CancellationToken::new());
+                let mut rx = spawn_file_source(Some(p), 500, None, 2, CancellationToken::new());
                 let mut err = None;
                 let mut docs = 0;
                 while let Some(b) = rx.recv().await {
@@ -268,7 +279,7 @@ mod tests {
             // trailing garbage after the last frame/member is an error too
             let p = dir.path().join(format!("garbage.json.{ext}"));
             std::fs::write(&p, [&full[..], b"garbage after the stream"].concat()).unwrap();
-            let mut rx = spawn_file_source(Some(p), 500, 2, CancellationToken::new());
+            let mut rx = spawn_file_source(Some(p), 500, None, 2, CancellationToken::new());
             let mut failed = false;
             while let Some(b) = rx.recv().await {
                 failed |= b.is_err();
