@@ -1,0 +1,44 @@
+{
+  "index_templates": {
+    ".deprecation-indexing-template": true,
+    ".slm-history": true,
+    ".watch-history-13": true,
+    "ilm-history": true,
+    "logs": true,
+    "metrics": true,
+    "synthetics": true
+  },
+  "component_templates": {
+    ".deprecation-indexing-mappings": true,
+    ".deprecation-indexing-settings": true,
+    "data-streams-mappings": true,
+    "logs-mappings": true,
+    "logs-settings": true,
+    "metrics-mappings": true,
+    "metrics-settings": true,
+    "synthetics-mappings": true,
+    "synthetics-settings": true
+  },
+  "legacy_templates": {
+    ".monitoring-alerts-7": false,
+    ".monitoring-beats": false,
+    ".monitoring-es": false,
+    ".monitoring-kibana": false,
+    ".monitoring-logstash": false
+  },
+  "ilm_policies": {
+    ".deprecation-indexing-ilm-policy": true,
+    ".fleet-actions-results-ilm-policy": true,
+    "180-days-default": true,
+    "30-days-default": true,
+    "365-days-default": true,
+    "7-days-default": true,
+    "90-days-default": true,
+    "ilm-history-ilm-policy": true,
+    "logs": true,
+    "metrics": true,
+    "slm-history-ilm-policy": true,
+    "synthetics": true,
+    "watch-history-ilm-policy": true
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "index_templates": {
+    ".slm-history": true,
+    ".triggered_watches": true,
+    ".watch-history-12": true,
+    ".watches": true,
+    "ilm-history": true,
+    "logs": true,
+    "metrics": true,
+    "synthetics": true
+  },
+  "component_templates": {
+    "logs-mappings": true,
+    "logs-settings": true,
+    "metrics-mappings": true,
+    "metrics-settings": true,
+    "synthetics-mappings": true,
+    "synthetics-settings": true
+  },
+  "legacy_templates": {
+    ".logstash-management": false,
+    ".monitoring-alerts-7": false,
+    ".monitoring-beats": false,
+    ".monitoring-es": false,
+    ".monitoring-kibana": false,
+    ".monitoring-logstash": false,
+    ".transform-internal-005": false,
+    ".transform-notifications-000002": false
+  },
+  "ilm_policies": {
+    "ilm-history-ilm-policy": false,
+    "logs": false,
+    "metrics": false,
+    "slm-history-ilm-policy": false,
+    "synthetics": false,
+    "watch-history-ilm-policy": false
+  }
+}

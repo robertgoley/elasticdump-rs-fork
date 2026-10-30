@@ -633,6 +633,74 @@ async fn cleanup(c: &Cluster) {
     c.delete_index(DST).await;
 }
 
+/// TST-API-036: the version's built-in templates and policies (name -> `_meta.managed`), so
+/// that a new built-in in a future version shows up as drift and `--filterManaged` can be
+/// checked against each version's own list. Built-ins are installed asynchronously after
+/// startup: read until two reads 3 s apart agree (at most ~45 s).
+async fn builtins(c: &Cluster) -> serde_json::Value {
+    async fn snap(c: &Cluster) -> serde_json::Value {
+        let managed = |b: &serde_json::Value| {
+            b.pointer("/_meta/managed")
+                .and_then(|m| m.as_bool())
+                .unwrap_or(false)
+        };
+        let mut out = serde_json::Map::new();
+        for (key, path, list) in [
+            (
+                "index_templates",
+                "_index_template",
+                Some("index_templates"),
+            ),
+            (
+                "component_templates",
+                "_component_template",
+                Some("component_templates"),
+            ),
+            ("legacy_templates", "_template", None),
+            ("ilm_policies", "_ilm/policy", None),
+        ] {
+            let (st, v) = c.call("GET", path, None).await;
+            if st != 200 {
+                continue;
+            }
+            let mut m = std::collections::BTreeMap::new();
+            match list {
+                Some(l) => {
+                    for it in v[l].as_array().into_iter().flatten() {
+                        let name = it["name"].as_str().unwrap_or("").to_string();
+                        let body = it
+                            .as_object()
+                            .and_then(|o| {
+                                o.iter().find(|(k, _)| *k != "name").map(|(_, b)| b.clone())
+                            })
+                            .unwrap_or_default();
+                        m.insert(name, managed(&body));
+                    }
+                }
+                None => {
+                    for (name, body) in v.as_object().into_iter().flatten() {
+                        let b = body.get("policy").unwrap_or(body);
+                        m.insert(name.clone(), managed(b));
+                    }
+                }
+            }
+            m.retain(|k, _| !k.starts_with("golden") && !k.starts_with("it_"));
+            out.insert(key.into(), serde_json::to_value(m).unwrap());
+        }
+        serde_json::Value::Object(out)
+    }
+    let mut prev = snap(c).await;
+    for _ in 0..15 {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let next = snap(c).await;
+        if next == prev {
+            return next;
+        }
+        prev = next;
+    }
+    prev
+}
+
 #[tokio::test]
 #[ignore = "recording only: scripts/golden/record.sh (IT_RECORD=1)"]
 async fn record() {
@@ -650,6 +718,15 @@ async fn record() {
     let root = golden_root().join(format!("{engine}-{version}"));
     let only = env("GOLDEN_CASE");
     cleanup(&c).await;
+    if only.is_none() {
+        std::fs::create_dir_all(&root).unwrap();
+        let b = builtins(&c).await;
+        std::fs::write(
+            root.join("builtins.json"),
+            serde_json::to_string_pretty(&b).unwrap() + "\n",
+        )
+        .unwrap();
+    }
     seed(&c).await;
     for case in CASES {
         if only.as_deref().is_some_and(|o| o != case.name) {

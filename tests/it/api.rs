@@ -1119,3 +1119,158 @@ async fn legacy_template_round_trip_with_warnings_once() {
     let _ = std::fs::remove_file(file);
     c.ok("DELETE", &format!("_template/{name}"), None).await;
 }
+
+// L-420 (TST-API-036): component + composable index templates round trip (`composed_of`
+// order, `priority`, `data_stream`, `_meta`), and `--filterManaged` drops exactly the
+// version's `_meta.managed: true` templates (built-in list snapshotted per version in
+// tests/golden/<engine>-<version>/builtins.json by the golden recorder).
+#[tokio::test]
+async fn composable_templates_round_trip_and_filter_managed() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let v = c.vnum().await;
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    if es && v < (7, 8) {
+        println!("SKIP: composable templates need ES >= 7.8");
+        return;
+    }
+    let p = unique("api_ctpl");
+    let (c1, c2, it) = (format!("{p}_c1"), format!("{p}_c2"), format!("{p}_it"));
+    c.ok(
+        "PUT",
+        &format!("_component_template/{c1}"),
+        Some(json!({"template": {"settings": {"number_of_shards": 1}}, "_meta": {"owner": "a"}})),
+    )
+    .await;
+    c.ok("PUT", &format!("_component_template/{c2}"), Some(json!({"template": {"mappings": {"properties": {"k": {"type": "keyword"}}}}, "version": 3}))).await;
+    let ds = !es || !c.is_oss().await;
+    let mut body = json!({"index_patterns": [format!("{p}-*")], "composed_of": [c2, c1], "priority": 777, "_meta": {"x": 1}});
+    if ds {
+        body["data_stream"] = json!({});
+    }
+    c.ok("PUT", &format!("_index_template/{it}"), Some(body))
+        .await;
+    let get = |path: String| {
+        let c = &c;
+        async move { c.ok("GET", &path, None).await }
+    };
+    let want_c = get(format!("_component_template/{p}_c*")).await;
+    let want_i = get(format!("_index_template/{it}")).await;
+    let fc = tmp_path("api_ctpl_c", "json");
+    let fi = tmp_path("api_ctpl_i", "json");
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&format!("{p}_c*")),
+            fc.to_str().unwrap(),
+            &["--type", "component_template"],
+        ))
+        .await,
+    );
+    assert_success(
+        &run(io(
+            &c,
+            &c.url_with_auth(&it),
+            fi.to_str().unwrap(),
+            &["--type", "index_template"],
+        ))
+        .await,
+    );
+    c.ok("DELETE", &format!("_index_template/{it}"), None).await;
+    c.ok("DELETE", &format!("_component_template/{c1}"), None)
+        .await;
+    c.ok("DELETE", &format!("_component_template/{c2}"), None)
+        .await;
+    assert_success(
+        &run(io(
+            &c,
+            fc.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &["--type", "component_template"],
+        ))
+        .await,
+    );
+    assert_success(
+        &run(io(
+            &c,
+            fi.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &["--type", "index_template"],
+        ))
+        .await,
+    );
+    assert_eq!(get(format!("_component_template/{p}_c*")).await, want_c);
+    assert_eq!(get(format!("_index_template/{it}")).await, want_i);
+    assert_eq!(
+        want_i["index_templates"][0]["index_template"]["composed_of"],
+        json!([c2, c1])
+    );
+
+    // --filterManaged against this version's own managed list (--filterSystemTemplates off,
+    // since its default name regex also drops `logs`, `metrics` and dot-prefixed templates)
+    let all = get("_index_template".into()).await;
+    let managed: std::collections::BTreeSet<String> = all["index_templates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| t["index_template"]["_meta"]["managed"] == json!(true))
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    let names = |f: &Path| -> std::collections::BTreeSet<String> {
+        let l = &lines(f)[0];
+        let v: Value = serde_json::from_str(l).unwrap();
+        let v: Value = v
+            .as_str()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .unwrap_or(v);
+        v["index_templates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (flag, keep_managed) in [("true", false), ("false", true)] {
+        let f = tmp_path("api_ctpl_all", "json");
+        assert_success(
+            &run(io(
+                &c,
+                &c.url_with_auth(""),
+                f.to_str().unwrap(),
+                &[
+                    "--type",
+                    "index_template",
+                    "--filterManaged",
+                    flag,
+                    "--filterSystemTemplates",
+                    "false",
+                ],
+            ))
+            .await,
+        );
+        let got = names(&f);
+        assert!(got.contains(&it), "--filterManaged {flag}: {got:?}");
+        assert_eq!(
+            managed.iter().all(|m| got.contains(m)),
+            keep_managed || managed.is_empty(),
+            "--filterManaged {flag}: managed {managed:?} got {got:?}"
+        );
+        if !keep_managed {
+            assert!(
+                managed.iter().all(|m| !got.contains(m)),
+                "{managed:?} in {got:?}"
+            );
+        }
+        let _ = std::fs::remove_file(f);
+    }
+    println!("managed index templates: {managed:?}");
+    for f in [&fc, &fi] {
+        let _ = std::fs::remove_file(f);
+    }
+    c.ok("DELETE", &format!("_index_template/{it}"), None).await;
+    c.ok("DELETE", &format!("_component_template/{c1}"), None)
+        .await;
+    c.ok("DELETE", &format!("_component_template/{c2}"), None)
+        .await;
+}
+
