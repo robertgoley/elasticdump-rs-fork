@@ -77,7 +77,8 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   `--ignore-errors`, `--ignore-es-write-errors` (default: continue past failed items), `--parseExtraFields`.
 * **Files:** `--fsCompress`, `--compressionType gzip|zstd`, `--compressionLevel`, `--fileSize`, `--maxRows`.
 * **Throughput:** `--concurrency`, `--throttleInterval`, `--intervalCap`, `--concurrencyInterval`,
-  `--carryoverConcurrencyCount`, `--maxSockets`, `--timeout` (ms of server *silence*, as in Node's `request`;
+  `--carryoverConcurrencyCount`, `--maxSockets` (a hard cap on requests in flight, and so on connections; it
+  wins over a higher `--concurrency`), `--timeout` (ms of server *silence*, as in Node's `request`;
   a slow but progressing response is not cut off; overrides `--idleTimeout`).
 * **Retries:** `--retryAttempts` (0 = Node's 4 implicit retries), `--retryDelay` (5000 ms).
 * **Trusted roots:** `--ca`/`--input-ca`/`--output-ca` when given; otherwise the system store (honouring

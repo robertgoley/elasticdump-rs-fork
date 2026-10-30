@@ -3039,3 +3039,74 @@ async fn l639_tiny_split_sizes_are_refused_or_warned() {
     );
     assert_eq!(std::fs::read_dir(&parts).unwrap().count(), 10_050);
 }
+
+// L-640 (TST-BRK-RES-007): --concurrency 16 with --maxSockets 1. `--maxSockets` is enforced as
+// a cap on requests in flight (not just idle connections, as a reqwest pool limit would be):
+// the server never sees two requests at once, and they share one keep-alive connection.
+#[tokio::test]
+async fn l640_max_sockets_caps_requests_in_flight() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("d.json");
+    std::fs::write(
+        &input,
+        "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n".repeat(300),
+    )
+    .unwrap();
+    for (sockets, want_max) in [("1", 1usize), ("4", 4)] {
+        let inflight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (i2, p2) = (Arc::clone(&inflight), Arc::clone(&peak));
+        let m = RouterMock::builder()
+            .handler(move |req| {
+                let (inflight, peak) = (Arc::clone(&i2), Arc::clone(&p2));
+                async move {
+                    if req.method == "GET" {
+                        return Reply::ok(INFO);
+                    }
+                    let now = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    inflight.fetch_sub(1, Ordering::SeqCst);
+                    let n = String::from_utf8_lossy(&req.body).lines().count() / 2;
+                    let items = vec![r#"{"index":{"status":201}}"#; n].join(",");
+                    Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+                }
+            })
+            .start()
+            .await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/z", m.url()),
+                "--concurrency",
+                "16",
+                "--maxSockets",
+                sockets,
+                "--limit",
+                "10",
+                "--noRefresh",
+            ]),
+            vec![],
+        )
+        .await;
+        assert!(o.status.success(), "{}", stderr(&o));
+        let p = peak.load(Ordering::SeqCst);
+        assert!(
+            p <= want_max,
+            "--maxSockets {sockets}: {p} requests in flight"
+        );
+        let conns: std::collections::BTreeSet<_> = m.requests().iter().map(|r| r.conn).collect();
+        println!(
+            "--maxSockets {sockets}: peak {p}, {} connection(s)",
+            conns.len()
+        );
+        if sockets == "1" {
+            assert_eq!(p, 1);
+            assert!(conns.len() <= 2, "{} connections", conns.len());
+        }
+    }
+}
