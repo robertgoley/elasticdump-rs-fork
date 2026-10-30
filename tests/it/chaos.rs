@@ -156,3 +156,54 @@ async fn l619_index_deleted_mid_dump_or_mid_restore_is_reported() {
         c.delete_index(i).await;
     }
 }
+
+fn stat(err: &str, key: &str) -> u64 {
+    err.lines()
+        .find_map(|l| l.strip_prefix(key))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+// L-621 (TST-BRK-SRV-011): two restores of the same file into the same index in parallel with
+// `--bulkAction create`. Every document is created exactly once: the written counts add up to
+// the file, the failed counts to the rest, each run with conflicts says why once (409, another
+// writer) and does not exit 0.
+#[tokio::test]
+async fn l621_parallel_create_restores_count_conflicts_correctly() {
+    let c = Cluster::from_env();
+    let src = unique("cc_src");
+    let dst = unique("cc_dst");
+    seed_index(&c, &src, 200).await;
+    let file = tmp_path("cc", "json");
+    assert_success(&run(io_args(&c, &c.url_with_auth(&src), file.to_str().unwrap())).await);
+    let n = lines(&file).len() as u64;
+    c.copy_shape(&src, &dst).await;
+    let mk = || {
+        let mut a = io_args(&c, file.to_str().unwrap(), &c.url_with_auth(&dst));
+        a.extend(s(&["--limit", "10", "--bulkAction", "create"]));
+        a
+    };
+    let (a1, a2) = (mk(), mk());
+    let (o1, o2) = tokio::join!(run_loud(a1), run_loud(a2));
+    let mut written = 0;
+    let mut failed = 0;
+    for o in [&o1, &o2] {
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let (w, f) = (stat(&err, "Total Writes:"), stat(&err, "Failed Writes:"));
+        written += w;
+        failed += f;
+        if f > 0 {
+            assert_ne!(o.status.code(), Some(0), "{err}");
+            assert_eq!(err.matches("version conflict (409)").count(), 1, "{err}");
+        } else {
+            assert_success(o);
+        }
+    }
+    assert_eq!(written, n, "each document created exactly once");
+    assert_eq!(failed, n, "every other attempt is a counted conflict");
+    c.ok("POST", &format!("{dst}/_refresh"), None).await;
+    assert_eq!(c.count(&dst).await, n);
+    for i in [&src, &dst] {
+        c.delete_index(i).await;
+    }
+}

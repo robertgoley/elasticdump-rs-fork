@@ -144,6 +144,8 @@ pub struct BulkSink {
     /// uuid of the single target index, noted once mid-run (TST-BRK-SRV-008).
     target_uuid: Option<String>,
     uuid_checked: bool,
+    /// The 409 explanation is printed once per run (TST-BRK-SRV-011).
+    conflict_hint_shown: bool,
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -328,6 +330,7 @@ impl BulkSink {
             first_batch: None,
             target_uuid: None,
             uuid_checked: false,
+            conflict_hint_shown: false,
         }
     }
 
@@ -439,6 +442,7 @@ impl BulkSink {
             first_batch: None,
             target_uuid: None,
             uuid_checked: false,
+            conflict_hint_shown: false,
         }
     }
 
@@ -927,6 +931,18 @@ impl BulkSink {
             } else if (status == 429 || status == 503) && self.opts.retry.attempts > 0 {
                 rejected.push((doc_idx, item.as_raw_str().to_string()));
             } else {
+                if status == 409 && !self.conflict_hint_shown {
+                    // TST-BRK-SRV-011: name the concurrent change once, not per document
+                    self.conflict_hint_shown = true;
+                    log::warn!(
+                        "version conflict (409): a document was created or changed by another writer (a concurrent restore, or an earlier run) between reads; it is counted as failed{}",
+                        if self.opts.action == BulkAction::Create {
+                            " (`--bulkAction index` overwrites instead of `create`)"
+                        } else {
+                            ""
+                        }
+                    );
+                }
                 self.report_failure(chunk[doc_idx], item.as_raw_str())?;
             }
         }
