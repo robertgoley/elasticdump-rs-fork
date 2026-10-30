@@ -2393,3 +2393,93 @@ async fn l629_numeric_ids_match_node_and_source_is_byte_exact() {
         stderr(&o)
     );
 }
+
+// L-630 (TST-BRK-IN-012): special characters. `_id`s with `/ ? # % + " \`, unicode, 512 and
+// 513 bytes travel JSON-encoded in the bulk body (never in a URL), exactly as given; the engine
+// owns the 512-byte rule (per-item 400). An --output index that breaks the naming rules
+// (uppercase, `#`, `,`, space, `*`, `/`, over 255 bytes) is a usage error before any request.
+#[tokio::test]
+async fn l630_special_characters_in_ids_and_index_names() {
+    let ids = [
+        "a/b".to_string(),
+        "a?b".into(),
+        "a#b".into(),
+        "a%b".into(),
+        "a+b".into(),
+        "a\"b".into(),
+        "a\\b".into(),
+        "ü-✓".into(),
+        "x".repeat(512),
+        "x".repeat(513),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("ids.json");
+    let body: String = ids
+        .iter()
+        .map(|i| serde_json::json!({"_index":"x","_id":i,"_source":{}}).to_string() + "\n")
+        .collect();
+    std::fs::write(&input, body).unwrap();
+    let items = vec![r#"{"index":{"status":201}}"#; ids.len()].join(",");
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(format!(
+            r#"{{"errors":false,"items":[{items}]}}"#
+        ))))
+        .fallback(Reply::ok("{}"))
+        .start()
+        .await;
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/z", m.url()),
+        ]),
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let reqs = m.requests();
+    let bulk = reqs.iter().find(|r| r.path.contains("_bulk")).unwrap();
+    assert_eq!(bulk.path, "/z/_bulk");
+    let sent: Vec<String> = String::from_utf8_lossy(&bulk.body)
+        .lines()
+        .step_by(2)
+        .map(|l| {
+            serde_json::from_str::<serde_json::Value>(l).unwrap()["index"]["_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(sent, ids);
+
+    let long = "x".repeat(256);
+    for (ix, why) in [
+        ("Upper", "must be lowercase"),
+        ("a%23b", "must not contain '#'"),
+        ("a,b", "must not contain ','"),
+        ("a%20b", "must not contain ' '"),
+        ("a*b", "must not contain '*'"),
+        ("a%2Fb", "must not contain '/'"),
+        (long.as_str(), "limited to 255 bytes"),
+    ] {
+        let m = RouterMock::builder()
+            .fallback(Reply::ok(INFO))
+            .start()
+            .await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/{ix}", m.url()),
+            ]),
+            vec![],
+        )
+        .await;
+        assert_eq!(o.status.code(), Some(2), "{ix}: {}", stderr(&o));
+        assert!(stderr(&o).contains(why), "{ix}: {}", stderr(&o));
+        assert!(m.requests().is_empty(), "{ix}: no request before the check");
+    }
+}

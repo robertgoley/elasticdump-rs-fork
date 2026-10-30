@@ -282,6 +282,15 @@ async fn build_sink(
             if cli.source_only() {
                 log::warn!("--sourceOnly with an Elasticsearch output: documents get new ids");
             }
+            if let Some(i) = &ep.index {
+                // TST-BRK-IN-012: refuse up front what the engine would refuse per document
+                let name = format!("{}{}{}", cli.prefix, i, cli.suffix);
+                if let Err(e) = crate::rename::validate_index_name(&name) {
+                    return Err(anyhow::Error::new(UsageError(format!(
+                        "the --output index '{name}' is not a valid index name: {e} (Elasticsearch and OpenSearch refuse it); nothing was written"
+                    ))));
+                }
+            }
             let client = config::build_client(cli, ep, Direction::Output, gate)?;
             let info = client
                 .info(retry, &tokio_util::sync::CancellationToken::new())
