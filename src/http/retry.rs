@@ -394,16 +394,19 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
             "TLS: the server certificate is not signed by a trusted CA; pass the cluster's CA with --input-ca/--output-ca (or --ca), or --insecure to skip verification (unsafe)",
         )
     } else if has("certificate expired") || has("Expired") {
-        (true, "TLS: the server certificate has expired")
+        (
+            true,
+            "TLS: the server certificate has expired; renew it, or pass --insecure to skip verification (unsafe)",
+        )
     } else if has("not valid yet") || has("NotValidYet") {
         (
             true,
-            "TLS: the server certificate is not valid yet; check the clocks of this machine and the server",
+            "TLS: the server certificate is not valid yet; check the clocks of this machine and the server, or pass --insecure to skip verification (unsafe)",
         )
     } else if has("not valid for name") || has("NotValidForName") {
         (
             true,
-            "TLS: hostname mismatch; connect with a host name or IP address listed in the certificate's subjectAltName",
+            "TLS: hostname mismatch; connect with a host name or IP address listed in the certificate's subjectAltName, or pass --insecure to skip verification (unsafe)",
         )
     } else if has("CertificateRequired") {
         (
@@ -421,7 +424,10 @@ pub fn tls_hint(chain: &str, plain_http: bool) -> Option<(bool, &'static str)> {
             "TLS: the server did not answer with TLS; this port probably serves plain HTTP, so use http://",
         )
     } else if has("invalid peer certificate") || has("BadCertificate") || has("UnknownCA") {
-        (true, "TLS: certificate verification failed")
+        (
+            true,
+            "TLS: certificate verification failed; pass the cluster's CA with --input-ca/--output-ca (or --ca), or --insecure to skip verification (unsafe)",
+        )
     } else if plain_http
         && (has("connection closed before message completed") || has("invalid HTTP version"))
     {

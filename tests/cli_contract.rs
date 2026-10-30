@@ -1897,6 +1897,23 @@ async fn tls_failures_have_one_clear_message() {
                 "{name}: TLS failure was retried: {err}"
             );
         }
+        // L-610 (TST-BRK-TLS-001): server certificate problems name the reason, the host
+        // and a way out (--ca / --insecure)
+        if [
+            "unknown CA",
+            "no CA given",
+            "expired",
+            "not yet valid",
+            "hostname mismatch",
+            "IP SAN only, by name",
+        ]
+        .contains(&name)
+        {
+            assert!(
+                err.contains("localhost") && err.contains("--insecure"),
+                "{name}: host and hint: {err}"
+            );
+        }
         assert!(!dir.path().join("o.json").exists());
     }
     drop(servers);
