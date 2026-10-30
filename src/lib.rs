@@ -4,6 +4,8 @@
 pub mod cli;
 pub mod config;
 pub mod endpoint;
+#[cfg(any(feature = "fuzz", test))]
+pub mod fuzz_api;
 pub mod http;
 pub mod meta;
 pub mod output;

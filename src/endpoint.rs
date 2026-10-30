@@ -282,12 +282,18 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
 
 /// Parse an `--httpAuthFile` (INI with `user=` and `password=`).
 pub fn read_auth_file(path: &str) -> Result<(String, String)> {
-    let ini = ini::Ini::load_from_file(path)
+    let text = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read --httpAuthFile '{path}'"))?;
+    parse_auth_ini(&text).map_err(|e| anyhow::anyhow!("--httpAuthFile '{path}': {e:#}"))
+}
+
+/// `user=` and `password=` from the text of an auth file.
+pub fn parse_auth_ini(text: &str) -> Result<(String, String)> {
+    let ini = ini::Ini::load_from_str(text).context("not a valid INI file")?;
     let section = ini.general_section();
     match (section.get("user"), section.get("password")) {
         (Some(u), Some(p)) => Ok((u.to_string(), p.to_string())),
-        _ => bail!("Malformed Auth File: '{path}' must define both user= and password="),
+        _ => bail!("Malformed Auth File: it must define both user= and password="),
     }
 }
 

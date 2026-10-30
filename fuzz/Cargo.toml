@@ -1,0 +1,89 @@
+[package]
+name = "elasticdump-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+elasticdump-rs = { path = "..", default-features = false, features = ["fuzz"] }
+
+# Not part of the main workspace (nightly + sanitizer builds only).
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "json_split"
+path = "fuzz_targets/json_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codec_decode"
+path = "fuzz_targets/codec_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bulk_encode_doc"
+path = "fuzz_targets/bulk_encode_doc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extract_batch"
+path = "fuzz_targets/extract_batch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bulk_handle_response"
+path = "fuzz_targets/bulk_handle_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_size"
+path = "fuzz_targets/parse_size.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "endpoint_parse"
+path = "fuzz_targets/endpoint_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ilm_to_ism_convert"
+path = "fuzz_targets/ilm_to_ism_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "renamer_new_index"
+path = "fuzz_targets/renamer_new_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ini_auth_file"
+path = "fuzz_targets/ini_auth_file.rs"
+test = false
+doc = false
+bench = false

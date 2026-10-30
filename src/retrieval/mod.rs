@@ -49,6 +49,21 @@ enum CancelReason {
 /// Whether every hit must carry `_source` (see [`extract`]); set once per run.
 static REQUIRE_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Fuzz hook (TST-API-084): search response extraction, both pagination shapes.
+#[cfg(any(feature = "fuzz", test))]
+pub fn fuzz_extract_batch(data: &[u8]) {
+    let bytes = bytes::Bytes::copy_from_slice(data);
+    for st in [
+        crate::cli::SearchType::Scroll,
+        crate::cli::SearchType::PointInTime,
+    ] {
+        if let Ok(b) = extract::extract_batch(&bytes, &st) {
+            assert!(b.output.buffer.len() <= data.len() + b.output.doc_count as usize);
+        }
+        let _ = extract::extract_batch_metadata(&bytes, &st);
+    }
+}
+
 pub fn set_require_source(on: bool) {
     REQUIRE_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
 }

@@ -726,6 +726,16 @@ impl BulkSink {
         }
     }
 
+    /// Fuzz hook (TST-API-084): bulk response accounting for `chunk`.
+    #[cfg(any(feature = "fuzz", test))]
+    pub fn fuzz_handle_response(&mut self, resp: &[u8], chunk: &[&[u8]]) -> Result<()> {
+        let pending: Vec<usize> = (0..chunk.len()).collect();
+        for resent in [false, true] {
+            let _ = self.handle_response(resp, chunk, &pending, resent);
+        }
+        Ok(())
+    }
+
     /// Account the response for `pending` (indices into `chunk`); returns the
     /// item indices rejected with 429/503 for retry, with the item's response.
     fn handle_response(
