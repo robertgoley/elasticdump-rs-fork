@@ -193,26 +193,21 @@ pub async fn dump_data(
     let cancel = CancellationToken::new();
     let cancel_reason: Arc<OnceLock<CancelReason>> = Arc::new(OnceLock::new());
 
-    // First Ctrl+C cancels the pipeline for an orderly shutdown (scroll/PIT
+    // The first SIGINT/SIGTERM (crate::signals) cancels the pipeline for an orderly shutdown (scroll/PIT
     // cleanup, staged-output abort); a second one force-quits with the
     // conventional 130 exit status.
+    let graceful = crate::signals::graceful();
     let signal_task = tokio::spawn({
         let cancel = cancel.clone();
         let reason = cancel_reason.clone();
+        let interrupt = crate::signals::token();
         async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                let _ = reason.set(CancelReason::Interrupt);
-                log::warn!(
-                    "Interrupt received; cancelling dump and cleaning up (press Ctrl+C again to force-quit)"
-                );
-                cancel.cancel();
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    std::process::exit(130);
-                }
-            }
+            interrupt.cancelled().await;
+            let _ = reason.set(CancelReason::Interrupt);
+            cancel.cancel();
         }
     });
-    let _signal_guard = AbortOnDrop(signal_task);
+    let _signal_guard = (AbortOnDrop(signal_task), graceful);
 
     let retry = opts.retry;
     let search_body = opts.search_body.clone();
@@ -322,7 +317,7 @@ pub async fn dump_data(
         Err(error) => {
             if matches!(cancel_reason.get(), Some(CancelReason::Interrupt)) && is_cancelled(&error)
             {
-                return Err(anyhow::anyhow!("dump interrupted by user"));
+                return Err(crate::signals::interrupted_error());
             }
             return Err(error);
         }
@@ -566,9 +561,9 @@ pub async fn dump_data(
                     "Suppressed cancellation cascade after interrupt: {:#}",
                     cascade
                 );
-                anyhow::anyhow!("dump interrupted by user")
+                crate::signals::interrupted_error()
             }
-            None => anyhow::anyhow!("dump interrupted by user"),
+            None => crate::signals::interrupted_error(),
         };
         if let Some(output_target) = completed_output_target {
             output_target.abort().await;

@@ -96,7 +96,7 @@ a bulk input line that is not exactly one JSON object, has duplicate top-level k
 (`*`, `?`, `,`, `_all`, `.`, `..`, leading `-_+`, upper case, > 255 bytes) is rejected on its own and
 makes the run exit 1. `--headers` with CR/LF/NUL is a usage error.
 
-Exit status: 0 success; 1 error; 2 usage error; **3 finished, but documents were not written**
+Exit status: 0 success; 1 error; 2 usage error; **3 finished, but documents were not written**; 130 / 143 stopped by SIGINT / SIGTERM (both stop in order: the scroll or PIT is closed and staged output removed; a second signal force-quits)
 (`Failed Writes` > 0: bulk item errors such as 429 storms, flood-stage or write blocks, mapping errors,
 conflicts). Like Node, the run continues past failed items by default, but unlike Node it does not exit 0
 then; pass `--ignore-es-write-errors` (or `--ignore-errors`) explicitly to accept failed writes with status 0,

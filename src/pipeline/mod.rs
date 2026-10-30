@@ -33,7 +33,12 @@ pub async fn file_to_sink(
             return Ok(());
         }
         let mut seen = 0u64;
-        while let Some(batch) = rx.recv().await {
+        loop {
+            let batch = tokio::select! {
+                b = rx.recv() => b,
+                _ = cancel.cancelled() => None,
+            };
+            let Some(batch) = batch else { break };
             let batch = batch?;
             let skipped = window.pending_skip().min(batch.docs);
             let (slice, docs) = window.apply(&batch.buf, batch.docs);
@@ -51,6 +56,9 @@ pub async fn file_to_sink(
             if window.is_exhausted() {
                 break;
             }
+        }
+        if cancel.is_cancelled() && crate::signals::received().is_some() {
+            return Err(crate::signals::interrupted_error());
         }
         Ok(())
     }

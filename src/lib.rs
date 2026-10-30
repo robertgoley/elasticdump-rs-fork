@@ -11,6 +11,7 @@ pub mod pipeline;
 pub mod rename;
 pub mod retrieval;
 pub mod secrets;
+pub mod signals;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -87,6 +88,8 @@ pub fn exit_code(error: &anyhow::Error) -> i32 {
         2
     } else if error.downcast_ref::<WriteFailures>().is_some() {
         3
+    } else if let Some(signals::Interrupted(sig)) = error.downcast_ref::<signals::Interrupted>() {
+        128 + sig
     } else {
         1
     }
@@ -682,6 +685,7 @@ pub async fn run() -> Result<()> {
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
     let cli = Cli::parse_from(argv);
     init_logging(&cli);
+    signals::install();
     for w in &oos_warnings {
         log::warn!("{w}");
     }
@@ -731,13 +735,14 @@ pub async fn run() -> Result<()> {
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {
+                    let _graceful = signals::graceful();
                     pipeline::file_to_sink(
                         file_path(inp),
                         cli.limit,
                         (cli.max_doc_mb > 0).then_some(cli.max_doc_mb << 20),
                         window,
                         sink,
-                        tokio_util::sync::CancellationToken::new(),
+                        signals::token().child_token(),
                     )
                     .await?
                 }

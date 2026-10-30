@@ -2708,3 +2708,165 @@ async fn many_to_one_renames_are_refused_unless_allowed() {
     );
     assert!(bulks(&m).is_empty());
 }
+
+// L-454 (BRK-SIG-001): SIGTERM (what podman stop, Kubernetes and systemd send) is handled
+// like SIGINT: the scroll is cleared, staged split parts are removed, and the exit status
+// is 128 + the signal (143 / 130).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn sigterm_and_sigint_stop_cleanly_with_128_plus_signal() {
+    use std::time::{Duration, Instant};
+    use support::router_mock::{Fault, Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    let page = r#"{"_scroll_id":"s1","hits":{"total":{"value":1000000,"relation":"eq"},"hits":[{"_index":"i","_id":"1","_source":{"a":1}},{"_index":"i","_id":"2","_source":{"a":2}}]}}"#;
+    let leftovers = |d: &std::path::Path| -> Vec<String> {
+        std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("out") || n.contains(".part-"))
+            .collect()
+    };
+    let wait_exit = |child: &mut std::process::Child| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(s) = child.try_wait().unwrap() {
+                return s;
+            }
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("no exit within 20 s of the signal");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let signal = |pid: u32, sig: &str| {
+        assert!(
+            std::process::Command::new("kill")
+                .args([sig, &pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    use std::os::unix::process::ExitStatusExt;
+    // cluster -> split file output
+    for (sig, code) in [("-TERM", 143), ("-INT", 130)] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::prefix("POST", "/i/_search").reply(Reply::ok(page)))
+            .route(
+                Route::exact("POST", "/_search/scroll")
+                    .reply(Reply::ok(page).with_fault(Fault::Delay(Duration::from_millis(30)))),
+            )
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = bin()
+            .args([
+                "--input",
+                &format!("{}/i", m.url()),
+                "--output",
+                dir.path().join("out.json").to_str().unwrap(),
+                "--maxRows",
+                "2",
+                "--limit",
+                "2",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while m
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/_search/scroll")
+            .count()
+            < 5
+        {
+            assert!(Instant::now() < deadline, "dump never got going");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!leftovers(dir.path()).is_empty(), "parts are staged");
+        signal(child.id(), sig);
+        let status = tokio::task::block_in_place(|| wait_exit(&mut child));
+        let mut err = String::new();
+        std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err).unwrap();
+        assert_eq!(
+            status.code(),
+            Some(code),
+            "{sig}: {status:?} {:?} {err}",
+            status.signal()
+        );
+        assert!(err.contains("interrupted"), "{err}");
+        assert!(
+            leftovers(dir.path()).is_empty(),
+            "{sig}: {:?}",
+            leftovers(dir.path())
+        );
+        assert!(
+            m.requests()
+                .iter()
+                .any(|r| r.method == "DELETE" && r.path.starts_with("/_search/scroll")),
+            "{sig}: scroll cleared"
+        );
+    }
+    // file (a FIFO whose writer stays open) -> split file output
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("in.fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut child = bin()
+        .args([
+            "--input",
+            fifo.to_str().unwrap(),
+            "--output",
+            dir.path().join("out.json").to_str().unwrap(),
+            "--maxRows",
+            "2",
+            "--limit",
+            "2",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let writer = {
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            let mut w = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+            for i in 0..10 {
+                let _ = std::io::Write::write_all(
+                    &mut w,
+                    format!("{{\"_index\":\"i\",\"_id\":\"{i}\",\"_source\":{{}}}}\n").as_bytes(),
+                );
+            }
+            std::thread::sleep(Duration::from_secs(4)); // keep the input open
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while leftovers(dir.path()).len() < 2 {
+        assert!(Instant::now() < deadline, "restore never got going");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    signal(child.id(), "-TERM");
+    let status = tokio::task::block_in_place(|| wait_exit(&mut child));
+    let mut err = String::new();
+    std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err).unwrap();
+    assert_eq!(status.code(), Some(143), "{status:?} {err}");
+    assert!(
+        leftovers(dir.path()).is_empty(),
+        "{:?}",
+        leftovers(dir.path())
+    );
+    writer.join().unwrap();
+}
