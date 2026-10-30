@@ -315,6 +315,8 @@ struct Shared {
     conns: AtomicUsize,
     /// Force `Connection: close` on every reply (the old MockEs behaviour).
     close_always: bool,
+    idle_close: Option<(Duration, bool)>,
+    idle_closed: AtomicUsize,
 }
 
 /// A running router mock. Dropping it stops the accept loop.
@@ -330,6 +332,7 @@ pub struct RouterMockBuilder {
     fallback: Reply,
     handler: Option<Handler>,
     close_always: bool,
+    idle_close: Option<(Duration, bool)>,
 }
 
 impl RouterMockBuilder {
@@ -354,6 +357,12 @@ impl RouterMockBuilder {
         self.close_always = true;
         self
     }
+    /// Close a keep-alive connection that stays idle (no new request) for `after`, like a
+    /// load balancer's idle timeout: with a FIN, or with an RST when `rst` (TST-BRK-NET-006).
+    pub fn idle_close(mut self, after: Duration, rst: bool) -> Self {
+        self.idle_close = Some((after, rst));
+        self
+    }
     pub async fn start(self) -> RouterMock {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -369,6 +378,8 @@ impl RouterMockBuilder {
             recorded: Mutex::new(vec![]),
             conns: AtomicUsize::new(0),
             close_always: self.close_always,
+            idle_close: self.idle_close,
+            idle_closed: AtomicUsize::new(0),
         });
         let handle = tokio::spawn({
             let shared = Arc::clone(&shared);
@@ -397,6 +408,7 @@ impl RouterMock {
             fallback: Reply::json(404, r#"{"error":"router-mock: no route"}"#),
             handler: None,
             close_always: false,
+            idle_close: None,
         }
     }
     /// `http://127.0.0.1:PORT`
@@ -414,6 +426,10 @@ impl RouterMock {
     }
     pub fn connections(&self) -> usize {
         self.shared.conns.load(Ordering::SeqCst)
+    }
+    /// Connections closed by [`RouterMockBuilder::idle_close`].
+    pub fn idle_closed(&self) -> usize {
+        self.shared.idle_closed.load(Ordering::SeqCst)
     }
     /// Requests that matched no route.
     pub fn unmatched(&self) -> Vec<Recorded> {
@@ -433,7 +449,26 @@ impl Drop for RouterMock {
 async fn serve_conn(mut sock: TcpStream, conn: usize, shared: Arc<Shared>) {
     let mut buf = Vec::with_capacity(4096);
     loop {
-        let Some((mut req, client_close)) = read_request(&mut sock, &mut buf).await else {
+        let next = match shared.idle_close {
+            Some((after, rst)) if buf.is_empty() => {
+                // wait for the first byte of the next request at most `after`
+                match tokio::time::timeout(after, sock.peek(&mut [0u8; 1])).await {
+                    Ok(_) => read_request(&mut sock, &mut buf).await,
+                    Err(_) => {
+                        shared.idle_closed.fetch_add(1, Ordering::SeqCst);
+                        if rst {
+                            #[allow(deprecated)]
+                            let _ = sock.set_linger(Some(Duration::ZERO));
+                        } else {
+                            let _ = sock.shutdown().await;
+                        }
+                        return;
+                    }
+                }
+            }
+            _ => read_request(&mut sock, &mut buf).await,
+        };
+        let Some((mut req, client_close)) = next else {
             return;
         };
         req.conn = conn;

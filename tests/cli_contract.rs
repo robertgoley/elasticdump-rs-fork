@@ -2066,3 +2066,78 @@ async fn stalled_server_fails_within_the_idle_timeout() {
         );
     }
 }
+
+// L-443 (TST-BRK-NET-006): a load balancer closes idle keep-alive connections (after 300 ms here,
+// with a FIN or an RST) while the dump waits longer than that between pages
+// (--throttleInterval 600 with a 300 ms idle close; --bufferSize 1 so retrieval waits for the throttled
+// sink). The next scroll continuation must not fail on the dead pooled
+// connection: the dump completes with every page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_keep_alive_connections_do_not_fail_continuations() {
+    use std::time::Duration;
+    use support::router_mock::{Reply, Route, RouterMock};
+    let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
+    const N: usize = 10;
+    for rst in [false, true] {
+        let m = RouterMock::builder()
+            .idle_close(Duration::from_millis(300), rst)
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(
+                Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
+                    "s1",
+                    &[hit("1", "{}")],
+                    3,
+                ))),
+            )
+            .route(
+                Route::exact("POST", "/_search/scroll").replies(
+                    (2..=N)
+                        .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), "{}")], N)))
+                        .chain([Reply::ok(page("s1", &[], N))]),
+                ),
+            )
+            .fallback(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#))
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--limit".into(),
+                "1".into(),
+                "--throttleInterval".into(),
+                "600".into(),
+                "--bufferSize".into(),
+                "1".into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "rst={rst}: {err}");
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap().lines().count(),
+            N,
+            "rst={rst}: {err}"
+        );
+        assert!(
+            m.idle_closed() >= 2,
+            "rst={rst}: the LB closed idle connections ({} closes, {} connections, requests {:?})",
+            m.idle_closed(),
+            m.connections(),
+            m.requests()
+                .iter()
+                .map(|r| (r.conn, r.path.clone()))
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "rst={rst}: idle closes {}, connections {}",
+            m.idle_closed(),
+            m.connections()
+        );
+    }
+}
