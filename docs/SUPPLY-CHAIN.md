@@ -70,7 +70,8 @@ Negative check (2026-10-29): adding `libz-sys` and `num-traits` reports
   `security.yml`; it must compile the `it`/`load` tests, otherwise `lipsum` (used only by
   `tests/integration_test.rs`) is reported as unused. L-204 removed `thiserror`, which was declared but never used.
 - No `cargo hack` on the box. The crate's own features (`it`, `load`, `chaos`, `fuzz`, and the deprecated aliases
-  `large_scale_test` and `manual_test`) gate tests only; none of them changes the shipped binary.
+  `large_scale_test` and `manual_test`) gate tests only; none of them changes the shipped binary. The one
+  shipped feature is `encrypted-keys` (default; SUP-023).
 
 Every non-default feature enabled in `Cargo.toml` is listed below with its reason.
 
@@ -81,11 +82,10 @@ Every non-default feature enabled in `Cargo.toml` is listed below with its reaso
 | tokio | `sync`, `time` | channels and semaphores between reader and writers; retry backoff and throttling |
 | tokio | `signal` | SIGINT/SIGTERM handling (staging-file cleanup) |
 | reqwest | `gzip` | transparent decompression of gzip-encoded responses |
-| reqwest | `http2` | servers that negotiate h2 over ALPN |
 | reqwest | `rustls-tls-manual-roots` | rustls only, and we choose the trust roots (`--ca`, native, webpki); no OpenSSL (deny.toml bans it) |
 | rustls | `ring`, `std`, `tls12` | crypto provider without aws-lc/cmake; TLS 1.2 for older clusters |
 | rustls | `logging` | rustls handshake diagnostics under `RUST_LOG` (header values are marked sensitive; see H-10) |
-| pkcs8 | `encryption`, `pem`, `std` | encrypted PKCS#8 client keys (`--key` with a passphrase) |
+| pkcs8 (optional) | `encryption`, `pem`, `std` | encrypted PKCS#8 client keys (`--key` with a passphrase); only with the crate feature `encrypted-keys` (default on) |
 | clap | `derive`, `wrap_help` | CLI definition; readable `--help` |
 | serde | `derive` | config and wire types |
 | serde_json | `preserve_order`, `arbitrary_precision` | byte-faithful `_source` (key order, big integers and decimals unchanged) |
@@ -200,3 +200,15 @@ publishers at the 2026-10-30 snapshot, `cargo supply-chain` 0.3.8). The weekly `
 existing crate gains or loses an owner, so a takeover or hand-over gets a human look before the next release.
 New or removed crates are listed but do not fail the job; the SBOM diff (SUP-020) covers them. After review,
 refresh the snapshot with `cargo supply-chain json > sc.json && scripts/sup/publishers.py snapshot sc.json`.
+
+## Non-hot unsafe trimmed (SUP-023, L-214)
+
+| Item | Decision | Effect |
+|---|---|---|
+| reqwest `http2` | **Removed.** Elasticsearch and OpenSearch serve HTTP/1.1 only, and Node elasticdump is HTTP/1.1 only, so h2 was only reachable through an h2-capable proxy, where HTTP/1.1 also works. | `h2` and its deps leave the graph (Cargo.lock −29 lines); geiger used-unsafe 27,289 → 27,245, crates with unsafe 111 → 110 |
+| pkcs8 `encryption` (aes, scrypt, pbkdf2, sha2, salsa20, cbc) | Behind the crate feature `encrypted-keys`, **on by default** so `--key` + `--pass` keeps working; `--no-default-features` builds leave the stack out and an encrypted key then fails with a message naming the feature and the `openssl pkcs8` conversion. | minimal build: 25,774 used-unsafe across 162 packages (default 27,245 / 186) |
+| env_logger `humantime` (jiff) | **Kept.** Dropping it removes the timestamp from every log line, a visible output change. | — |
+| indicatif → portable-atomic, console, terminal_size | **Kept.** portable-atomic is a non-optional indicatif dependency; the progress bar is a user-facing feature. | — |
+
+The geiger baseline (`supply-chain/geiger-baseline.json`) was lowered to the new total, so the gate now holds the
+reduction.

@@ -41,7 +41,6 @@ tokio = { version = "1", features = [
 # PIT APIs), per-direction headers/params, gzip request bodies and TLS.
 reqwest = { version = "0.12", default-features = false, features = [
     "gzip",
-    "http2",
     "rustls-tls-manual-roots",
 ] }
 rustls = { version = "0.23", default-features = false, features = [
@@ -52,7 +51,8 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 rustls-native-certs = "0.8"
 webpki-roots = "1"
-pkcs8 = { version = "0.10", features = ["encryption", "pem", "std"] }
+# Only to decrypt `--key` files in encrypted PKCS#8 form (feature `encrypted-keys`, on by default).
+pkcs8 = { version = "0.10", features = ["encryption", "pem", "std"], optional = true }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 sonic-rs = "0.5.8"
 serde = { version = "1", features = ["derive"] }
@@ -84,6 +84,10 @@ lipsum = "0.9"
 tempfile = "3"
 
 [features]
+default = ["encrypted-keys"]
+# Decrypt encrypted PKCS#8 client keys (`--key` + `--pass`). Pulls in the RustCrypto
+# aes/scrypt/pbkdf2/sha2 stack; `--no-default-features` builds leave it out (SUP-023).
+encrypted-keys = ["dep:pkcs8"]
 # Test tiers (TST-INF-001; .config/nextest.toml). None of these change the shipped binary.
 # Podman-backed integration suite (tests/it, tests/integration_test.rs); see scripts/it/run.sh.
 it = []

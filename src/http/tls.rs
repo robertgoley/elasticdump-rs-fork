@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 
 /// TLS material for one endpoint (input or output).
@@ -110,6 +110,35 @@ pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
     Ok(certs)
 }
 
+#[cfg(feature = "encrypted-keys")]
+fn decrypt_pkcs8(path: &Path, text: &str, pass: &str) -> Result<PrivateKeyDer<'static>> {
+    let (label, doc) = pkcs8::SecretDocument::from_pem(text)
+        .map_err(|e| anyhow!("Failed to decode encrypted key '{}': {e}", path.display()))?;
+    if label != "ENCRYPTED PRIVATE KEY" {
+        bail!("Unexpected PEM label '{label}' in '{}'", path.display());
+    }
+    let info = pkcs8::EncryptedPrivateKeyInfo::try_from(doc.as_bytes())
+        .map_err(|e| anyhow!("Invalid encrypted PKCS#8 key '{}': {e}", path.display()))?;
+    let decrypted = info.decrypt(pass).map_err(|_| {
+        anyhow!(
+            "Failed to decrypt private key '{}' (wrong --pass?)",
+            path.display()
+        )
+    })?;
+    Ok(PrivateKeyDer::Pkcs8(
+        rustls::pki_types::PrivatePkcs8KeyDer::from(decrypted.as_bytes().to_vec()),
+    ))
+}
+
+#[cfg(not(feature = "encrypted-keys"))]
+fn decrypt_pkcs8(path: &Path, _text: &str, _pass: &str) -> Result<PrivateKeyDer<'static>> {
+    bail!(
+        "Private key '{}' is encrypted, but this build has no `encrypted-keys` feature; decrypt it with `openssl pkcs8 -in {} -out key-plain.pem` or use a default build",
+        path.display(),
+        path.display()
+    )
+}
+
 pub fn load_key(path: &Path, pass: Option<&str>) -> Result<PrivateKeyDer<'static>> {
     let pem = read(path, "private key file")?;
     let text = String::from_utf8_lossy(&pem);
@@ -120,22 +149,7 @@ pub fn load_key(path: &Path, pass: Option<&str>) -> Result<PrivateKeyDer<'static
                 path.display()
             )
         })?;
-        let (label, doc) = pkcs8::SecretDocument::from_pem(&text)
-            .map_err(|e| anyhow!("Failed to decode encrypted key '{}': {e}", path.display()))?;
-        if label != "ENCRYPTED PRIVATE KEY" {
-            bail!("Unexpected PEM label '{label}' in '{}'", path.display());
-        }
-        let info = pkcs8::EncryptedPrivateKeyInfo::try_from(doc.as_bytes())
-            .map_err(|e| anyhow!("Invalid encrypted PKCS#8 key '{}': {e}", path.display()))?;
-        let decrypted = info.decrypt(pass).map_err(|_| {
-            anyhow!(
-                "Failed to decrypt private key '{}' (wrong --pass?)",
-                path.display()
-            )
-        })?;
-        return Ok(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            decrypted.as_bytes().to_vec(),
-        )));
+        return decrypt_pkcs8(path, &text, pass);
     }
     if text.contains("Proc-Type: 4,ENCRYPTED") {
         bail!(
@@ -208,6 +222,84 @@ impl ServerCertVerifier for NoVerification {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Throwaway encrypted PKCS#8 key made with the system `openssl` (no key is
+    /// committed: gitleaks would rightly flag it). None when openssl is absent.
+    fn encrypted_key(dir: &Path) -> Option<std::path::PathBuf> {
+        let plain = dir.join("plain.pem");
+        let enc = dir.join("enc.pem");
+        let ok = |args: &[&str]| {
+            std::process::Command::new("openssl")
+                .args(args)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let (p, e) = (plain.to_str()?, enc.to_str()?);
+        (ok(&[
+            "genpkey",
+            "-algorithm",
+            "EC",
+            "-pkeyopt",
+            "ec_paramgen_curve:P-256",
+            "-out",
+            p,
+        ]) && ok(&[
+            "pkcs8",
+            "-topk8",
+            "-v2",
+            "aes-256-cbc",
+            "-in",
+            p,
+            "-out",
+            e,
+            "-passout",
+            "pass:t3st",
+        ]))
+        .then_some(enc)
+    }
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("edrs-tls-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn encrypted_pkcs8_key_needs_pass() {
+        let d = tmpdir("nopass");
+        let Some(k) = encrypted_key(&d) else { return };
+        let e = load_key(&k, None).unwrap_err().to_string();
+        assert!(e.contains("--pass"), "{e}");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[cfg(feature = "encrypted-keys")]
+    #[test]
+    fn encrypted_pkcs8_key_decrypts_with_pass() {
+        let d = tmpdir("dec");
+        let Some(k) = encrypted_key(&d) else { return };
+        assert!(matches!(
+            load_key(&k, Some("t3st")).unwrap(),
+            PrivateKeyDer::Pkcs8(_)
+        ));
+        let e = load_key(&k, Some("wrong")).unwrap_err().to_string();
+        assert!(e.contains("wrong --pass"), "{e}");
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[cfg(not(feature = "encrypted-keys"))]
+    #[test]
+    fn encrypted_pkcs8_key_without_feature_is_a_clear_error() {
+        let d = tmpdir("nofeat");
+        let Some(k) = encrypted_key(&d) else { return };
+        let e = load_key(&k, Some("t3st")).unwrap_err().to_string();
+        assert!(
+            e.contains("encrypted-keys") && e.contains("openssl pkcs8"),
+            "{e}"
+        );
+        std::fs::remove_dir_all(d).ok();
+    }
 
     #[test]
     fn default_config_builds_with_system_or_bundled_roots() {
