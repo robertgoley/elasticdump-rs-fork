@@ -1197,3 +1197,294 @@ mod data_stream_tests {
         }
     }
 }
+
+/// L-510 (TST-INJ-004): encoder differential proptest. Arbitrary hits (keys, escapes, value
+/// types, numeric or string ids/routing, versions) for every bulk action, with and without
+/// an output index and on typed/typeless clusters: `encode_doc` gives 2 NDJSON lines per doc
+/// (1 for delete), only allowed action keys, the expected `_index`, and equals a reference
+/// encoder built with serde_json. 100k cases by default (`PROPTEST_CASES` overrides).
+#[cfg(test)]
+mod prop_bulk {
+    use super::*;
+    use crate::http::{ClientOptions, Flavor, gate::RequestGate};
+    use proptest::prelude::*;
+    use serde_json::{Map, Value, json};
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100_000)
+    }
+
+    fn text() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                Just('"'),
+                Just('\\'),
+                Just('/'),
+                Just('\n'),
+                Just('\u{1}'),
+                Just('\u{2028}'),
+                Just('é'),
+                Just('😀'),
+                Just('{'),
+                Just('}'),
+                Just(','),
+                Just(':'),
+                proptest::char::range('a', 'e'),
+            ],
+            0..8,
+        )
+        .prop_map(|v| v.into_iter().collect())
+    }
+
+    /// A JSON literal for `s`, using `\u` escapes for some characters.
+    fn lit(s: &str, esc: bool) -> String {
+        let mut o = String::from("\"");
+        for c in s.chars() {
+            match c {
+                '"' => o.push_str("\\\""),
+                '\\' => o.push_str("\\\\"),
+                c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+                c if esc && (c as u32) < 0x10000 && c != '/' => {
+                    o.push_str(&format!("\\u{:04X}", c as u32))
+                }
+                c => o.push(c),
+            }
+        }
+        o.push('"');
+        o
+    }
+
+    fn number() -> impl Strategy<Value = String> {
+        prop_oneof![
+            any::<i64>().prop_map(|n| n.to_string()),
+            any::<u64>().prop_map(|n| n.to_string()),
+            Just("1.0".to_string()),
+            Just("-0".to_string()),
+            Just("1e400".to_string()),
+            Just("123456789012345678901234567890".to_string()),
+        ]
+    }
+
+    fn value() -> impl Strategy<Value = String> {
+        let leaf = prop_oneof![
+            (text(), any::<bool>()).prop_map(|(s, e)| lit(&s, e)),
+            number(),
+            Just("true".to_string()),
+            Just("null".to_string()),
+        ];
+        leaf.prop_recursive(3, 24, 4, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..4)
+                    .prop_map(|v| format!("[{}]", v.join(","))),
+                proptest::collection::btree_map(text(), inner, 0..4).prop_map(|m| {
+                    let parts: Vec<String> = m
+                        .iter()
+                        .map(|(k, v)| format!("{}: {v}", lit(k, false)))
+                        .collect();
+                    format!("{{ {} }}", parts.join(" ,"))
+                }),
+            ]
+        })
+    }
+
+    fn source() -> impl Strategy<Value = String> {
+        proptest::collection::btree_map(text(), value(), 0..5).prop_map(|m| {
+            let parts: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{}:{v}", lit(k, false)))
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        })
+    }
+
+    #[derive(Debug, Clone)]
+    struct Case {
+        line: String,
+        action: BulkAction,
+        out_index: Option<String>,
+        typed: bool,
+        handle_version: bool,
+        version_type: Option<String>,
+    }
+
+    fn case() -> impl Strategy<Value = Case> {
+        let id = prop_oneof![
+            (text(), any::<bool>()).prop_map(|(s, e)| lit(&format!("i{s}"), e)),
+            any::<u32>().prop_map(|n| n.to_string()),
+        ];
+        let routing = proptest::option::of(prop_oneof![
+            (text(), any::<bool>()).prop_map(|(s, e)| lit(&s, e)),
+            any::<u16>().prop_map(|n| n.to_string()),
+        ]);
+        (
+            prop_oneof![Just("logs"), Just("a-b.c"), Just("é-idx"), Just("x_1")],
+            proptest::option::of(id),
+            routing,
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(source()),
+            proptest::option::of(value()),
+            prop_oneof![
+                Just(BulkAction::Index),
+                Just(BulkAction::Create),
+                Just(BulkAction::Update),
+                Just(BulkAction::Delete)
+            ],
+            proptest::option::of(Just("dst".to_string())),
+            any::<bool>(),
+            any::<bool>(),
+            proptest::option::of(Just("external".to_string())),
+        )
+            .prop_filter("a hit needs _id or _source", |t| {
+                t.1.is_some() || t.4.is_some()
+            })
+            .prop_map(
+                |(idx, id, routing, version, src, score, action, out_index, typed, hv, vt)| {
+                    let mut members = vec![format!("\"_index\":{}", lit(idx, false))];
+                    if let Some(id) = id {
+                        members.push(format!("\"_id\":{id}"));
+                    }
+                    if let Some(r) = routing {
+                        members.push(format!("\"_routing\":{r}"));
+                    }
+                    if let Some(v) = version {
+                        members.push(format!("\"_version\":{v}"));
+                    }
+                    if let Some(s) = score {
+                        members.push(format!("\"_score\":{s}"));
+                    }
+                    members.push(format!(
+                        "\"_source\":{}",
+                        src.unwrap_or_else(|| "{}".into())
+                    ));
+                    Case {
+                        line: format!("{{{}}}", members.join(",")),
+                        action,
+                        out_index,
+                        typed,
+                        handle_version: hv,
+                        version_type: vt,
+                    }
+                },
+            )
+    }
+
+    fn sink(c: &Case) -> BulkSink {
+        let client = EsClient::new(
+            &ClientOptions::new(url::Url::parse("http://localhost:9200/").unwrap()),
+            RequestGate::default(),
+        )
+        .unwrap();
+        let info = if c.typed {
+            ClusterInfo::new(Flavor::Elastic, "6.8.23")
+        } else {
+            ClusterInfo::new(Flavor::OpenSearch, "2.19.0")
+        };
+        BulkSink::new(
+            client,
+            BulkOptions {
+                info,
+                index: c.out_index.clone(),
+                doc_type: None,
+                prefix: String::new(),
+                suffix: String::new(),
+                rename: None,
+                action: c.action,
+                handle_version: c.handle_version,
+                version_type: c.version_type.clone(),
+                meta_fields: vec!["routing".into(), "parent".into()],
+                refresh: true,
+                ignore_es_write_errors: true,
+                ignore_errors: false,
+                max_bulk_bytes: 100 << 20,
+                retry: RetryPolicy::none(),
+            },
+            CancellationToken::new(),
+        )
+    }
+
+    thread_local! {
+        static SINKS: std::cell::RefCell<std::collections::HashMap<String, BulkSink>> =
+            Default::default();
+    }
+
+    /// Building an HTTP client per case dominated the run time: one sink per configuration.
+    fn with_sink<T>(c: &Case, f: impl FnOnce(&mut BulkSink) -> T) -> T {
+        let key = format!(
+            "{:?}{:?}{}{}{:?}",
+            c.action, c.out_index, c.typed, c.handle_version, c.version_type
+        );
+        SINKS.with(|m| {
+            let mut m = m.borrow_mut();
+            f(m.entry(key).or_insert_with(|| sink(c)))
+        })
+    }
+
+    /// The reference: the same rules, written over serde_json values.
+    fn reference(c: &Case) -> Vec<Value> {
+        let doc: Map<String, Value> = serde_json::from_str(&c.line).unwrap();
+        let as_id = |v: &Value| match v {
+            Value::String(s) => Value::String(s.clone()),
+            other => Value::String(other.to_string()),
+        };
+        let mut meta = Map::new();
+        meta.insert(
+            "_index".into(),
+            json!(
+                c.out_index
+                    .clone()
+                    .unwrap_or_else(|| doc["_index"].as_str().unwrap().to_string())
+            ),
+        );
+        if let Some(id) = doc.get("_id") {
+            meta.insert("_id".into(), as_id(id));
+        }
+        if c.typed {
+            meta.insert("_type".into(), json!("_doc"));
+        }
+        if let Some(r) = doc.get("_routing") {
+            meta.insert("routing".into(), as_id(r));
+        }
+        if c.handle_version {
+            if let Some(v) = doc.get("_version") {
+                meta.insert("version".into(), v.clone());
+                if let Some(vt) = &c.version_type {
+                    meta.insert("version_type".into(), json!(vt));
+                }
+            }
+        }
+        let action = json!({ c.action.as_str(): meta });
+        let src = doc["_source"].clone();
+        match c.action {
+            BulkAction::Delete => vec![action],
+            BulkAction::Update => vec![action, json!({ "doc": src })],
+            BulkAction::Index | BulkAction::Create => vec![action, src],
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: cases(), ..ProptestConfig::default() })]
+
+        #[test]
+        fn encode_doc_matches_a_serde_json_reference(c in case()) {
+            prop_assert!(check_doc_line(c.line.as_bytes()).is_ok(), "generator: {}", c.line);
+            let mut out = Vec::new();
+            with_sink(&c, |s| s.encode_doc(c.line.as_bytes(), &mut out)).unwrap();
+            let text = std::str::from_utf8(&out).unwrap();
+            prop_assert!(text.ends_with('\n'));
+            let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').collect();
+            let want = reference(&c);
+            prop_assert_eq!(lines.len(), want.len(), "{}", text);
+            let got: Vec<Value> = lines.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+            let action = got[0].as_object().unwrap();
+            prop_assert_eq!(action.len(), 1);
+            let allowed = ["_index", "_id", "_type", "routing", "parent", "version", "version_type"];
+            for k in action.values().next().unwrap().as_object().unwrap().keys() {
+                prop_assert!(allowed.contains(&k.as_str()), "action key {}", k);
+            }
+            prop_assert_eq!(&got, &want, "{} -> {}", c.line, text);
+        }
+    }
+}

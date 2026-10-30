@@ -27,6 +27,10 @@ default-filter = "kind(lib) | kind(bin)"
 slow-timeout = { period = "30s", terminate-after = 1 }
 [profile.unit.junit]
 path = "junit.xml"
+# Property suites run 10k-100k cases (L-501..L-510); give them 5 minutes instead of 30 s.
+[[profile.unit.overrides]]
+filter = "test(/::props::|::prop_bulk::|::url_props::|_props::/)"
+slow-timeout = { period = "300s", terminate-after = 1 }
 
 [profile.contract]
 default-filter = "binary(cli_contract) | binary(injection) | binary(secrets) | binary(router_mock_selftest) | binary(golden_replay) | binary(fault_conformance) | (kind(test) & (package(edgen) | package(edverify)))"
