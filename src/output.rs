@@ -51,13 +51,24 @@ pub struct OutputTarget {
 
 impl OutputTarget {
     pub async fn write_all(&mut self, buffer: &[u8]) -> Result<()> {
-        self.writer_mut()?.write_all(buffer).await?;
-        Ok(())
+        let r = self.writer_mut()?.write_all(buffer).await;
+        r.with_context(|| self.write_failed())
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        self.writer_mut()?.flush().await?;
-        Ok(())
+        let r = self.writer_mut()?.flush().await;
+        r.with_context(|| self.write_failed())
+    }
+
+    /// Names where a failed write went (TST-BRK-RES-003: ENOSPC on stdout or a full disk).
+    fn write_failed(&self) -> String {
+        match &self.mode {
+            OutputMode::Stdout => "writing to stdout failed".to_string(),
+            OutputMode::StagedFile { final_path, .. } => format!(
+                "writing the output file '{}' failed (nothing is committed under that name)",
+                final_path.display()
+            ),
+        }
     }
 
     pub async fn finalize(self) -> Result<()> {

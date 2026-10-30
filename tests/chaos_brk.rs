@@ -2795,3 +2795,49 @@ async fn l635_memory_estimate_over_the_available_memory_warns() {
         }
     }
 }
+
+// L-636 (TST-BRK-RES-003): stdout to /dev/full (ENOSPC) exits 1 saying stdout failed; with
+// stderr closed (`2>&-`) a file copy succeeds and no log line lands in the output file (fd 2
+// would otherwise be reused for it: Rust's runtime parks /dev/null on closed fds 0-2 before
+// main); with stdout closed a dump to stdout therefore behaves like `> /dev/null` (exit 0).
+#[tokio::test]
+async fn l636_full_or_closed_standard_streams() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("d.json");
+    let docs = "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{}}\n".repeat(50);
+    std::fs::write(&input, &docs).unwrap();
+    let inp = input.to_str().unwrap();
+    let sh = |script: String| async move {
+        tokio::task::spawn_blocking(move || {
+            std::process::Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap()
+    };
+    let b = env!("CARGO_BIN_EXE_elasticdump-rs");
+    let o = sh(format!("'{b}' --input '{inp}' --output '$' > /dev/full")).await;
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        stderr(&o).contains("writing to stdout failed: No space left on device"),
+        "{}",
+        stderr(&o)
+    );
+    let out = dir.path().join("o.json");
+    let o = sh(format!(
+        "'{b}' --input '{inp}' --output '{}' 2>&-",
+        out.display()
+    ))
+    .await;
+    assert!(o.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        docs,
+        "no log line in the output"
+    );
+    let o = sh(format!("'{b}' --input '{inp}' --output '$' 1>&-")).await;
+    assert!(o.status.success(), "{}", stderr(&o));
+}
