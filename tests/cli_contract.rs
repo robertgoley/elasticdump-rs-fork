@@ -1515,3 +1515,109 @@ async fn http_5xx_per_request_kind() {
         assert!(left.is_empty(), "staging left: {left:?}");
     }
 }
+
+// L-428 (TST-API-052): partial results. A failed shard on one slice only, or `timed_out: true`
+// on a continuation, fails the dump with the shard reason and commits nothing; skipped shards
+// (can_match pre-filtering) are not failures.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partial_results_fail_and_commit_nothing() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let ok = |sid: &str, ids: &[&str]| {
+        page(
+            sid,
+            &ids.iter().map(|i| hit(i, "{}")).collect::<Vec<_>>(),
+            4,
+        )
+    };
+    let failed_slice1 = r#"{"_scroll_id":"s1","timed_out":false,"_shards":{"total":2,"successful":1,"skipped":0,"failed":1,"failures":[{"shard":1,"index":"idx","node":"n","reason":{"type":"circuit_breaking_exception","reason":"[parent] Data too large"}}]},"hits":{"total":{"value":4,"relation":"eq"},"hits":[]}}"#;
+    let timed_out = r#"{"_scroll_id":"s0","timed_out":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":4,"relation":"eq"},"hits":[]}}"#;
+    let skipped = r#"{"_scroll_id":"s0","timed_out":false,"_shards":{"total":4,"successful":4,"skipped":3,"failed":0},"hits":{"total":{"value":2,"relation":"eq"},"hits":[{"_index":"idx","_id":"a","_source":{}},{"_index":"idx","_id":"b","_source":{}}]}}"#;
+    let cases: Vec<(&str, RouterMock, Vec<&str>, Option<&str>)> = vec![
+        (
+            "one slice fails",
+            RouterMock::builder()
+                .route(
+                    Route::contains("POST", "/idx/_search")
+                        .body_contains("\"id\":0")
+                        .reply(Reply::ok(ok("s0", &["1", "2"]))),
+                )
+                .route(
+                    Route::contains("POST", "/idx/_search")
+                        .body_contains("\"id\":1")
+                        .reply(Reply::ok(failed_slice1)),
+                )
+                .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(ok("s0", &[]))))
+                .route(
+                    Route::prefix("DELETE", "/_search/scroll")
+                        .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+                )
+                .start()
+                .await,
+            vec!["--slices", "2"],
+            Some("idx[1]: circuit_breaking_exception: [parent] Data too large"),
+        ),
+        (
+            "continuation timed out",
+            RouterMock::builder()
+                .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(ok("s0", &["1"]))))
+                .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(timed_out)))
+                .route(
+                    Route::prefix("DELETE", "/_search/scroll")
+                        .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+                )
+                .start()
+                .await,
+            vec![],
+            Some("timed_out=true"),
+        ),
+        (
+            "skipped shards are fine",
+            RouterMock::builder()
+                .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(skipped)))
+                .route(Route::exact("POST", "/_search/scroll").reply(Reply::ok(ok("s0", &[]))))
+                .route(
+                    Route::prefix("DELETE", "/_search/scroll")
+                        .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+                )
+                .start()
+                .await,
+            vec![],
+            None,
+        ),
+    ];
+    for (name, m, extra, want) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let mut args: Vec<String> = vec![
+            "--input".into(),
+            format!("{}/idx", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--retryAttempts".into(),
+            "0".into(),
+        ];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let o = run_async(args, vec![]).await;
+        let err = stderr(&o);
+        match want {
+            Some(w) => {
+                assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+                assert!(err.contains(w), "{name}: {err}");
+                assert!(!out.exists(), "{name}: committed");
+                assert_eq!(
+                    std::fs::read_dir(dir.path()).unwrap().count(),
+                    0,
+                    "{name}: staging left"
+                );
+            }
+            None => {
+                assert!(o.status.success(), "{name}: {err}");
+                assert_eq!(
+                    std::fs::read_to_string(&out).unwrap().lines().count(),
+                    2,
+                    "{name}"
+                );
+            }
+        }
+    }
+}

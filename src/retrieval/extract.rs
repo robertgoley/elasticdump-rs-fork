@@ -37,6 +37,8 @@ struct MetadataValues {
     next_scroll_id: Option<String>,
     shards_failed: Option<u64>,
     timed_out: Option<bool>,
+    /// `_shards.failures[0]` summarised (index, shard, reason type and text).
+    shard_failure: Option<String>,
 }
 
 struct MetadataInputs<'a> {
@@ -59,8 +61,41 @@ fn metadata_tree() -> &'static PointerTree {
         // Popped FIRST in extract_metadata_inputs (see the pop order there).
         tree.add_path(&["_shards", "failed"]);
         tree.add_path(&["timed_out"]);
+        tree.add_path(&["_shards", "failures"]);
         tree
     })
+}
+
+/// `index[shard]: type: reason` of the first entry of `_shards.failures`,
+/// truncated so a huge stack trace cannot flood the message.
+fn summarize_shard_failure(raw: &str) -> Option<String> {
+    let v: sonic_rs::Value = sonic_rs::from_str(raw).ok()?;
+    let f = v.get(0)?;
+    let index = f.get("index").and_then(|x| x.as_str()).unwrap_or("?");
+    let shard = f
+        .get("shard")
+        .and_then(|x| x.as_i64())
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "?".into());
+    let reason = f.get("reason");
+    let ty = reason
+        .and_then(|r| r.get("type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown");
+    let text = reason
+        .and_then(|r| r.get("reason"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    let mut out = format!("{index}[{shard}]: {ty}: {text}");
+    if out.len() > 512 {
+        let mut cut = 512;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push('…');
+    }
+    Some(out)
 }
 
 fn require_hits_array(hits: Option<LazyValue<'_>>) -> Result<LazyValue<'_>> {
@@ -109,8 +144,12 @@ fn extract_metadata_inputs(response_bytes: &Bytes) -> Result<MetadataInputs<'_>>
     let mut values = get_many(response_bytes, metadata_tree())?;
     // INVARIANT: get_many yields values in metadata_tree()'s add order, and pop()
     // returns them in reverse. metadata_tree() adds, in order: _scroll_id, pit_id,
-    // hits.total, hits.hits, _shards.failed, timed_out.
+    // hits.total, hits.hits, _shards.failed, timed_out, _shards.failures.
     // So these pops MUST stay in this exact (reverse) order and adjacent.
+    let shard_failure = values
+        .pop()
+        .flatten()
+        .and_then(|v| summarize_shard_failure(v.as_raw_str()));
     let timed_out = values.pop().flatten().and_then(|value| value.as_bool());
     let shards_failed = values.pop().flatten().and_then(|value| value.as_u64());
     let hits = require_hits_array(values.pop().flatten())?;
@@ -141,6 +180,7 @@ fn extract_metadata_inputs(response_bytes: &Bytes) -> Result<MetadataInputs<'_>>
             next_scroll_id,
             shards_failed,
             timed_out,
+            shard_failure,
         },
         hits,
     })
@@ -167,8 +207,12 @@ fn finalize_metadata(
         ));
     }
     if let Some(failed) = values.shards_failed.filter(|f| *f > 0) {
+        let why = values
+            .shard_failure
+            .map(|r| format!(" (first failure: {r})"))
+            .unwrap_or_default();
         return Err(anyhow!(
-            "Elasticsearch response reports {failed} failed shard(s); refusing a partial dump (check cluster health and retry)"
+            "Elasticsearch response reports {failed} failed shard(s){why}; refusing a partial dump (check cluster health and retry)"
         ));
     }
 
@@ -498,6 +542,36 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("1 failed shard"));
+    }
+
+    // L-428 (TST-API-052): the message names the shard reason; skipped shards are not failures.
+    #[test]
+    fn failed_shard_message_names_the_reason_and_skipped_is_fine() {
+        let response = Bytes::from_static(
+            br#"{"_scroll_id":"s","_shards":{"total":3,"successful":2,"skipped":0,"failed":1,"failures":[{"shard":2,"index":"logs-1","node":"n1","reason":{"type":"circuit_breaking_exception","reason":"[parent] Data too large"}}]},"hits":{"total":{"value":10,"relation":"eq"},"hits":[{"_id":"1","_source":{}}]}}"#,
+        );
+        let error = extract_batch_metadata(&response, &SearchType::Scroll)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("logs-1[2]: circuit_breaking_exception: [parent] Data too large"),
+            "{error}"
+        );
+        let skipped = Bytes::from_static(
+            br#"{"_scroll_id":"s","timed_out":false,"_shards":{"total":5,"successful":5,"skipped":3,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_id":"1","_source":{}}]}}"#,
+        );
+        assert!(extract_batch_metadata(&skipped, &SearchType::Scroll).is_ok());
+        let long = format!(
+            r#"[{{"shard":0,"index":"i","reason":{{"type":"t","reason":"{}"}}}}]"#,
+            "x".repeat(5000)
+        );
+        assert!(
+            super::summarize_shard_failure(&long)
+                .unwrap()
+                .chars()
+                .count()
+                <= 513
+        );
     }
 
     #[test]
