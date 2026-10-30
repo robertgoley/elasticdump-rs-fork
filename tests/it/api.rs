@@ -1274,3 +1274,136 @@ async fn composable_templates_round_trip_and_filter_managed() {
         .await;
 }
 
+// L-421 (TST-API-037): ILM (ES default distribution) and ISM (OpenSearch) round trip with
+// 1,050 policies (ISM pages of 1,000: paging past 20 and past 1,000); restoring over existing
+// ISM policies overwrites them with if_seq_no/if_primary_term; ES OSS fails clearly.
+#[tokio::test]
+async fn policies_1050_round_trip_paging_and_overwrite() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let p = unique("api_pol");
+    if es && c.is_oss().await {
+        let f = tmp_path("api_pol_oss", "json");
+        let o = run(io(
+            &c,
+            &c.url_with_auth(""),
+            f.to_str().unwrap(),
+            &["--type", "policy"],
+        ))
+        .await;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains("ILM is an X-Pack feature") && err.contains("OSS"),
+            "{err}"
+        );
+        assert!(!f.exists());
+        return;
+    }
+    const N: usize = 1050;
+    // ILM `_meta` exists from ES 7.14
+    let ilm_meta = es && c.vnum().await >= (7, 14);
+    let path = |i: usize| {
+        if es {
+            format!("_ilm/policy/{p}_{i:04}")
+        } else {
+            format!("_plugins/_ism/policies/{p}_{i:04}")
+        }
+    };
+    let body = |i: usize| {
+        if es {
+            {
+                let mut b = json!({"policy": {"phases": {"hot": {"min_age": "0ms", "actions": {"set_priority": {"priority": i % 100}}}}}});
+                if ilm_meta {
+                    b["policy"]["_meta"] = json!({"i": i});
+                }
+                b
+            }
+        } else {
+            json!({"policy": {"description": format!("p{i}"), "default_state": "hot",
+                              "states": [{"name": "hot", "actions": [], "transitions": []}]}})
+        }
+    };
+    for i in 0..N {
+        c.ok("PUT", &path(i), Some(body(i))).await;
+    }
+    let read = |i: usize| {
+        let c = &c;
+        let path = path(i);
+        async move {
+            let mut v = c.ok("GET", &path, None).await;
+            if es {
+                v.as_object_mut().unwrap().values_mut().for_each(|x| {
+                    x.as_object_mut().map(|o| o.remove("modified_date"));
+                    x.as_object_mut().map(|o| o.remove("version"));
+                });
+            } else {
+                v = v["policy"].clone();
+                v.as_object_mut().map(|o| o.remove("last_updated_time"));
+                v.as_object_mut().map(|o| o.remove("policy_id"));
+            }
+            v
+        }
+    };
+    let sample = [0usize, 19, 20, 999, 1000, N - 1];
+    let mut want = vec![];
+    for &i in &sample {
+        want.push(read(i).await);
+    }
+    let file = tmp_path("api_pol", "json");
+    let o = run(io(
+        &c,
+        &c.url_with_auth(&format!("{p}_*")),
+        file.to_str().unwrap(),
+        &["--type", "policy"],
+    ))
+    .await;
+    assert_success(&o);
+    let doc: Value = {
+        let v: Value = serde_json::from_str(&lines(&file)[0]).unwrap();
+        v.as_str()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .unwrap_or(v)
+    };
+    let count = if es {
+        doc.as_object().unwrap().len()
+    } else {
+        doc["policies"].as_array().unwrap().len()
+    };
+    assert_eq!(count, N, "every policy dumped");
+    if !es {
+        // overwrite in place: every PUT 409s and is retried with if_seq_no/if_primary_term
+        let o = run_loud(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &["--type", "policy"],
+        ))
+        .await;
+        assert_success(&o);
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("Total Writes: 1050"),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    for i in 0..N {
+        c.ok("DELETE", &path(i), None).await;
+    }
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "policy"],
+    ))
+    .await;
+    assert_success(&o);
+    for (k, &i) in sample.iter().enumerate() {
+        assert_eq!(read(i).await, want[k], "policy {i}");
+    }
+    let _ = std::fs::remove_file(file);
+    for i in 0..N {
+        let _ = c.call("DELETE", &path(i), None).await;
+    }
+}

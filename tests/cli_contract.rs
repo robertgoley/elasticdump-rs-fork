@@ -1211,3 +1211,64 @@ async fn warning_headers_are_logged_once_and_not_fatal() {
     );
 }
 
+// L-421 (TST-API-037): an ISM overwrite that 409s again (changed concurrently) is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ism_second_409_is_reported() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("pol.json");
+    std::fs::write(&input, r#"{"policies":[{"_id":"p1","_seq_no":3,"_primary_term":1,"policy":{"policy_id":"p1","default_state":"hot","states":[{"name":"hot","actions":[],"transitions":[]}]}}],"total_policies":1}"#).unwrap();
+    let conflict = r#"{"error":{"type":"version_conflict_engine_exception","reason":"conflict"},"status":409}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+        )))
+        .route(
+            Route::exact("GET", "/_plugins/_ism/policies/p1").reply(Reply::ok(
+                r#"{"_id":"p1","_seq_no":7,"_primary_term":2,"policy":{}}"#,
+            )),
+        )
+        .route(Route::exact("PUT", "/_plugins/_ism/policies/p1").reply(Reply::json(409, conflict)))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            m.url(),
+            "--type".into(),
+            "policy".into(),
+            "--retryAttempts".into(),
+            "0".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("changed concurrently"),
+        "{}",
+        stderr(&o)
+    );
+    let puts: Vec<_> = m
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == "PUT")
+        .collect();
+    assert_eq!(puts.len(), 2);
+    assert!(
+        puts[1]
+            .query
+            .iter()
+            .any(|(k, v)| k == "if_seq_no" && v == "7"),
+        "{:?}",
+        puts[1].query
+    );
+    assert!(
+        puts[1]
+            .query
+            .iter()
+            .any(|(k, v)| k == "if_primary_term" && v == "2")
+    );
+}
