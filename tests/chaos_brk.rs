@@ -1872,3 +1872,59 @@ async fn l620_duplicate_hits_fail_the_total_check_or_are_written_as_served() {
         assert_ne!(unique.len(), ids.len(), "the id check sees the duplicate");
     }
 }
+
+// L-623 (TST-BRK-IN-001): a truncated gzip (cut at many offsets, including inside the 8-byte
+// trailer) and a gzip with trailing garbage. Every case exits 1 naming the file, the byte offset
+// and the documents read so far, and a file output is never committed.
+#[tokio::test]
+async fn l623_truncated_gzip_names_file_offset_and_docs_read() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let mut plain = String::new();
+    for i in 0..300 {
+        plain.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+    }
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(plain.as_bytes()).unwrap();
+    let gz = enc.finish().unwrap();
+    let mut cases: Vec<(String, Vec<u8>)> = [
+        10usize,
+        gz.len() / 3,
+        gz.len() / 2,
+        gz.len() - 8,
+        gz.len() - 3,
+        gz.len() - 1,
+    ]
+    .iter()
+    .map(|&cut| (format!("cut{cut}"), gz[..cut].to_vec()))
+    .collect();
+    let mut garbage = gz.clone();
+    garbage.extend_from_slice(b"not gzip at all\n");
+    cases.push(("garbage".into(), garbage));
+    for (name, bytes) in cases {
+        let input = dir.path().join(format!("{name}.json.gz"));
+        std::fs::write(&input, bytes).unwrap();
+        let out = dir.path().join(format!("{name}.out.json"));
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--fsCompress",
+                "--output",
+                out.to_str().unwrap(),
+            ]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{name}: {err}");
+        assert!(err.contains(&format!("{name}.json.gz")), "{name}: {err}");
+        assert!(
+            err.contains("near byte") && err.contains("complete documents"),
+            "{name}: {err}"
+        );
+        assert!(!out.exists(), "{name}: output committed");
+    }
+}
