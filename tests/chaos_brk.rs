@@ -2319,3 +2319,77 @@ async fn l628_overwrites_are_counted_in_the_summary() {
         }
     }
 }
+
+// L-629 (TST-BRK-IN-011): big and odd numerics. `_source` goes out byte-exact (Node 6.125.1
+// rounds -9223372036854775809, turns 1e400 into null and -0 into 0); numeric `_id`/`_routing`
+// become the string Node's request makes the engine store (`1e3` -> "1000", `-0` -> "0",
+// big integers kept exact; values recorded from Node against a mock).
+#[tokio::test]
+async fn l629_numeric_ids_match_node_and_source_is_byte_exact() {
+    let src = r#"{"a":123456789012345678901234567890,"b":-0,"c":1e400,"d":0.1000000000000000055511151231257827,"e":-9223372036854775809}"#;
+    let input_lines = [
+        format!(r#"{{"_index":"x","_id":12345678901234567890123,"_source":{src}}}"#),
+        r#"{"_index":"x","_id":1.5,"_routing":7,"_source":{}}"#.to_string(),
+        r#"{"_index":"x","_id":1e3,"_source":{}}"#.to_string(),
+        r#"{"_index":"x","_id":-0,"_source":{}}"#.to_string(),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("num.json");
+    std::fs::write(&input, input_lines.join("\n") + "\n").unwrap();
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(INFO)))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(
+            r#"{"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#,
+        )))
+        .fallback(Reply::ok("{}"))
+        .start()
+        .await;
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/z", m.url()),
+        ]),
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let body: String = m
+        .requests()
+        .into_iter()
+        .filter(|r| r.path.contains("_bulk"))
+        .map(|r| String::from_utf8(r.body).unwrap())
+        .collect();
+    let lines: Vec<&str> = body.lines().collect();
+    assert_eq!(
+        lines[0],
+        r#"{"index":{"_index":"z","_id":"12345678901234567890123"}}"#
+    );
+    assert_eq!(lines[1], src, "byte-exact _source");
+    assert_eq!(
+        lines[2],
+        r#"{"index":{"_index":"z","_id":"1.5","routing":"7"}}"#
+    );
+    assert_eq!(lines[4], r#"{"index":{"_index":"z","_id":"1000"}}"#);
+    assert_eq!(lines[6], r#"{"index":{"_index":"z","_id":"0"}}"#);
+
+    // a non-finite _id is refused by name (Node would send null and get an auto id)
+    std::fs::write(&input, "{\"_index\":\"x\",\"_id\":1e400,\"_source\":{}}\n").unwrap();
+    let o = run_async(
+        s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/z", m.url()),
+        ]),
+        vec![],
+    )
+    .await;
+    assert!(!o.status.success());
+    assert!(
+        stderr(&o).contains("out of range for a JavaScript number"),
+        "{}",
+        stderr(&o)
+    );
+}

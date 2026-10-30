@@ -299,10 +299,46 @@ fn push_id_like(out: &mut Vec<u8>, name: &str, v: &LazyValue) -> Result<()> {
 fn push_id_like_raw(out: &mut Vec<u8>, name: &str, raw: &str) -> Result<()> {
     match raw.as_bytes().first() {
         Some(b'"') => out.extend_from_slice(raw.as_bytes()),
-        Some(b'-' | b'0'..=b'9') => push_json_str(out, raw),
+        Some(b'-' | b'0'..=b'9') => push_json_str(out, &js_number_string(name, raw)?),
         _ => bail!("{name} must be a string or a number, got {}", short(raw)),
     }
     Ok(())
+}
+
+/// The string the engine stores for a numeric `_id`/`_routing` as Node sends it
+/// (TST-BRK-IN-011): integer literals keep every digit (Node's json-bigint keeps big ones
+/// exact), `-0` is `0`, and other numbers are JavaScript's `Number#toString` (`1e3` -> `1000`,
+/// `1.50` -> `1.5`, `1e21` -> `1e+21`). Non-finite values (`1e400`) are refused.
+pub(crate) fn js_number_string(name: &str, raw: &str) -> Result<String> {
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(if digits.bytes().all(|b| b == b'0') {
+            "0".to_string()
+        } else {
+            raw.to_string()
+        });
+    }
+    let v: f64 = raw
+        .parse()
+        .map_err(|_| anyhow!("{name} is not a valid number: {}", short(raw)))?;
+    if !v.is_finite() {
+        bail!(
+            "{name} {} is out of range for a JavaScript number (Node would send null); use a string",
+            short(raw)
+        );
+    }
+    let a = v.abs();
+    Ok(if v == 0.0 {
+        "0".to_string()
+    } else if (1e-6..1e21).contains(&a) {
+        format!("{v}")
+    } else {
+        let e = format!("{v:e}");
+        match e.split_once('e') {
+            Some((m, x)) if !x.starts_with('-') => format!("{m}e+{x}"),
+            _ => e,
+        }
+    })
 }
 
 /// `version` must be an integer within u64 (INJ-F3).
@@ -1693,3 +1729,27 @@ mod prop_bulk {
 /// Restores that have not run this long skip the target-index check (TST-BRK-SRV-008), so
 /// short runs send exactly Node's requests.
 const UUID_CAPTURE_AFTER: Duration = Duration::from_secs(5);
+
+#[cfg(test)]
+mod js_number_tests {
+    use super::js_number_string as j;
+    #[test]
+    fn numeric_ids_match_node() {
+        for (raw, want) in [
+            ("12345678901234567890123", "12345678901234567890123"),
+            ("-0", "0"),
+            ("0", "0"),
+            ("1e3", "1000"),
+            ("1.5", "1.5"),
+            ("1.50", "1.5"),
+            ("-2.5E2", "-250"),
+            ("1e21", "1e+21"),
+            ("1.5e-7", "1.5e-7"),
+            ("0.000001", "0.000001"),
+            ("0.0", "0"),
+        ] {
+            assert_eq!(j("_id", raw).unwrap(), want, "{raw}");
+        }
+        assert!(j("_id", "1e400").is_err());
+    }
+}
