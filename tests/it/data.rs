@@ -268,7 +268,7 @@ async fn source_only_dump_restores_with_new_ids() {
 async fn xv_source_disabled_index_is_refused_unless_allowed() {
     let c = Cluster::from_env();
     let idx = unique("nosrc");
-    let (mapping, doc) = if c.major().await < 7 {
+    let (mapping, doc) = if c.engine == Engine::Elasticsearch && c.major().await < 7 {
         (
             json!({"doc": {"_source": {"enabled": false}}}),
             format!("{idx}/doc/1?refresh=true"),
