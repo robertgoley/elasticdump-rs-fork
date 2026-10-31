@@ -128,7 +128,8 @@ pub struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub overwrite: Option<bool>,
 
-    /// Extension: allow --input and --output to name the same file or index (refused otherwise)
+    /// Extension: allow --input and --output to name the same file or index (refused
+    /// otherwise; the output index is compared after --prefix/--suffix)
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub force: Option<bool>,
 

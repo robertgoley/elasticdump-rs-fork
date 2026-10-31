@@ -3760,3 +3760,57 @@ async fn l646_scheme_less_and_mistyped_urls() {
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains(r#""_id":"1""#), "{}", stdout(&o));
 }
+
+/// L-642a: the same-target check compares the input index with the output index as
+/// written to, i.e. with `--prefix`/`--suffix` applied. Different after the affix is
+/// allowed (it gets as far as the unreachable cluster); the same after the affix is still
+/// refused as a usage error before any network I/O.
+#[test]
+fn l642a_same_target_check_applies_prefix_and_suffix() {
+    let host = "http://127.0.0.1:1";
+    let at = |i: &str| format!("{host}/{i}");
+    let refused: Vec<Vec<String>> = vec![
+        // the affix maps the output back onto the input index
+        vec![at("p-idx"), at("idx"), "--prefix".into(), "p-".into()],
+        vec![at("idx-s"), at("idx"), "--suffix=-s".into()],
+        vec![
+            at("p-idx-s"),
+            at("idx"),
+            "--prefix".into(),
+            "p-".into(),
+            "--suffix=-s".into(),
+        ],
+        // no affix: same as before
+        vec![at("idx"), at("idx")],
+        vec![host.into(), host.into()],
+    ];
+    for a in refused {
+        let mut args = vec!["--input", &a[0], "--output", &a[1]];
+        args.extend(a[2..].iter().map(String::as_str));
+        let o = bin().args(&args).output().expect("spawn");
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {err}");
+        assert!(err.contains("same file or index"), "{args:?}: {err}");
+        assert_eq!(
+            err.contains("(after --prefix/--suffix)"),
+            a.len() > 2,
+            "{args:?}: {err}"
+        );
+    }
+    let allowed: Vec<Vec<String>> = vec![
+        // the affix makes the target a different index
+        vec![at("idx"), at("idx"), "--prefix".into(), "p-".into()],
+        vec![at("idx"), at("idx"), "--suffix=-copy".into()],
+        vec![at("p-idx"), at("p-idx"), "--prefix".into(), "p-".into()],
+        vec![host.into(), host.into(), "--suffix=-copy".into()],
+    ];
+    for a in allowed {
+        let mut args = vec!["--input", &a[0], "--output", &a[1]];
+        args.extend(a[2..].iter().map(String::as_str));
+        args.extend(["--retryAttempts", "1", "--noImplicitRetry"]);
+        let o = bin().args(&args).output().expect("spawn");
+        let err = stderr(&o);
+        assert!(!err.contains("same file or index"), "{args:?}: {err}");
+        assert_ne!(o.status.code(), Some(2), "{args:?}: {err}");
+    }
+}

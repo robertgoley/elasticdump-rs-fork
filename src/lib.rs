@@ -43,7 +43,10 @@ impl std::error::Error for UsageError {}
 /// path (the output may not exist yet, so its parent is canonicalized); clusters by
 /// normalized base URL (scheme, host, port, path) plus index expression. Aliases such as
 /// `localhost` vs `127.0.0.1`, or an alias name pointing at the input index, are not resolved.
-fn same_target(input: &Endpoint, output: &Endpoint) -> bool {
+/// L-642a: the output index is compared as written to, i.e. with `--prefix`/`--suffix`
+/// applied (`--input …/p-idx --output …/idx --prefix p-` writes into the input index;
+/// `--input …/idx --output …/idx --suffix -copy` does not).
+fn same_target(input: &Endpoint, output: &Endpoint, prefix: &str, suffix: &str) -> bool {
     fn canon(p: &std::path::Path) -> Option<std::path::PathBuf> {
         if let Ok(c) = p.canonicalize() {
             return Some(c);
@@ -60,7 +63,15 @@ fn same_target(input: &Endpoint, output: &Endpoint) -> bool {
             (Some(a), Some(b)) => a == b,
             _ => a == b,
         },
-        (Endpoint::Es(a), Endpoint::Es(b)) => a.base == b.base && a.index == b.index,
+        (Endpoint::Es(a), Endpoint::Es(b)) => {
+            a.base == b.base
+                && match (&a.index, &b.index) {
+                    (Some(src), Some(dst)) => *src == format!("{prefix}{dst}{suffix}"),
+                    // host to host: every index onto itself unless an affix renames it
+                    (None, None) => prefix.is_empty() && suffix.is_empty(),
+                    _ => false,
+                }
+        }
         _ => false,
     }
 }
@@ -999,10 +1010,15 @@ pub async fn run() -> Result<()> {
         node_alias_url(&cli, &mut input);
     }
     validate(&cli, &input, &output)?;
-    if !cli.force() && same_target(&input, &output) {
-        return Err(usage(
-            "--input and --output name the same file or index; refusing to read and write it at once (pass --force to do it anyway)",
-        ));
+    if !cli.force() && same_target(&input, &output, &cli.prefix, &cli.suffix) {
+        let affix = if cli.prefix.is_empty() && cli.suffix.is_empty() {
+            ""
+        } else {
+            " (after --prefix/--suffix)"
+        };
+        return Err(usage(format!(
+            "--input and --output name the same file or index{affix}; refusing to read and write it at once (pass --force to do it anyway)"
+        )));
     }
 
     let auth_file = match &cli.http_auth_file {
