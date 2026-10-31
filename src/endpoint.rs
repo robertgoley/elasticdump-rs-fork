@@ -154,6 +154,47 @@ fn looks_like_url_without_scheme(raw: &str) -> bool {
                 .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())))
 }
 
+/// `user:password@` in a scheme-less endpoint: a `:` before the last `@`
+/// (a password may hold `/`, so the whole text counts), unless the value is
+/// an explicit path (`/...`, `./...`, `../...`, `~/...`).
+fn has_userinfo(raw: &str) -> bool {
+    if raw.starts_with(['/', '.', '~']) {
+        return false;
+    }
+    raw.rfind('@').is_some_and(|at| raw[..at].contains(':'))
+}
+
+/// A mistyped cluster URL that would otherwise be read or written as a file
+/// (BRK-CLI-008): `http:/host`, `http:host`, `http//host`, ` http://host`
+/// (whitespace), `htp://host` (unknown scheme). The text returned never
+/// quotes the value; only a recognisable scheme name is named.
+fn url_typo(raw: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    let trimmed = lower.trim();
+    if trimmed != lower && (trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Some("is a URL with leading or trailing whitespace".into());
+    }
+    for scheme in ["https", "http"] {
+        if let Some(rest) = lower.strip_prefix(scheme) {
+            if rest.starts_with(':') || rest.starts_with("//") {
+                return Some(format!(
+                    "starts with '{scheme}' but not '{scheme}://', so it looks like a mistyped URL"
+                ));
+            }
+        }
+    }
+    let (head, _) = raw.split_once("://")?;
+    let is_scheme = {
+        let mut c = head.chars();
+        c.next().is_some_and(|f| f.is_ascii_alphabetic())
+            && c.all(|ch| ch.is_ascii_alphanumeric() || "+.-".contains(ch))
+    };
+    is_scheme.then(|| {
+        let shown: String = head.chars().take(16).collect();
+        format!("uses the unsupported scheme '{shown}://' (only http:// and https:// are clusters)")
+    })
+}
+
 fn decode_component(raw: &str, what: &str, redact: bool) -> Result<String> {
     percent_decode_str(raw)
         .decode_utf8()
@@ -195,12 +236,24 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         if raw.is_empty() {
             bail!("--{flag} must not be empty");
         }
+        if let Some(problem) = url_typo(raw) {
+            // never quote the value: it may hold a password
+            bail!(
+                "--{flag} {problem}; write it as http://host:port/index or https://..., or start it with ./ if it really is a file"
+            );
+        }
         if index_override.is_some() {
             log::warn!("--{flag}-index is ignored for file endpoints");
         }
-        if looks_like_url_without_scheme(raw) {
+        let creds = has_userinfo(raw);
+        if creds || looks_like_url_without_scheme(raw) {
+            if dir == Direction::Output && creds {
+                bail!(
+                    "--output looks like a URL with credentials (user:password@host) but has no http:// or https://, so it would be written as a FILE whose name holds the password; add http:// or https://, or start it with ./ if it really is a file"
+                );
+            }
             log::warn!(
-                "--{flag} {} is treated as a FILE path; add http:// or https:// if it is a cluster",
+                "--{flag} {} is treated as a FILE path; add http:// or https:// if it is a cluster (start it with ./ to silence this)",
                 mask_userinfo(raw)
             );
         }
@@ -764,6 +817,74 @@ mod redaction_tests {
         assert!(looks_like_url_without_scheme("localhost:9200/idx"));
         assert!(!looks_like_url_without_scheme("/tmp/x.json"));
         assert!(!looks_like_url_without_scheme("dump.json"));
+    }
+
+    /// L-646 (TST-BRK-CLI-008): mistyped URLs are usage errors that never
+    /// quote the value; uppercase schemes are URLs; `./` forces a file.
+    #[test]
+    fn mistyped_and_scheme_less_urls() {
+        for raw in [
+            "http:/u:FAKE-pw@h:9200/i",
+            "HTTP:/h:9200/i",
+            "https:h:9200/i",
+            "http//h:9200/i",
+            "Https//u:FAKE-pw@h/i",
+            " http://u:FAKE-pw@h:9200/i",
+            "\thttps://h/i",
+            "htp://u:FAKE-pw@h:9200/i",
+            "elasticsearch://h:9200/i",
+        ] {
+            for dir in [Direction::Input, Direction::Output] {
+                let e = format!("{:#}", parse(raw, dir, None).unwrap_err());
+                assert!(!e.contains("FAKE"), "{raw:?}: {e}");
+                assert!(
+                    e.contains("http://host:port/index") && e.contains("./"),
+                    "{raw:?}: {e}"
+                );
+            }
+        }
+        assert!(url_typo("htp://h").unwrap().contains("'htp://'"));
+        // credentials in a scheme-less output would land in a file name
+        let e = format!(
+            "{:#}",
+            parse("elastic:FAKE-pw@h:9200", Direction::Output, None).unwrap_err()
+        );
+        assert!(!e.contains("FAKE") && e.contains("http://"), "{e}");
+        // ... an input only warns (reading cannot leak) and stays a file
+        assert_eq!(
+            parse("elastic:FAKE-pw@h:9200/i", Direction::Input, None).unwrap(),
+            Endpoint::File("elastic:FAKE-pw@h:9200/i".into())
+        );
+        for (raw, dir) in [
+            ("h:9200", Direction::Output),
+            ("./elastic:FAKE-pw@h:9200", Direction::Output),
+            ("./htp://h", Direction::Output),
+            ("http.json", Direction::Output),
+            ("https_backup/dump.json", Direction::Input),
+            ("/tmp/a:b@c.json", Direction::Output),
+        ] {
+            assert!(
+                matches!(parse(raw, dir, None), Ok(Endpoint::File(_))),
+                "{raw}"
+            );
+        }
+        for raw in ["HTTP://h:9200/i", "Https://h/i", "hTTp://u:p@h/i"] {
+            assert!(
+                parse(raw, Direction::Output, None).unwrap().is_es(),
+                "{raw}"
+            );
+        }
+        assert!(has_userinfo("u:p@h:9200/x"));
+        assert!(has_userinfo("u:p/x@h")); // a password with '/'
+        assert!(has_userinfo("dir/a:b@c.json")); // false positive: ./ escapes it
+        assert!(has_userinfo("h:9200/a@b")); // ambiguous (password "9200/a"?): refused, ./ escapes
+        assert!(!has_userinfo("./u:p@h"));
+        assert!(!has_userinfo("/tmp/a:b@c.json"));
+        let e = format!(
+            "{:#}",
+            parse("elastic:FAKE/pw@h:9200", Direction::Output, None).unwrap_err()
+        );
+        assert!(!e.contains("FAKE"), "{e}");
     }
 }
 

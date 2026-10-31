@@ -159,6 +159,12 @@ for every place the tool changes what is loaded, and for the tested versions, se
   wins in Node and the later line wins here (file order). Verified on 10,000 random documents by
   `scripts/node/bulk-diff.py` (L-506): every other byte difference is one of these.
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
+* **Endpoints that look like mistyped URLs are refused** (exit 2, L-646); Node reads or writes them as files.
+  Only `http://` and `https://` are clusters, in any case (`HTTP://` is a cluster here, a file in Node); everything else is a file path, but
+  `http:/host`, `http:host`, `http//host`, an unsupported scheme such as `htp://`, and a URL with leading or trailing
+  whitespace are usage errors, and a scheme-less `--output user:password@host:9200` is refused because it would write
+  the password into a file name. A scheme-less `host:port` or `user:pw@host` that is used as a file prints a warning
+  (password masked). Start the path with `./` when such a name really is a file. No message quotes a password.
 * **`--username`/`--password` apply to the input only** (they are aliases of `--input-username`/`--input-password`;
   use `--output-username`/`--output-password` for the output).
 * **`--httpAuthFile` values are taken literally:** `#`, `;` and `\` inside a value are kept (Node's INI parser cuts
