@@ -241,7 +241,7 @@ dropped or approximated feature is logged as a warning. Unsafe features fail the
 | `readonly` | `read_only` | |
 | `delete` | `delete` | `delete_searchable_snapshot` dropped (warned) |
 | `migrate`, implicit tier migration | — | dropped with a warning (OpenSearch has no data tiers) |
-| `_meta.description` | `description` | other `_meta` keys and `deprecated` dropped (warned) |
+| `_meta.description` (a string) | `description` | other `_meta` keys (nested ones too), a non-string `description` and `deprecated` dropped (warned) |
 | `frozen` phase, `searchable_snapshot`, `downsample`, `wait_for_snapshot`, `unfollow`, `freeze`, `total_shards_per_node`, `index_codec`, `allow_write_after_shrink: true`, `max_primary_shard_docs`, `min_*` rollover conditions, a `rollover` / `forcemerge` / `shrink` without its size, unknown phases, actions, action options or phase keys | — | **refused** unless `--lenientPolicyConversion`; dropping `wait_for_snapshot` is warned as "deleted without waiting for snapshot policy …" |
 | a `min_age` that is not a whole-number duration (`7`, `"soon"`, `null`, `1.5h`, which OpenSearch rejects) | — | **refused even with `--lenientPolicyConversion`**: read as 0 it would start the next phase (e.g. `delete`) at once (L-651) |
 
@@ -259,6 +259,13 @@ cluster can race another client creating the ISM config index; that rejection is
 options (4,096 cases per run, 300,000 once) checks against an independent model that exactly the unsupported parts
 are refused (strict) or dropped one `DROPPED` line each (lenient) and that the result is a well-formed ISM policy;
 live, OpenSearch 2.x and 1.3.20 accept every one of the 322 converted policies of the exhaustive set.
+
+Odd but valid policies (L-652): phases in any JSON order become states in lifecycle order with forward-only
+transitions; a missing `min_age` means no delay; a `min_age` or rollover `max_age` keeps its value and unit as
+written (`0ms`, `30s`, `90m`, `12h`, `1d`, `1000d`, `500micros`, `7nanos`; a zero age in any unit gives an
+unconditional transition); a delete-only policy, a rollover-only hot phase, nested `_meta` and unicode policy names
+(`politique-é-日本`) convert. Live, OpenSearch 1.3.20, 2.19.7 and 3.9.0 accept all 42 such policies and return the
+states, transitions and units unchanged.
 
 ## Renaming indices
 

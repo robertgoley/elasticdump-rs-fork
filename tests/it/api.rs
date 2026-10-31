@@ -1607,6 +1607,189 @@ async fn l651_opensearch_accepts_every_converted_ilm_policy() {
     let _ = std::fs::remove_file(sfile);
 }
 
+// L-652 (TST-BRK-ILM-002): odd but valid ILM policies, restored strictly with
+// --convertIlmToIsm, are accepted by OpenSearch (1.3.20, 2.19.7, 3.9.0) and read back with
+// the states in lifecycle order (phases given out of JSON order), forward-only transitions
+// and every time unit kept as written (`ms`, `micros`, `nanos` included): missing
+// `min_age`, only a delete phase, a rollover-only hot phase, nested `_meta`, a unicode name.
+#[tokio::test]
+async fn l652_odd_but_valid_ilm_policies_are_accepted_as_written() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) {
+        return;
+    }
+    let p = unique("api_ilm652");
+    // (name suffix, ILM phases, expected states: (name, transition condition))
+    type Want = Vec<(&'static str, Option<Value>)>;
+    let mut cases: Vec<(String, Value, Want)> = vec![
+        (
+            "order".into(),
+            json!({
+                "delete": {"min_age": "30d", "actions": {"delete": {}}},
+                "cold": {"min_age": "14d", "actions": {"set_priority": {"priority": 0}}},
+                "warm": {"min_age": "7d", "actions": {"readonly": {}}},
+                "hot": {"min_age": "0ms", "actions": {"set_priority": {"priority": 100}}}
+            }),
+            vec![
+                ("hot", Some(json!({"min_index_age": "7d"}))),
+                ("warm", Some(json!({"min_index_age": "14d"}))),
+                ("cold", Some(json!({"min_index_age": "30d"}))),
+                ("delete", None),
+            ],
+        ),
+        (
+            "nominage".into(),
+            json!({
+                "warm": {"actions": {"readonly": {}}},
+                "hot": {"actions": {"set_priority": {"priority": 1}}},
+                "delete": {"actions": {"delete": {}}}
+            }),
+            vec![
+                ("hot", Some(json!({}))),
+                ("warm", Some(json!({}))),
+                ("delete", None),
+            ],
+        ),
+        (
+            "deleteonly".into(),
+            json!({"delete": {"actions": {"delete": {}}}}),
+            vec![("delete", None)],
+        ),
+        (
+            "rolloveronly".into(),
+            json!({"hot": {"min_age": "0ms", "actions": {"rollover": {"max_primary_shard_size": "50gb", "max_age": "30d"}}}}),
+            vec![("hot", None)],
+        ),
+        (
+            "politique-é-日本".into(),
+            json!({"hot": {"actions": {"set_priority": {"priority": 1}}}}),
+            vec![("hot", None)],
+        ),
+    ];
+    for (i, age) in [
+        "0ms",
+        "30s",
+        "1d",
+        "1000d",
+        "90m",
+        "12h",
+        "500micros",
+        "7nanos",
+        "0",
+        "0nanos",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let zero = age.starts_with('0');
+        let cond = |k: &str| {
+            if zero { json!({}) } else { json!({ k: age }) }
+        };
+        cases.push((
+            format!("u{i}idx"),
+            json!({"delete": {"min_age": age, "actions": {"delete": {}}}, "hot": {"actions": {"set_priority": {"priority": 1}}}}),
+            vec![("hot", Some(cond("min_index_age"))), ("delete", None)],
+        ));
+        cases.push((
+            format!("u{i}roll"),
+            json!({"hot": {"actions": {"rollover": {"max_docs": 5}}}, "delete": {"min_age": age, "actions": {"delete": {}}}}),
+            vec![("hot", Some(cond("min_rollover_age"))), ("delete", None)],
+        ));
+        let first: Want = if zero {
+            vec![("delete", None)]
+        } else {
+            vec![("pending", Some(cond("min_index_age"))), ("delete", None)]
+        };
+        cases.push((
+            format!("u{i}first"),
+            json!({"delete": {"min_age": age, "actions": {"delete": {}}}}),
+            first,
+        ));
+        if !zero {
+            cases.push((
+                format!("u{i}maxage"),
+                json!({"hot": {"actions": {"rollover": {"max_age": age}}}}),
+                vec![("hot", None)],
+            ));
+        }
+    }
+    let name = |sfx: &str| format!("{p}_{sfx}");
+    let doc: serde_json::Map<String, Value> = cases
+        .iter()
+        .map(|(sfx, ph, _)| {
+            (
+                name(sfx),
+                json!({"version": 1, "policy": {"phases": ph, "_meta": {"description": "odd", "owner": {"team": {"ids": [1, 2]}}}}}),
+            )
+        })
+        .collect();
+    let file = tmp_path("api_ilm652", "json");
+    std::fs::write(&file, Value::Object(doc).to_string() + "\n").unwrap();
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "policy", "--convertIlmToIsm"],
+    ))
+    .await;
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains(&format!("Total Writes: {}", cases.len())),
+        "{err}"
+    );
+    assert!(!err.contains("DROPPED"), "{err}");
+    for (sfx, ph, want) in &cases {
+        let v = c
+            .ok(
+                "GET",
+                &format!("_plugins/_ism/policies/{}", name(sfx)),
+                None,
+            )
+            .await;
+        let pol = &v["policy"];
+        assert_eq!(pol["description"], "odd", "{sfx}: {v}");
+        let states = pol["states"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{sfx}: {v}"));
+        assert_eq!(states.len(), want.len(), "{sfx}: {v}");
+        assert_eq!(pol["default_state"], want[0].0, "{sfx}: {v}");
+        for (i, (st, (wname, wcond))) in states.iter().zip(want).enumerate() {
+            assert_eq!(st["name"], *wname, "{sfx}: {v}");
+            let ts = st["transitions"].as_array().unwrap();
+            match wcond {
+                None => assert!(ts.is_empty(), "{sfx}: {v}"),
+                Some(cond) => {
+                    assert_eq!(ts.len(), 1, "{sfx}: {v}");
+                    assert_eq!(ts[0]["state_name"], want[i + 1].0, "{sfx}: {v}");
+                    let got = ts[0].get("conditions").cloned().unwrap_or(json!({}));
+                    assert_eq!(&got, cond, "{sfx}: {v}");
+                }
+            }
+        }
+        if let Some(age) = ph.pointer("/hot/actions/rollover/max_age") {
+            let r = states[0]["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find_map(|a| a.get("rollover"))
+                .unwrap_or_else(|| panic!("{sfx}: {v}"));
+            assert_eq!(&r["min_index_age"], age, "{sfx}: {v}");
+        }
+    }
+    for (sfx, _, _) in &cases {
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_ism/policies/{}", name(sfx)),
+                None,
+            )
+            .await;
+    }
+    let _ = std::fs::remove_file(file);
+}
+
 // L-422 (TST-API-038): on OpenSearch 1.3 a policy created through the legacy
 // `_opendistro/_ism` path is visible to the tool, which only ever uses `_plugins/_ism`
 // (asserted statically for the binary's endpoint inventory, and live through the recorder).

@@ -253,7 +253,11 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
         if let Some(d) = meta.get("description").and_then(Value::as_str) {
             description = d.to_string();
         }
-        let other: Vec<&String> = meta.keys().filter(|k| *k != "description").collect();
+        // L-652: a description that is not a string is dropped (and said so) like the rest
+        let other: Vec<&String> = meta
+            .keys()
+            .filter(|k| *k != "description" || !meta[*k].is_string())
+            .collect();
         if !other.is_empty() {
             cx.notes.push(format!(
                 "_meta keys dropped (ISM has no _meta): {}",
@@ -1033,5 +1037,195 @@ mod tests {
                 }
             }
         }
+    }
+
+    // TST-BRK-ILM-002 (L-652): odd but valid ILM policies.
+    fn names(c: &Converted) -> Vec<&str> {
+        c.policy["states"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect()
+    }
+
+    /// Every state but the last has exactly one transition, to the next state.
+    fn forward_only(c: &Converted) {
+        let st = c.policy["states"].as_array().unwrap();
+        for (i, s) in st.iter().enumerate() {
+            let t = s["transitions"].as_array().unwrap();
+            if i + 1 == st.len() {
+                assert!(t.is_empty(), "{}", c.policy);
+            } else {
+                assert_eq!(t.len(), 1, "{}", c.policy);
+                assert_eq!(t[0]["state_name"], st[i + 1]["name"], "{}", c.policy);
+            }
+        }
+        assert_eq!(c.policy["default_state"], st[0]["name"]);
+    }
+
+    #[test]
+    fn phases_out_of_json_order_keep_lifecycle_order() {
+        let ilm = json!({"phases": {
+            "delete": {"min_age": "30d", "actions": {"delete": {}}},
+            "cold": {"min_age": "14d", "actions": {"set_priority": {"priority": 0}}},
+            "warm": {"min_age": "7d", "actions": {"readonly": {}}},
+            "hot": {"min_age": "0ms", "actions": {"set_priority": {"priority": 100}}}
+        }});
+        let c = convert("p", &ilm, false).unwrap();
+        assert_eq!(names(&c), ["hot", "warm", "cold", "delete"]);
+        forward_only(&c);
+        let st = &c.policy["states"];
+        for (i, age) in [(0, "7d"), (1, "14d"), (2, "30d")] {
+            assert_eq!(
+                st[i]["transitions"][0]["conditions"],
+                json!({"min_index_age": age})
+            );
+        }
+    }
+
+    #[test]
+    fn min_age_in_every_unit_keeps_value_and_unit() {
+        for age in [
+            "0ms",
+            "30s",
+            "1d",
+            "1000d",
+            "90m",
+            "12h",
+            "500micros",
+            "7nanos",
+            "0",
+            "0nanos",
+        ] {
+            let zero = age.starts_with('0');
+            // a later phase: transition condition from index creation, or from rollover
+            for (hot, key) in [
+                (json!({"set_priority": {"priority": 1}}), "min_index_age"),
+                (json!({"rollover": {"max_docs": 5}}), "min_rollover_age"),
+            ] {
+                let ilm = json!({"phases": {
+                    "hot": {"actions": hot},
+                    "delete": {"min_age": age, "actions": {"delete": {}}}
+                }});
+                let c = convert("p", &ilm, false).unwrap();
+                assert_eq!(names(&c), ["hot", "delete"], "{age}");
+                forward_only(&c);
+                let t = &c.policy["states"][0]["transitions"][0];
+                if zero {
+                    assert_eq!(t, &json!({"state_name": "delete"}), "{age}");
+                } else {
+                    assert_eq!(t["conditions"], json!({ key: age }), "{age}");
+                }
+            }
+            // the first phase: a waiting state ahead of it
+            let ilm = json!({"phases": {"delete": {"min_age": age, "actions": {"delete": {}}}}});
+            let c = convert("p", &ilm, false).unwrap();
+            if zero {
+                assert_eq!(names(&c), ["delete"], "{age}");
+            } else {
+                assert_eq!(names(&c), ["pending", "delete"], "{age}");
+                assert_eq!(
+                    c.policy["states"][0]["transitions"][0]["conditions"],
+                    json!({"min_index_age": age})
+                );
+            }
+            forward_only(&c);
+            // rollover max_age: the same value as ISM's min_index_age rollover condition
+            if !zero {
+                let ilm = json!({"phases": {"hot": {"actions": {"rollover": {"max_age": age}}}}});
+                let c = convert("p", &ilm, false).unwrap();
+                assert_eq!(
+                    c.policy["states"][0]["actions"],
+                    json!([{"rollover": {"min_index_age": age}}])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_min_age_is_no_delay() {
+        let ilm = json!({"phases": {
+            "hot": {"actions": {"set_priority": {"priority": 1}}},
+            "warm": {"actions": {"readonly": {}}},
+            "delete": {"actions": {"delete": {}}}
+        }});
+        let c = convert("p", &ilm, false).unwrap();
+        assert_eq!(names(&c), ["hot", "warm", "delete"]);
+        forward_only(&c);
+        for i in 0..2 {
+            assert!(
+                c.policy["states"][i]["transitions"][0]
+                    .get("conditions")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn delete_only_and_rollover_only_policies() {
+        let c = convert(
+            "p",
+            &json!({"phases": {"delete": {"actions": {"delete": {}}}}}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            c.policy["states"],
+            json!([{"name": "delete", "actions": [{"delete": {}}], "transitions": []}])
+        );
+        let c = convert(
+            "p",
+            &json!({"phases": {"delete": {"min_age": "90d", "actions": {"delete": {}}}}}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(names(&c), ["pending", "delete"]);
+        forward_only(&c);
+        let c = convert(
+            "p",
+            &json!({"phases": {"hot": {"min_age": "0ms", "actions": {"rollover": {"max_primary_shard_size": "50gb", "max_age": "30d"}}}}}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            c.policy["states"],
+            json!([{"name": "hot", "actions": [{"rollover": {"min_index_age": "30d", "min_primary_shard_size": "50gb"}}], "transitions": []}])
+        );
+    }
+
+    #[test]
+    fn nested_meta_and_unicode_names() {
+        let name = "politique-é-日本";
+        let ilm = json!({
+            "_meta": {"description": "journaux 日本", "owner": {"team": {"name": "ops", "ids": [1, 2]}}, "tags": ["a"]},
+            "phases": {"hot": {"actions": {"set_priority": {"priority": 1}}}}
+        });
+        let c = convert(name, &ilm, false).unwrap();
+        assert_eq!(c.policy["description"], "journaux 日本");
+        assert!(
+            c.notes
+                .iter()
+                .any(|n| n == "_meta keys dropped (ISM has no _meta): owner, tags"),
+            "{:?}",
+            c.notes
+        );
+        // a description that is not a string is dropped like any other key, and said so
+        let ilm = json!({
+            "_meta": {"description": {"text": "x"}},
+            "phases": {"hot": {"actions": {"set_priority": {"priority": 1}}}}
+        });
+        let c = convert(name, &ilm, false).unwrap();
+        assert_eq!(
+            c.policy["description"],
+            format!("Converted from Elasticsearch ILM policy '{name}' by elasticdump-rs")
+        );
+        assert!(
+            c.notes
+                .iter()
+                .any(|n| n == "_meta keys dropped (ISM has no _meta): description"),
+            "{:?}",
+            c.notes
+        );
     }
 }
