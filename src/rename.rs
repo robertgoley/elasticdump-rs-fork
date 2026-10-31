@@ -51,6 +51,108 @@ fn split_spec(spec: &str, flag: &str) -> Result<(String, String)> {
     Ok((spec[..idx].to_string(), spec[idx + 1..].to_string()))
 }
 
+/// `spec` for an error message: long patterns (a 1 MB regex) are cut.
+fn shorten(spec: &str) -> String {
+    const MAX: usize = 80;
+    if spec.chars().count() <= MAX {
+        return spec.to_string();
+    }
+    let head: String = spec.chars().take(MAX).collect();
+    format!("{head}... ({} bytes)", spec.len())
+}
+
+/// Compile a user-supplied regex (`--renameIndex`, `--templateRegex`) with
+/// regex's default size limit (TST-BRK-CLI-004). `flag` names the option in
+/// the error; `invalid` describes a syntax error. Exceeding the size limit
+/// gets a hint instead of the bare "compiled regex exceeds size limit".
+pub fn compile_regex(pattern: &str, flag: &str, invalid: &str) -> Result<Regex> {
+    Regex::new(pattern).map_err(|e| match e {
+        regex::Error::CompiledTooBig(limit) => anyhow!(
+            "{flag}: pattern too large (regex size limit); simplify it (the compiled regex would exceed {limit} bytes)"
+        ),
+        regex::Error::Syntax(msg) if pattern.len() > 200 => {
+            // regex's message repeats the whole pattern; keep only its last line
+            let last = msg.lines().last().unwrap_or_default().trim();
+            anyhow!("{flag}: {invalid}: {last}")
+        }
+        e => anyhow!("{flag}: {invalid}: {e}"),
+    })
+}
+
+/// A `$N` / `$name` / `${N}` / `${name}` reference in a replacement (the
+/// syntax of `regex::Regex::replacen`, including `$$` for a literal `$`).
+fn replacement_refs(rep: &str) -> Vec<&str> {
+    let b = rep.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        match b.get(i + 1) {
+            Some(b'$') => i += 2,
+            Some(b'{') => match rep[i + 2..].find('}') {
+                Some(end) => {
+                    out.push(&rep[i + 2..i + 2 + end]);
+                    i += 3 + end;
+                }
+                None => i += 1,
+            },
+            _ => {
+                let len = b[i + 1..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_alphanumeric() || **c == b'_')
+                    .count();
+                if len > 0 {
+                    out.push(&rep[i + 1..i + 1 + len]);
+                }
+                i += 1 + len;
+            }
+        }
+    }
+    out
+}
+
+/// Every capture reference in `rep` must exist in `re`: regex silently
+/// expands an unknown group (`$9` with one group, a `${nmae}` typo, or `$1a`,
+/// which is the group *named* `1a`) to nothing.
+fn check_replacement(re: &Regex, rep: &str, flag: &str) -> Result<()> {
+    for r in replacement_refs(rep) {
+        let known = match r.parse::<usize>() {
+            Ok(n) => n < re.captures_len(),
+            Err(_) => re.capture_names().flatten().any(|n| n == r),
+        };
+        if !known {
+            let groups = re.captures_len() - 1;
+            let mut names: Vec<&str> = re.capture_names().flatten().collect();
+            names.sort_unstable();
+            let named = if names.is_empty() {
+                String::new()
+            } else {
+                format!(" (named: {})", names.join(", "))
+            };
+            // `$1x` reads as the group named `1x`: suggest `${1}x`
+            let digits = r.bytes().take_while(u8::is_ascii_digit).count();
+            let hint = if digits > 0 && digits < r.len() {
+                format!(
+                    ". Write ${{{}}}{} for group {} followed by '{}'",
+                    &r[..digits],
+                    &r[digits..],
+                    &r[..digits],
+                    &r[digits..]
+                )
+            } else {
+                String::new()
+            };
+            bail!(
+                "{flag}: the replacement refers to capture group '{r}', which the regex does not have; it has {groups} group(s){named}{hint} (use $$ for a literal $)"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A rename that would merge several source indices into one target
 /// (TST-BRK-CLI-003). Fatal: it never becomes a per-document rejection.
 #[derive(Debug)]
@@ -95,9 +197,13 @@ impl IndexRenamer {
         }
         for spec in regexes {
             let (re, rep) = split_spec(spec, "renameIndex")?;
-            let re = Regex::new(&re).map_err(|e| {
-                anyhow!("--renameIndex '{spec}': invalid regex (look-around and backreferences are not supported): {e}")
-            })?;
+            let flag = format!("--renameIndex '{}'", shorten(spec));
+            let re = compile_regex(
+                &re,
+                &flag,
+                "invalid regex (look-around and backreferences are not supported)",
+            )?;
+            check_replacement(&re, &rep, &flag)?;
             rules.push(Rule::Regex {
                 re,
                 rep,
@@ -348,6 +454,57 @@ mod tests {
         assert!(IndexRenamer::new(&s(&["nocolon"]), &[], "", "").is_err());
         assert!(IndexRenamer::new(&s(&[":x"]), &[], "", "").is_err());
         assert!(IndexRenamer::new(&[], &s(&["(?=x):y"]), "", "").is_err());
+    }
+
+    /// L-643 (TST-BRK-CLI-004): oversized patterns and references to missing groups.
+    #[test]
+    fn regex_abuse_is_refused_with_a_clear_message() {
+        let new = |x: &str| IndexRenamer::new(&[], &[x.to_string()], "", "").map(|_| ());
+        let e = new("(a{1000}){1000}:x").unwrap_err().to_string();
+        assert!(
+            e.contains("pattern too large (regex size limit); simplify it"),
+            "{e}"
+        );
+        let mb = format!("{}:x", "a".repeat(1 << 20));
+        let e = new(&mb).unwrap_err().to_string();
+        assert!(
+            e.contains("regex size limit") && e.contains("1048578 bytes"),
+            "{e}"
+        );
+        assert!(
+            e.len() < 400,
+            "the pattern is not echoed: {} bytes",
+            e.len()
+        );
+        let e = new(r"(?-u:\xff):x").unwrap_err().to_string();
+        assert!(e.contains("invalid UTF-8"), "{e}");
+        for (spec, group) in [
+            ("^(.*)$:$9", "'9'"),
+            ("^(.*)$:${2}", "'2'"),
+            ("^(?P<name>.*)$:${nmae}", "'nmae'"),
+            ("^(?P<name>.*)$:$nam", "'nam'"),
+            ("^(.*)$:$1x", "'1x'"),
+            ("^a$:$0$1", "'1'"),
+        ] {
+            let e = new(spec).unwrap_err().to_string();
+            assert!(e.contains(&format!("capture group {group}")), "{spec}: {e}");
+            assert!(e.starts_with("--renameIndex '"), "{spec}: {e}");
+        }
+        // valid references, `$$` and a lone `$` are accepted and map as before
+        let n = r(
+            &[],
+            &[
+                "^(?P<name>[a-z]+)-(\\d+)$:${name}_$2-${1}-$$-$0$",
+                "^q(.*)$:r$1",
+            ],
+            "",
+            "",
+        );
+        assert_eq!(n.index("ab-12").unwrap(), "ab_12-ab-$-ab-12$");
+        assert_eq!(n.index("qz").unwrap(), "rz");
+        let n = r(&[], &["^x(.*)$:y$1-$ {z"], "", "");
+        assert!(n.index("xa").is_err(), "space is not a valid index char");
+        assert_eq!(replacement_refs("a$$b${x}c$_1-$-${"), vec!["x", "_1"]);
     }
 
     #[test]

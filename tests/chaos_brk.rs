@@ -3588,3 +3588,216 @@ fn l642_same_source_and_destination_refused() {
     assert!(!stderr(&o).contains("same file or index"), "{}", stderr(&o));
     assert!(!stderr(&o).contains("panicked"), "{}", stderr(&o));
 }
+
+/// L-644 (TST-BRK-CLI-005): output path abuse. Every refused path is a usage error (exit 2)
+/// before anything is written; no staging file is left; the symlink target is never touched
+/// (decision: a symlink --output is refused, the link and its target both stay); the mode of an
+/// overwritten file is preserved; a `..` path works.
+#[cfg(unix)]
+#[test]
+fn l644_output_path_abuse() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let input = d.join("in.json");
+    let body = "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{\"a\":1}}\n";
+    std::fs::write(&input, body).unwrap();
+    let out = |p: &std::path::Path, extra: &[&str]| {
+        bin()
+            .args(["--input", input.to_str().unwrap(), "--output"])
+            .arg(p)
+            .args(extra)
+            .output()
+            .expect("spawn")
+    };
+    let sub = d.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let target = d.join("target.json");
+    std::fs::write(&target, "target\n").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let link = sub.join("link.json");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let dangling = d.join("dangling.json");
+    std::os::unix::fs::symlink(d.join("nowhere.json"), &dangling).unwrap();
+    let fifo = d.join("fifo");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let refused: Vec<(std::path::PathBuf, &[&str], &str)> = vec![
+        (sub.clone(), &[], "is a directory"),
+        (sub.clone(), &["--overwrite"], "is a directory"),
+        ("/".into(), &["--overwrite"], "must name a file"),
+        (sub.join(".."), &["--overwrite"], "must name a file"),
+        (link.clone(), &[], "symbolic link"),
+        (link.clone(), &["--overwrite"], "symbolic link"),
+        (dangling.clone(), &[], "which does not exist"),
+        (dangling.clone(), &["--overwrite"], "which does not exist"),
+        (fifo.clone(), &["--overwrite"], "FIFO"),
+        ("/dev/stdout".into(), &["--overwrite"], "--output $"),
+        ("/dev/null".into(), &["--overwrite"], "character device"),
+        (
+            d.join("nope/x.json"),
+            &[],
+            "does not exist (create it first)",
+        ),
+        (input.join("x.json"), &[], "not a directory"),
+    ];
+    for (p, extra, want) in &refused {
+        let o = out(p, extra);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(2), "{p:?} {extra:?}: {err}");
+        assert!(err.contains(want), "{p:?} {extra:?}: {err}");
+        assert!(err.contains("--output"), "{p:?}: {err}");
+    }
+    // the symlink and its target are untouched, nothing was created through the dangling link
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "target\n");
+    assert!(
+        dangling
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(!d.join("nowhere.json").exists());
+    assert!(std::os::unix::fs::FileTypeExt::is_fifo(
+        &fifo.symlink_metadata().unwrap().file_type()
+    ));
+    // the symlink target itself can be written (explicit path), mode 0600 preserved
+    let o = out(&target, &["--overwrite"]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), body);
+    let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "mode of the overwritten file is preserved");
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    // an existing file without --overwrite: refused, unchanged
+    let o = out(&target, &[]);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("already exists"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), body);
+    // a path with `..` is used as given
+    let o = out(&sub.join("..").join("dotdot.json"), &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(
+        std::fs::read_to_string(d.join("dotdot.json")).unwrap(),
+        body
+    );
+    // a read-only directory: a clear error naming it (skipped when running as root)
+    let ro = d.join("ro");
+    std::fs::create_dir(&ro).unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(ro.join("probe"), "").is_err() {
+        let o = out(&ro.join("x.json"), &[]);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains("no permission to create files in the directory"),
+            "{err}"
+        );
+    }
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // no staging file is left anywhere
+    for dd in [d, sub.as_path(), ro.as_path()] {
+        for e in std::fs::read_dir(dd).unwrap() {
+            let n = e.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(!n.contains(".part-"), "staging file left: {n}");
+        }
+    }
+}
+
+/// L-644a (user decision): symlinked directories in the parent path of --output are followed
+/// (a link, a nested link, a link to a link, through the cwd); the final component as a symlink
+/// stays refused (exit 2); a dangling parent link is a clear usage error naming the link.
+#[cfg(unix)]
+#[test]
+fn l644a_symlinked_parent_dirs_are_followed() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let input = d.join("in.json");
+    let body = "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{\"a\":1}}\n";
+    std::fs::write(&input, body).unwrap();
+    let real = d.join("real");
+    std::fs::create_dir_all(real.join("sub")).unwrap();
+    // parent dir symlink: linkdir -> real
+    symlink(&real, d.join("linkdir")).unwrap();
+    // nested parent symlink: deep/a/l2 -> ../../real (relative), then a real dir below it
+    std::fs::create_dir_all(d.join("deep/a")).unwrap();
+    symlink("../../real", d.join("deep/a/l2")).unwrap();
+    // a link to a link
+    symlink(d.join("linkdir"), d.join("chain")).unwrap();
+    // dangling parent links: directly and nested
+    symlink(d.join("nowhere"), d.join("dangling")).unwrap();
+    symlink("../missing-dir", d.join("deep/a/gone")).unwrap();
+    let run = |p: &std::path::Path, cwd: &std::path::Path| {
+        bin()
+            .current_dir(cwd)
+            .args(["--input", input.to_str().unwrap(), "--output"])
+            .arg(p)
+            .output()
+            .expect("spawn")
+    };
+    let ok: Vec<(std::path::PathBuf, std::path::PathBuf)> = vec![
+        (d.join("linkdir/out.json"), real.join("out.json")),
+        ("linkdir/rel.json".into(), real.join("rel.json")),
+        (
+            d.join("deep/a/l2/sub/nested.json"),
+            real.join("sub/nested.json"),
+        ),
+        (
+            "deep/a/l2/nested-rel.json".into(),
+            real.join("nested-rel.json"),
+        ),
+        (d.join("chain/chained.json"), real.join("chained.json")),
+    ];
+    for (arg, written) in &ok {
+        let o = run(arg, d);
+        assert_eq!(o.status.code(), Some(0), "{arg:?}: {}", stderr(&o));
+        assert_eq!(std::fs::read_to_string(written).unwrap(), body, "{arg:?}");
+    }
+    // the links are still links
+    for l in ["linkdir", "deep/a/l2", "chain"] {
+        assert!(
+            d.join(l)
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{l}"
+        );
+    }
+    // a symlink as the final file stays refused, even behind a followed parent link
+    symlink(real.join("out.json"), real.join("final-link.json")).unwrap();
+    let o = run(&d.join("linkdir/final-link.json"), d);
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(stderr(&o).contains("symbolic link"), "{}", stderr(&o));
+    // dangling parent links: exit 2, the error names the link and its missing target
+    let dangling: Vec<(std::path::PathBuf, &str, &str)> = vec![
+        (d.join("dangling/x.json"), "dangling", "nowhere"),
+        ("dangling/sub/x.json".into(), "'dangling'", "nowhere"),
+        (d.join("deep/a/gone/x.json"), "gone", "missing-dir"),
+    ];
+    for (arg, link, target) in &dangling {
+        let o = run(arg, d);
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(2), "{arg:?}: {err}");
+        assert!(err.contains("--output"), "{err}");
+        assert!(err.contains("is a symbolic link to"), "{err}");
+        assert!(err.contains(link) && err.contains(target), "{err}");
+        assert!(err.contains("which does not exist"), "{err}");
+    }
+    assert!(!d.join("nowhere").exists());
+    assert!(!d.join("deep/missing-dir").exists());
+    // a plain missing directory keeps the old message
+    let o = run(&d.join("nope/x.json"), d);
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("does not exist (create it first)"),
+        "{}",
+        stderr(&o)
+    );
+}

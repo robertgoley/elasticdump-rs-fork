@@ -3114,3 +3114,131 @@ fn hostile_compressed_input_fails_cleanly() {
         }
     }
 }
+
+/// L-646 (TST-BRK-CLI-008): scheme-less and mistyped cluster URLs. A
+/// scheme-less output with `user:password@` is refused before anything is
+/// written (it would put the password in a file name); mistyped schemes are
+/// usage errors; `host:port` "files" warn; uppercase schemes are clusters;
+/// no message quotes a password.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn l646_scheme_less_and_mistyped_urls() {
+    let cwd = tempfile::tempdir().unwrap();
+    let input = cwd.path().join("in.json");
+    std::fs::write(&input, format!("{}\n", hit("1", "{}"))).unwrap();
+    let input = input.to_str().unwrap().to_string();
+    let run_in = |args: Vec<String>| {
+        let dir = cwd.path().to_path_buf();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                bin().current_dir(dir).args(args).output().expect("spawn")
+            })
+            .await
+            .unwrap()
+        }
+    };
+    // (output, exit code, expected stderr text)
+    let cases: &[(&str, i32, &str)] = &[
+        (
+            "elastic:FAKE-pw-646@localhost:9200",
+            2,
+            "name holds the password",
+        ),
+        (
+            "elastic:FAKE/pw-646@localhost:9200",
+            2,
+            "name holds the password",
+        ),
+        (
+            "http:/elastic:FAKE-pw-646@localhost:9200/i",
+            2,
+            "mistyped URL",
+        ),
+        ("HTTP:/localhost:9200/i", 2, "mistyped URL"),
+        ("http//localhost:9200/i", 2, "mistyped URL"),
+        (
+            "htp://elastic:FAKE-pw-646@localhost:9200/i",
+            2,
+            "unsupported scheme 'htp://'",
+        ),
+        (
+            " http://elastic:FAKE-pw-646@localhost:9200/i",
+            2,
+            "whitespace",
+        ),
+        ("localhost:9200", 0, "is treated as a FILE path"),
+        ("./elastic:FAKE-pw-646@x.json", 0, ""),
+    ];
+    for (out, code, want) in cases {
+        let o = run_in(vec![
+            "--input".into(),
+            input.clone(),
+            "--output".into(),
+            (*out).into(),
+        ])
+        .await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(*code), "{out:?}: {err}");
+        assert!(err.contains(want), "{out:?}: {err}");
+        assert!(!err.contains("FAKE"), "{out:?}: {err}");
+        assert!(!stdout(&o).contains("FAKE"), "{out:?}");
+        if *code == 2 {
+            assert!(
+                err.contains("http://") && err.contains("./"),
+                "{out:?}: {err}"
+            );
+        }
+    }
+    // only the explicit ./ file and the host:port file were written
+    let mut names: Vec<String> = std::fs::read_dir(cwd.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["elastic:FAKE-pw-646@x.json", "in.json", "localhost:9200"]
+    );
+
+    // scheme-less input with credentials: warned, masked, read as a file
+    let o = run_in(vec![
+        "--input".into(),
+        "elastic:FAKE-pw-646@localhost:9200/idx".into(),
+        "--output".into(),
+        "$".into(),
+    ])
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("elastic:***@localhost:9200/idx is treated as a FILE path"),
+        "{err}"
+    );
+    assert!(!err.contains("FAKE"), "{err}");
+
+    // a mistyped input scheme is a usage error before anything is read
+    let o = run_in(vec![
+        "--input".into(),
+        "http:/localhost:1/idx".into(),
+        "--output".into(),
+        "$".into(),
+    ])
+    .await;
+    assert_eq!(o.status.code(), Some(2), "{}", stderr(&o));
+
+    // uppercase schemes are clusters
+    let mock = MockEs::serve(scroll_script(&[hit("1", r#"{"a":1}"#)])).await;
+    let url = mock.input_url("idx").replacen("http://", "HTTP://", 1);
+    let o = run_async(
+        vec![
+            "--input".into(),
+            url,
+            "--output".into(),
+            "$".into(),
+            "--quiet".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(stdout(&o).contains(r#""_id":"1""#), "{}", stdout(&o));
+}

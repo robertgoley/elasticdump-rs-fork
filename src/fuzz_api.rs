@@ -363,6 +363,30 @@ pub fn ini_auth_file(data: &[u8]) {
     }
 }
 
+/// Secret scrubbing (L-645 / D-4): `user:password`; once the password and
+/// its Basic token are registered, no rendering of the password (raw, URL
+/// userinfo, percent/form-encoded, JSON, `{:?}`, Basic token) survives.
+pub fn secret_redaction(data: &[u8]) {
+    let Ok(s) = std::str::from_utf8(data) else {
+        return;
+    };
+    let (user, pw) = s.split_once(':').unwrap_or(("u", s));
+    let pw = pw.trim();
+    if pw.len() < crate::secrets::MIN_LEN {
+        return;
+    }
+    let mut r = crate::secrets::Registry::new();
+    r.add(pw);
+    r.add(&base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        format!("{user}:{pw}"),
+    ));
+    for (msg, needle) in crate::secrets::renderings(user, pw) {
+        let out = r.scrub(&msg);
+        assert!(!out.contains(&needle), "{needle:?} survived in {out:?}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// Each entry point survives a few awkward inputs (the fuzz smoke runs
@@ -383,6 +407,7 @@ mod tests {
             br#"{"policy":{"phases":{"hot":{"actions":{"rollover":{"max_age":"1d"}}}}}}"#,
             b"^(a|b)-(.*):x-$2\na-1\nb-1",
             b"user=u\npassword=p\n",
+            "fake:FAKE-pw: @%#/?\u{e9}\\\"x***".as_bytes(),
             b"\xff\xfe",
             // L-507 regression: lenient conversion of a policy without phases panicked
             br#"{"phases":{}}"#,
@@ -415,6 +440,7 @@ mod tests {
             super::file_to_bulk(s);
             super::url_segments(s);
             super::meta_names(s);
+            super::secret_redaction(s);
         }
     }
 }

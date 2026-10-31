@@ -23,17 +23,41 @@ const ISM: &str = "_plugins";
 const ISM_PAGE: usize = 1000;
 
 /// `*`/`?` glob match (policy name filters with wildcards are applied
-/// client-side on both engines).
-pub fn glob(pattern: &str, name: &str) -> bool {
-    pattern.split(',').any(|p| {
-        let re = format!(
-            "^{}$",
+/// client-side on both engines). A comma list matches if any entry does; the
+/// list is compiled as one regex, and a build failure (a huge list past the
+/// regex size limit) is an error, never a silent non-match (TST-BRK-CLI-004).
+pub fn glob(pattern: &str, name: &str) -> Result<bool> {
+    let alts: Vec<String> = pattern
+        .split(',')
+        .map(|p| {
             regex::escape(p.trim())
                 .replace(r"\*", ".*")
                 .replace(r"\?", ".")
-        );
-        regex::Regex::new(&re).is_ok_and(|r| r.is_match(name))
-    })
+        })
+        .collect();
+    let re = format!("^(?:{})$", alts.join("|"));
+    match crate::rename::compile_regex(&re, "policy name pattern", "invalid pattern") {
+        Ok(r) => Ok(r.is_match(name)),
+        Err(e) => Err(e),
+    }
+}
+
+/// Keep the entries whose name matches `pattern`; the first glob error wins.
+fn retain_glob<T>(
+    items: &mut Vec<T>,
+    pattern: &str,
+    name: impl Fn(&T) -> Option<&str>,
+) -> Result<()> {
+    let mut failed = None;
+    items.retain(|it| match name(it).map(|n| glob(pattern, n)) {
+        Some(Ok(keep)) => keep,
+        Some(Err(e)) => {
+            failed.get_or_insert(e);
+            false
+        }
+        None => false,
+    });
+    failed.map_or(Ok(()), Err)
 }
 
 pub async fn fetch(
@@ -50,7 +74,17 @@ pub async fn fetch(
         }
         let mut v = get_json_q(client, opts.retry, &segs, &[], "GET _ilm/policy").await?;
         if let (true, Some(p), Value::Object(m)) = (wildcard, name, &mut v) {
-            m.retain(|k, _| glob(p, k));
+            let mut failed = None;
+            m.retain(|k, _| match glob(p, k) {
+                Ok(keep) => keep,
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    false
+                }
+            });
+            if let Some(e) = failed {
+                return Err(e);
+            }
         }
         return Ok(v);
     }
@@ -89,7 +123,7 @@ pub async fn fetch(
         }
     }
     if let Some(p) = name {
-        all.retain(|it| it["_id"].as_str().is_some_and(|id| glob(p, id)));
+        retain_glob(&mut all, p, |it| it["_id"].as_str())?;
     }
     let total = all.len();
     Ok(json!({"policies": all, "total_policies": total}))
@@ -421,6 +455,28 @@ mod tests {
             ilm_body(&json!({"phases": {}, "_meta": {"a": 1}, "in_use_by": {}})),
             json!({"policy": {"phases": {}, "_meta": {"a": 1}}})
         );
-        assert!(glob("it_*", "it_1") && !glob("it_*", "x") && glob("a,b", "b"));
+        assert!(
+            glob("it_*", "it_1").unwrap()
+                && !glob("it_*", "x").unwrap()
+                && glob("a,b", "b").unwrap()
+        );
+    }
+
+    /// TST-BRK-CLI-004: a pattern past the regex size limit is an error, not "no match".
+    #[test]
+    fn huge_glob_list_is_an_error_not_a_non_match() {
+        let mut list = String::new();
+        let mut i = 0;
+        while list.len() < 1 << 20 {
+            list.push_str(&format!("p{i}-?*,"));
+            i += 1;
+        }
+        let e = glob(&list, "p1-x").unwrap_err().to_string();
+        assert!(e.contains("size limit"), "{}", &e[..e.len().min(300)]);
+        assert!(e.len() < 1000, "the 1 MB pattern is not echoed");
+        // a valid list still matches like before: any entry, trimmed, anchored
+        assert!(glob(" a , b* ", "bc").unwrap() && !glob("a,b", "ab").unwrap());
+        assert!(glob("a?", "ab").unwrap() && !glob("a?", "a").unwrap());
+        assert!(!glob("a.b", "axb").unwrap() && glob("a+(b)", "a+(b)").unwrap());
     }
 }

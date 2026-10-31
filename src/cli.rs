@@ -450,17 +450,25 @@ pub struct Cli {
     pub no_proxy: Option<bool>,
 
     // -------------------------------------------------------- auth and TLS
-    /// INI file with user= and password= used when a URL has no credentials
+    /// INI file with user= and password= used when a URL has no (or incomplete) credentials
     #[arg(long = "httpAuthFile")]
     pub http_auth_file: Option<String>,
 
-    /// Extension: basic-auth username for the input (overrides the URL)
-    #[arg(long)]
-    pub username: Option<String>,
+    /// Basic-auth username for the input (overrides the URL, --httpAuthFile and env); alias --username
+    #[arg(long = "input-username", alias = "username")]
+    pub input_username: Option<String>,
 
-    /// Extension: basic-auth password for the input (overrides the URL)
-    #[arg(long)]
-    pub password: Option<String>,
+    /// Basic-auth password for the input (overrides the URL, --httpAuthFile and env); alias --password
+    #[arg(long = "input-password", alias = "password")]
+    pub input_password: Option<String>,
+
+    /// Basic-auth username for the output (overrides the URL, --httpAuthFile and env)
+    #[arg(long = "output-username")]
+    pub output_username: Option<String>,
+
+    /// Basic-auth password for the output (overrides the URL, --httpAuthFile and env)
+    #[arg(long = "output-password")]
+    pub output_password: Option<String>,
 
     /// Accepted for compatibility (certificate flags always apply)
     #[arg(long = "tlsAuth", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
@@ -788,6 +796,7 @@ mod tests {
     fn debug_never_prints_secrets() {
         let c = parse(&[
             "--password=S3cr3t-pw",
+            "--output-password=S3cr3t-opw",
             "--pass=S3cr3t-pass",
             "--input-pass=S3cr3t-in",
             "--output-pass=S3cr3t-out",

@@ -11,7 +11,7 @@ seeds = {t: [] for t in [
     "json_split", "codec_decode", "bulk_encode_doc", "extract_batch", "bulk_handle_response",
     "parse_size", "endpoint_parse", "ilm_to_ism_convert", "renamer_new_index", "ini_auth_file",
     "zstd_in", "gzip_in", "sonic_vs_serde",
-    "file_to_bulk", "url_segments", "meta_names"]}
+    "file_to_bulk", "url_segments", "meta_names", "secret_redaction"]}
 
 for meta in (root / "tests" / "golden").glob("*/*/meta.toml"):
     case = meta.parent
@@ -42,6 +42,7 @@ seeds["endpoint_parse"] += [b"http://u:p@h:9200/i/t", b"https://[::1]:9200/", b"
                             b"elastic:pw@host:9200/idx", b"http://a:/pw@h", b"HTTP://H/I"]
 seeds["renamer_new_index"] += [b"^(a|b)-(.*):x-$2\na-1\nb-1", b"logs-:new-\nlogs-1\nother",
                                b"(?:x):${1}\nx", b"^(.*)$:_$1\nabc"]
+seeds["secret_redaction"] += [b"fakeuser:FAKE-pw: @%#/?", "u:FAKE-\u00e9 \\\"x".encode(), b"u:x***"]
 seeds["ini_auth_file"] += [b"user=u\npassword=p\n", b"user = a\r\npassword = b c\r\n", b"[s]\nuser=x",
                            b"password=\nuser=\n"]
 

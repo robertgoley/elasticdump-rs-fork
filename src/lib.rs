@@ -160,6 +160,11 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
     if cli.file_size.is_some() && cli.max_rows.is_some() {
         return Err(usage("--fileSize and --maxRows cannot be combined"));
     }
+    // TST-BRK-CLI-005: directories, symlinks, FIFOs/devices and missing
+    // parents are refused before anything is read or sent
+    if let Endpoint::File(p) = output {
+        output::check_output_path(p).map_err(|e| usage(format!("{e:#}")))?;
+    }
     if (cli.file_size.is_some() || cli.max_rows.is_some()) && !matches!(output, Endpoint::File(_)) {
         return Err(usage("--fileSize/--maxRows require a file --output"));
     }
@@ -168,6 +173,10 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
             "--type {} needs Elasticsearch/OpenSearch on at least one side",
             cli.r#type.name()
         )));
+    }
+    // compiled here too, so a bad pattern fails before any request
+    if let DumpType::Meta(kind) = cli.r#type {
+        template_filter(cli, kind)?;
     }
     let renaming = !cli.rename_prefix.is_empty() || !cli.rename_index.is_empty();
     if renaming {
@@ -533,6 +542,27 @@ async fn es_source_options(
     })
 }
 
+/// Register the passwords given as flags or environment variables before
+/// anything can log or fail (D-4); URL, auth-file and header secrets follow
+/// in [`register_secrets`].
+fn register_early_secrets(cli: &Cli) {
+    let env = [Direction::Input, Direction::Output]
+        .map(|d| std::env::var(format!("{}_PASSWORD", d.env_prefix())).ok());
+    for p in [
+        &cli.input_password,
+        &cli.output_password,
+        &cli.pass,
+        &cli.input_pass,
+        &cli.output_pass,
+    ]
+    .into_iter()
+    .chain(&env)
+    .flatten()
+    {
+        secrets::register(p);
+    }
+}
+
 /// Register every credential of this run so logs and errors never show it.
 fn register_secrets(cli: &Cli, eps: [&Endpoint; 2], auth_file: Option<&(String, String)>) {
     for ep in eps {
@@ -544,12 +574,6 @@ fn register_secrets(cli: &Cli, eps: [&Endpoint; 2], auth_file: Option<&(String, 
     }
     if let Some((u, p)) = auth_file {
         secrets::register_basic(Some(u), p);
-    }
-    for p in [&cli.password, &cli.pass, &cli.input_pass, &cli.output_pass]
-        .into_iter()
-        .flatten()
-    {
-        secrets::register(p);
     }
     for dir in [Direction::Input, Direction::Output] {
         for (k, v) in config::headers_for(cli, dir).unwrap_or_default() {
@@ -597,6 +621,21 @@ async fn check_rename_merges(
     }
 }
 
+/// `--templateRegex` for template dumps with `--filterSystemTemplates` (the
+/// default); a bad or oversized pattern is a usage error (TST-BRK-CLI-004).
+fn template_filter(cli: &Cli, kind: meta::MetaKind) -> Result<Option<regex::Regex>> {
+    if !matches!(kind, meta::MetaKind::Template(_)) || !cli.filter_system_templates() {
+        return Ok(None);
+    }
+    rename::compile_regex(
+        &cli.template_regex,
+        "--templateRegex",
+        "unsupported pattern (JavaScript look-around and backreferences are not available)",
+    )
+    .map(Some)
+    .map_err(|e| usage(format!("{e:#}")))
+}
+
 /// `--renamePrefix`/`--renameIndex` rules (with `--prefix`/`--suffix`), if any.
 fn renamer(cli: &Cli) -> Result<Option<rename::IndexRenamer>> {
     if cli.rename_prefix.is_empty() && cli.rename_index.is_empty() {
@@ -639,14 +678,7 @@ async fn run_meta(
         }
         _ => (None, None, None, None),
     };
-    let template_filter = match (kind, cli.filter_system_templates()) {
-        (meta::MetaKind::Template(_), true) => Some(regex::Regex::new(&cli.template_regex).map_err(|e| {
-            usage(format!(
-                "--templateRegex: unsupported pattern (JavaScript look-around and backreferences are not available): {e}"
-            ))
-        })?),
-        _ => None,
-    };
+    let template_filter = template_filter(cli, kind)?;
     if cli.close_index.unwrap_or(false) && kind != meta::MetaKind::Analyzer {
         log::warn!("--closeIndex only applies to --type analyzer");
     }
@@ -765,6 +797,7 @@ pub async fn run() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     let (argv, oos_warnings) = cli::prescan_out_of_scope(argv).map_err(usage)?;
     let cli = Cli::parse_from(argv);
+    register_early_secrets(&cli);
     init_logging(&cli);
     memplan::set(cli.buffer_size, cli.slices, cli.concurrency, cli.limit);
     if let Some(limit) = open_file_limit() {

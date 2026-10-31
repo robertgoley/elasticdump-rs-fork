@@ -155,6 +155,12 @@ async fn secret_canaries_never_leak() {
     let dir = tempfile::tempdir().unwrap();
     let auth_file = dir.path().join("auth.ini");
     std::fs::write(&auth_file, "user=fileuser\npassword=CNRY-file-6\n").unwrap();
+    let in_file = dir.path().join("in.json").to_str().unwrap().to_string();
+    std::fs::write(
+        &in_file,
+        "{\"_index\":\"i\",\"_id\":\"1\",\"_source\":{}}\n",
+    )
+    .unwrap();
     let hosts = |m: &RouterMock| m.url().replace("http://", "");
     // (label, scheme+host[:port]) error classes
     let targets: Vec<(&str, String)> = vec![
@@ -173,6 +179,8 @@ async fn secret_canaries_never_leak() {
         "CNRY-env-5",
         "CNRY-file-6",
         "CNRY-bearer-7",
+        "CNRY-in-flag-8: @%#/?é",
+        "CNRY-out-flag-9: @%#/?é",
     ]
     .into_iter()
     .map(String::from)
@@ -181,18 +189,27 @@ async fn secret_canaries_never_leak() {
         ("elastic", "CNRY-url-1"),
         ("envuser", "CNRY-env-5"),
         ("fileuser", "CNRY-file-6"),
+        ("flaguser", "CNRY-in-flag-8: @%#/?é"),
+        ("flaguser", "CNRY-out-flag-9: @%#/?é"),
     ] {
         canaries.push(base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}")));
     }
     let mut runs = 0;
     for (class, base) in &targets {
-        for channel in ["url+params+headers", "env", "authfile+bearer"] {
+        for channel in [
+            "url+params+headers",
+            "env",
+            "authfile+bearer",
+            "input-flags",
+            "output-flags",
+        ] {
             for debug in [false, true] {
                 let out_dir = dir.path().join(format!("o-{class}-{channel}-{debug}"));
                 std::fs::create_dir_all(&out_dir).unwrap();
                 let mut env: Vec<(&'static str, String)> = vec![];
                 let mut args: Vec<String> = vec![];
-                let input = match channel {
+                let file_out = out_dir.join("out.json").to_str().unwrap().to_string();
+                let (input, output) = match channel {
                     "url+params+headers" => {
                         args.extend([
                             "--input-params".into(),
@@ -202,12 +219,33 @@ async fn secret_canaries_never_leak() {
                             "--pass".into(),
                             "CNRY-pass-4".into(),
                         ]);
-                        base.replacen("://", "://elastic:CNRY-url-1@", 1) + "/idx"
+                        (
+                            base.replacen("://", "://elastic:CNRY-url-1@", 1) + "/idx",
+                            file_out,
+                        )
                     }
                     "env" => {
                         env.push(("ELASTICDUMP_INPUT_USERNAME", "envuser".into()));
                         env.push(("ELASTICDUMP_INPUT_PASSWORD", "CNRY-env-5".into()));
-                        format!("{base}/idx")
+                        (format!("{base}/idx"), file_out)
+                    }
+                    "input-flags" => {
+                        args.extend([
+                            "--input-username".into(),
+                            "flaguser".into(),
+                            "--input-password".into(),
+                            "CNRY-in-flag-8: @%#/?é".into(),
+                        ]);
+                        (format!("{base}/idx"), file_out)
+                    }
+                    "output-flags" => {
+                        args.extend([
+                            "--output-username".into(),
+                            "flaguser".into(),
+                            "--output-password".into(),
+                            "CNRY-out-flag-9: @%#/?é".into(),
+                        ]);
+                        (in_file.clone(), format!("{base}/idx"))
                     }
                     _ => {
                         args.extend([
@@ -216,14 +254,14 @@ async fn secret_canaries_never_leak() {
                             "--input-headers".into(),
                             r#"{"Authorization":"Bearer CNRY-bearer-7"}"#.into(),
                         ]);
-                        format!("{base}/idx")
+                        (format!("{base}/idx"), file_out)
                     }
                 };
                 args.extend([
                     "--input".into(),
                     input,
                     "--output".into(),
-                    out_dir.join("out.json").to_str().unwrap().into(),
+                    output,
                     "--noImplicitRetry".into(),
                     "--requestTimeout".into(),
                     "20".into(),
@@ -255,11 +293,233 @@ async fn secret_canaries_never_leak() {
             }
         }
     }
-    assert_eq!(runs, 36);
+    assert_eq!(runs, 60);
     // the echo servers really did receive the secrets (the scrubbing is what hid them)
     let seen = m500
         .requests()
         .iter()
         .any(|r| r.query.iter().any(|(_, v)| v == "CNRY-param-2"));
     assert!(seen);
+}
+
+/// L-645 / D-4 (TST-BRK-CLI-006): `--input-*` / `--output-*` credentials reach
+/// their own endpoint with the documented precedence, hostile characters
+/// arrive intact, and no password (or its Basic token) is printed, even with
+/// --debug and a server that echoes the request back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn credential_flags_pick_their_endpoint_and_never_leak() {
+    use base64::Engine;
+    use support::router_mock::{Recorded, Reply, RouterMock};
+    let echo = || {
+        RouterMock::builder()
+            .handler(move |r: Recorded| async move {
+                let h: Vec<String> = r.headers.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                Reply::json(
+                    401,
+                    serde_json::json!({"error": {"type": "echo", "reason": h.join(" | ")}, "status": 401})
+                        .to_string(),
+                )
+            })
+            .start()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("in.json");
+    std::fs::write(&data, "{\"_index\":\"i\",\"_id\":\"1\",\"_source\":{}}\n").unwrap();
+    let crlf = dir.path().join("crlf.ini");
+    std::fs::write(&crlf, "user=file-u\r\npassword=FAKE-file-pw-4\r\n").unwrap();
+    let crlf = crlf.to_str().unwrap().to_string();
+    let data = data.to_str().unwrap().to_string();
+    let out_file = dir.path().join("o.json").to_str().unwrap().to_string();
+    let hostile_in = "FAKE-in-pw: @%#/?é 1";
+    let hostile_out = "FAKE-out-pw: @%#/?é 3";
+    // (label, input is the mock?, extra args, env, expected user:password or None)
+    type Case = (
+        &'static str,
+        bool,
+        Vec<String>,
+        Vec<(&'static str, String)>,
+        Option<String>,
+    );
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let cases: Vec<Case> = vec![
+        (
+            "input flags beat URL",
+            true,
+            s(&["--input-username", "flag-u", "--input-password", hostile_in]),
+            vec![],
+            Some(format!("flag-u:{hostile_in}")),
+        ),
+        (
+            "--username/--password alias the input",
+            true,
+            s(&["--username", "alias-u", "--password", "FAKE-alias-pw-2"]),
+            vec![],
+            Some("alias-u:FAKE-alias-pw-2".into()),
+        ),
+        (
+            "output flags beat URL",
+            false,
+            s(&[
+                "--output-username",
+                "out-u",
+                "--output-password",
+                hostile_out,
+            ]),
+            vec![],
+            Some(format!("out-u:{hostile_out}")),
+        ),
+        (
+            "output password flag keeps the URL username",
+            false,
+            s(&["--output-password", hostile_out]),
+            vec![],
+            Some(format!("url-u:{hostile_out}")),
+        ),
+        (
+            "URL beats auth file and env",
+            false,
+            s(&["--httpAuthFile", &crlf]),
+            vec![
+                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+            ],
+            Some("url-u:FAKE-url-pw-9".into()),
+        ),
+        (
+            "CRLF auth file beats env, without the CR",
+            false,
+            s(&["--httpAuthFile", &crlf, "--noUrlCreds"]),
+            vec![
+                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+            ],
+            Some("file-u:FAKE-file-pw-4".into()),
+        ),
+        (
+            "env when nothing else",
+            false,
+            s(&["--noUrlCreds"]),
+            vec![
+                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+            ],
+            Some("env-u:FAKE-env-pw-5".into()),
+        ),
+        (
+            "--password never reaches the output",
+            false,
+            s(&["--password", "FAKE-alias-pw-2", "--noUrlCreds"]),
+            vec![],
+            None,
+        ),
+        (
+            "--input-* never reach the output",
+            false,
+            s(&[
+                "--input-username",
+                "in-u",
+                "--input-password",
+                "FAKE-in-only-6",
+                "--noUrlCreds",
+            ]),
+            vec![],
+            None,
+        ),
+    ];
+    let b64 = |v: &str| base64::engine::general_purpose::STANDARD.encode(v);
+    for (label, input_is_mock, extra, env, want) in cases {
+        for debug in [false, true] {
+            let m = echo().await;
+            let url_creds = !extra.iter().any(|a| a == "--noUrlCreds");
+            let mut target =
+                m.url()
+                    .replacen("://", "://url-u:FAKE-url-pw-9@", usize::from(url_creds));
+            target.push_str("/idx");
+            let mut args: Vec<String> = extra
+                .iter()
+                .filter(|&a| a != "--noUrlCreds")
+                .cloned()
+                .collect();
+            if input_is_mock {
+                args.extend([
+                    "--input".into(),
+                    target,
+                    "--output".into(),
+                    out_file.clone(),
+                ]);
+            } else {
+                args.extend(["--input".into(), data.clone(), "--output".into(), target]);
+            }
+            args.extend(s(&["--noImplicitRetry", "--overwrite"]));
+            if debug {
+                args.push("--debug".into());
+            }
+            let o = run(args.clone(), env.clone()).await;
+            let err = stderr(&o);
+            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+            assert!(!o.status.success(), "{label}: should fail on 401: {err}");
+            let reqs = m.requests();
+            assert!(!reqs.is_empty(), "{label}: no request: {err}");
+            let got = reqs[0].header("authorization").map(str::to_string);
+            assert_eq!(
+                got,
+                want.as_ref().map(|w| format!("Basic {}", b64(w))),
+                "{label}"
+            );
+            let mut secrets: Vec<String> = vec![
+                hostile_in.into(),
+                hostile_out.into(),
+                "FAKE-alias-pw-2".into(),
+                "FAKE-file-pw-4".into(),
+                "FAKE-env-pw-5".into(),
+                "FAKE-in-only-6".into(),
+                "FAKE-url-pw-9".into(),
+                "FAKE".into(),
+            ];
+            if let Some(w) = &want {
+                secrets.push(b64(w));
+            }
+            for c in &secrets {
+                for (what, text) in [("stderr", &err), ("stdout", &out)] {
+                    assert!(
+                        !text.contains(c.as_str()),
+                        "{label}/debug={debug}: {c} in {what}:\n{text}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// TST-BRK-CLI-006: a world-readable --httpAuthFile is warned about.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn world_readable_auth_file_is_warned_about() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let auth = dir.path().join("auth.ini");
+    std::fs::write(&auth, "user=fake\npassword=FAKE-perm-pw\n").unwrap();
+    for (mode, warned) in [(0o644, true), (0o600, false)] {
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(mode)).unwrap();
+        let o = run(
+            vec![
+                "--input".into(),
+                "http://127.0.0.1:1/idx".into(),
+                "--output".into(),
+                "$".into(),
+                "--noImplicitRetry".into(),
+                "--httpAuthFile".into(),
+                auth.to_str().unwrap().into(),
+            ],
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        assert_eq!(
+            err.contains("readable by every user"),
+            warned,
+            "{mode:o}: {err}"
+        );
+        assert!(!err.contains("FAKE-perm-pw"), "{err}");
+    }
 }
