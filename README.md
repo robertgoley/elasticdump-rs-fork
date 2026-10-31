@@ -329,6 +329,9 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   its target are both left alone; pass the target path to write there), a FIFO or device (`/dev/stdout`: use
   `--output $`) or a missing parent directory is a usage error (exit 2) before anything is read. With
   `--overwrite`, the replaced file's mode is kept.
+  Symlinked directories in the parent path are followed (`linkdir/out.json` with `linkdir -> /real/dir` writes
+  `/real/dir/out.json`); only the final file itself may not be a link. A dangling parent link is a usage error
+  that names the link and its missing target (L-644a).
 * Ctrl+C clears the scroll / closes the PIT (ES input pipelines).
 
 ## Security notes

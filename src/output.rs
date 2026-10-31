@@ -405,10 +405,17 @@ pub fn check_output_path(path: &Path) -> Result<()> {
             "--output '{shown}': '{}' is not a directory",
             parent.display()
         ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
-            "--output '{shown}': the directory '{}' does not exist (create it first)",
-            parent.display()
-        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match dangling_link_in(parent) {
+            Some((link, target)) => bail!(
+                "--output '{shown}': '{}' is a symbolic link to '{}', which does not exist (create the target directory or fix the link)",
+                link.display(),
+                target.display()
+            ),
+            None => bail!(
+                "--output '{shown}': the directory '{}' does not exist (create it first)",
+                parent.display()
+            ),
+        },
         Err(e) => Err(e).with_context(|| {
             format!(
                 "--output '{shown}': cannot access the directory '{}'",
@@ -416,6 +423,29 @@ pub fn check_output_path(path: &Path) -> Result<()> {
             )
         }),
     }
+}
+
+/// L-644a: symlinked directories in the parent path of `--output` are
+/// followed (only a symlink as the final component is refused). When the
+/// parent is missing, name the first dangling link on the way so the error
+/// says why, instead of a generic "does not exist".
+fn dangling_link_in(parent: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let mut ancestors: Vec<&Path> = parent
+        .ancestors()
+        .filter(|a| !a.as_os_str().is_empty())
+        .collect();
+    ancestors.reverse();
+    ancestors.into_iter().find_map(|a| {
+        let is_link = std::fs::symlink_metadata(a)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_link && std::fs::metadata(a).is_err() {
+            let target = std::fs::read_link(a).unwrap_or_default();
+            Some((a.to_path_buf(), target))
+        } else {
+            None
+        }
+    })
 }
 
 /// Capture the mode of a pre-existing destination that is about to be
