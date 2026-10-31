@@ -169,6 +169,10 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
             cli.r#type.name()
         )));
     }
+    // compiled here too, so a bad pattern fails before any request
+    if let DumpType::Meta(kind) = cli.r#type {
+        template_filter(cli, kind)?;
+    }
     let renaming = !cli.rename_prefix.is_empty() || !cli.rename_index.is_empty();
     if renaming {
         match output {
@@ -597,6 +601,21 @@ async fn check_rename_merges(
     }
 }
 
+/// `--templateRegex` for template dumps with `--filterSystemTemplates` (the
+/// default); a bad or oversized pattern is a usage error (TST-BRK-CLI-004).
+fn template_filter(cli: &Cli, kind: meta::MetaKind) -> Result<Option<regex::Regex>> {
+    if !matches!(kind, meta::MetaKind::Template(_)) || !cli.filter_system_templates() {
+        return Ok(None);
+    }
+    rename::compile_regex(
+        &cli.template_regex,
+        "--templateRegex",
+        "unsupported pattern (JavaScript look-around and backreferences are not available)",
+    )
+    .map(Some)
+    .map_err(|e| usage(format!("{e:#}")))
+}
+
 /// `--renamePrefix`/`--renameIndex` rules (with `--prefix`/`--suffix`), if any.
 fn renamer(cli: &Cli) -> Result<Option<rename::IndexRenamer>> {
     if cli.rename_prefix.is_empty() && cli.rename_index.is_empty() {
@@ -639,14 +658,7 @@ async fn run_meta(
         }
         _ => (None, None, None, None),
     };
-    let template_filter = match (kind, cli.filter_system_templates()) {
-        (meta::MetaKind::Template(_), true) => Some(regex::Regex::new(&cli.template_regex).map_err(|e| {
-            usage(format!(
-                "--templateRegex: unsupported pattern (JavaScript look-around and backreferences are not available): {e}"
-            ))
-        })?),
-        _ => None,
-    };
+    let template_filter = template_filter(cli, kind)?;
     if cli.close_index.unwrap_or(false) && kind != meta::MetaKind::Analyzer {
         log::warn!("--closeIndex only applies to --type analyzer");
     }
