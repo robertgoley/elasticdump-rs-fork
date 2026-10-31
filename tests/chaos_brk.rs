@@ -593,9 +593,55 @@ fn in_dns_sandbox(
     if !ok {
         return None;
     }
+    Some(dns_sandbox_command(hosts, nsswitch, resolv, None))
+}
+
+/// Network set-up for [`in_blackhole_dns_sandbox`]: inside a private network namespace, a veth
+/// pair with 192.0.2.2/24 on one end and nothing behind the other, so 192.0.2.1 is routable but
+/// never answers, and no packet can leave the machine (L-701, TST-SUP-001).
+const BLACKHOLE_NET: &str = "ip link set lo up && ip link add edrs0 type veth peer name edrs1 && ip addr add 192.0.2.2/24 dev edrs0 && ip link set edrs1 up && ip link set edrs0 up";
+
+/// Like [`in_dns_sandbox`], plus a private network namespace in which the TEST-NET resolver
+/// 192.0.2.1 is a local black hole ([`BLACKHOLE_NET`]). Falls back to [`in_dns_sandbox`] (where
+/// the queries go out towards 192.0.2.1, which nothing answers) when the namespace or the veth
+/// pair cannot be set up here; egress-denied runs (scripts/sup/egress.sh) count that fallback.
+fn in_blackhole_dns_sandbox(
+    hosts: &std::path::Path,
+    nsswitch: &std::path::Path,
+    resolv: &std::path::Path,
+) -> Option<Command> {
+    let net = Command::new("unshare")
+        .args(["-rn", "sh", "-c", BLACKHOLE_NET])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !net {
+        eprintln!(
+            "NOTE: no private network namespace with a veth pair; the black-holed resolver is 192.0.2.1 on the host network"
+        );
+        return in_dns_sandbox(hosts, nsswitch, resolv);
+    }
+    Some(dns_sandbox_command(
+        hosts,
+        nsswitch,
+        resolv,
+        Some(BLACKHOLE_NET),
+    ))
+}
+
+fn dns_sandbox_command(
+    hosts: &std::path::Path,
+    nsswitch: &std::path::Path,
+    resolv: &std::path::Path,
+    net: Option<&str>,
+) -> Command {
     let mut c = Command::new("unshare");
-    c.args(["-rm", "sh", "-c"]).arg(format!(
-        "mount --bind '{}' /etc/hosts && mount --bind '{}' /etc/nsswitch.conf && mount --bind '{}' /etc/resolv.conf && exec \"$@\"",
+    let (flags, prefix) = match net {
+        Some(setup) => ("-rmn", format!("{setup} && ")),
+        None => ("-rm", String::new()),
+    };
+    c.args([flags, "sh", "-c"]).arg(format!(
+        "{prefix}mount --bind '{}' /etc/hosts && mount --bind '{}' /etc/nsswitch.conf && mount --bind '{}' /etc/resolv.conf && exec \"$@\"",
         hosts.display(),
         nsswitch.display(),
         resolv.display()
@@ -612,13 +658,14 @@ fn in_dns_sandbox(
     ] {
         c.env_remove(v);
     }
-    Some(c)
+    c
 }
 
 // L-605 (TST-BRK-NET-008): DNS failures, offline, in a private mount namespace.
 // NXDOMAIN at start (`hosts: files` with no entry): fails fast, not retried, names the host and
-// never the password. A black-holed resolver (TEST-NET nameserver, 30 s resolver timeout): bounded
-// by --timeout per attempt. DNS failing mid-run (the hosts entry disappears for ~0.6 s while every
+// never the password. A black-holed resolver (TEST-NET nameserver, 30 s resolver timeout; a local
+// veth black hole in a private network namespace since L-701): bounded by --timeout per attempt.
+// DNS failing mid-run (the hosts entry disappears for ~0.6 s while every
 // request opens a new connection): retried, the dump completes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn l605_dns_failures_fail_fast_are_bounded_or_retried() {
@@ -670,7 +717,7 @@ async fn l605_dns_failures_fail_fast_are_bounded_or_retried() {
     )
     .unwrap();
     let t = Instant::now();
-    let o = in_dns_sandbox(&hosts, &nss, &resolv)
+    let o = in_blackhole_dns_sandbox(&hosts, &nss, &resolv)
         .unwrap()
         .args(s(&[
             "--input",

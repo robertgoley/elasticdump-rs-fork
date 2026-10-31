@@ -135,3 +135,38 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: cross, path: artifacts/ }
+
+  # L-701 / TST-SUP-001: T1 + T7 + T2 (opensearch-plain) and the built image, all inside a
+  # `podman pod --network none` namespace with a logging DNS sink and OutNoRoutes counters;
+  # any connection attempt or DNS query beyond loopback / reserved names fails the job.
+  # --selftest first proves a planted example.com lookup and a planted connect are caught.
+  egress:
+    runs-on: ubuntu-24.04
+    env:
+      IT_DIR: /tmp/edrs-it
+      EGRESS_LOG_DIR: /tmp/edrs-it/egress
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with: { toolchain: 1.85.1 }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install --locked --version 0.9.150 cargo-nextest
+      - run: cargo fetch --locked
+      # Same pull-only login as security.yml (secrets DHI_USERNAME / DHI_TOKEN; no values here).
+      - name: Log in to dhi.io (pull only)
+        env:
+          DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
+          DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+        run: |
+          if [ -z "$DHI_USERNAME" ] || [ -z "$DHI_TOKEN" ]; then
+            echo "::error::DHI_USERNAME/DHI_TOKEN secrets are not set; dhi.io pulls need them"
+            exit 1
+          fi
+          printf '%s' "$DHI_TOKEN" | podman login dhi.io -u "$DHI_USERNAME" --password-stdin
+      - run: make image CONTAINER=podman
+      - run: scripts/sup/egress.sh --selftest
+      - run: scripts/sup/egress.sh --tiers T1,T7,T2 --profile opensearch-plain
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: egress, path: /tmp/edrs-it/egress/ }

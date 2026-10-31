@@ -118,6 +118,43 @@ Each entry is pinned as `name@version` and carries a review note.
 
 Verified locally on 2026-10-29 with `rust:1.99-trixie`: the probe showed the network unreachable, and the build succeeded in 2m01s. No build script needs the network.
 
+## Egress-denied test runs (SUP-001, L-701)
+
+`scripts/sup/egress.sh` runs the suites with no way off the box and fails on any attempt to
+leave it. Everything runs in one rootless pod created with `podman pod create --network none`
+(label `elasticdump-rs-it=1`): its network namespace has loopback only. Nothing on the host
+changes: no firewall rules, routes or other containers are touched.
+
+* A logging DNS sink (`scripts/sup/egress-sink.py`) listens on 127.0.0.1:53 and [::1]:53 in
+  that namespace, answers every query with NXDOMAIN and logs the name. Test processes run
+  through `scripts/sup/netns-exec.sh POD CMD`, which enters the namespace (`podman unshare
+  nsenter`) with a private mount of `/etc/resolv.conf` pointing at the sink; the node and the
+  image container get the same file as a volume, plus a hosts file naming the pod's hostname
+  (`--add-host` is ignored with `--network none`).
+* The namespace's `Ip:OutNoRoutes` / `Ip6OutNoRoutes` counters count every attempt to reach a
+  non-loopback address (TCP, UDP, or a DNS query sent to an outside resolver).
+
+Phases, each counted on its own: `T1-unit`, `T1-contract`, `T1-plant`
+(`tests/egress_plant.rs`), `T7-chaos` (the mock-based chaos profile), `node-start` (the
+cluster from `scripts/it/up.sh` started inside the pod with `IT_POD`), `T2-it` (the IT suite
+against it, default `--profile opensearch-plain`) and `T2-image` (the built
+`localhost/elasticdump-rs:<version>` image dumping an index to a file and restoring it).
+A phase fails when its command fails, when it made a connection attempt off loopback, or
+when it asked DNS for any name other than `localhost` and the reserved `*.invalid`, `*.test`,
+`*.example` and `*.localhost` names that tests use to provoke resolution errors
+(`EGRESS_ALLOW_DNS` overrides that regex). The summary lines are
+`EGRESS phase=<name> rc= unexpected_dns= noroute= names=[...] OK|FAIL` in
+`$EGRESS_LOG_DIR/egress-summary.log` (default `$IT_DIR/egress/`).
+
+The plant: `EDRS_EGRESS_PLANT=dns` makes `tests/egress_plant.rs` resolve `example.com`,
+`EDRS_EGRESS_PLANT=tcp` makes it connect to 192.0.2.1. The test itself passes; the job must
+fail. `scripts/sup/egress.sh --selftest` runs both plants and a clean control and passes only
+when both plants are caught and the control is clean. Nightly (`nightly.yml`, job `egress`)
+runs the self-test, then `--tiers T1,T7,T2`.
+
+Not covered: the `--features chaos` toxiproxy tests and cross-engine runs need a second
+container or proxy reachable from the namespace; they stay in their own nightly jobs.
+
 ## SBOM diff per PR (SUP-011, L-207)
 
 `scripts/sup/sbom-pr.sh <base-ref>` checks the base out into a temporary worktree and compares it with HEAD. It builds the following for both sides:

@@ -79,6 +79,27 @@ CAPS=(--memory "${IT_CONTAINER_MEM:-$(( _heap_max * 2 + 512 ))m}" --cpus "${IT_C
 rm -f "$IT_DIR/env"
 
 engine() { podman "$@"; }
+# L-701 (TST-SUP-001): IT_POD=<pod> starts the node inside that pod, whose network namespace is
+# loopback-only (scripts/sup/egress.sh): no published port, the URL is the pod's own
+# 127.0.0.1:9200 / localhost:9200, and the readiness probe runs inside the pod's namespace.
+if [[ -n "${IT_POD:-}" ]]; then
+  engine() {
+    if [[ "$1" != run ]]; then podman "$@"; return; fi
+    shift
+    local a=() skip=0 x
+    for x in "$@"; do
+      if ((skip)); then skip=0; continue; fi
+      if [[ "$x" == -p ]]; then skip=1; continue; fi
+      a+=("$x")
+    done
+    # names the node looks up go to the run's logging DNS sink, not the host resolver;
+    # IT_POD_HOSTS maps the pod's hostname (--add-host is ignored with --network none)
+    local dns=()
+    [[ -n "${IT_POD_RESOLV:-}" ]] && dns+=(-v "${IT_POD_RESOLV}:/etc/resolv.conf:ro")
+    [[ -n "${IT_POD_HOSTS:-}" ]] && dns+=(-v "${IT_POD_HOSTS}:/etc/hosts:ro")
+    podman run --pod "$IT_POD" "${dns[@]}" "${a[@]}"
+  }
+fi
 
 # Data dir owned by the image's non-root user (1001:0) inside the userns.
 es_data_dir() {
@@ -234,6 +255,10 @@ case "$PROFILE" in
     ;;
 esac
 
+if [[ -n "${IT_POD:-}" ]]; then
+  URL="${URL%:*}:9200"
+  CURL=(scripts/sup/netns-exec.sh "$IT_POD" "${CURL[@]}")
+fi
 echo "waiting for $NAME at $URL ..." >&2
 ok=0
 for _ in $(seq 1 120); do
