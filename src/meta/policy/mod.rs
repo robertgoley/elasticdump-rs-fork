@@ -285,18 +285,47 @@ where
     Fut: std::future::Future<Output = Result<bool>>,
 {
     let mut report = WriteReport::default();
+    let mut written: Vec<String> = Vec::new();
     for (name, p) in list {
         match put(name.clone(), p).await {
-            Ok(true) => report.written += 1,
+            Ok(true) => {
+                report.written += 1;
+                written.push(name);
+            }
             Ok(false) => {}
             Err(e) if opts.ignore_errors => {
                 log::error!("policy '{name}' failed (--ignore-errors): {e:#}");
                 report.failed += 1;
             }
+            // L-651: everything was converted and checked before the first write; a
+            // policy the cluster still rejects names what this run already wrote
+            Err(e) if !written.is_empty() => {
+                return Err(e.context(format!(
+                    "restoring policy '{name}' (the cluster rejected it; already written by this run: {}; a rerun overwrites them unless --skip-existing)",
+                    name_list(&written)
+                )));
+            }
             Err(e) => return Err(e.context(format!("restoring policy '{name}'"))),
         }
     }
     Ok(report)
+}
+
+/// ISM lost the race to create its config index (not an existing policy).
+fn is_ism_index_race(e: &anyhow::Error) -> bool {
+    if !matches!(status_of(e), Some(400 | 409)) {
+        return false;
+    }
+    let t = format!("{e:#}");
+    t.contains("ism-config") && t.contains("already exists") && !t.contains("version_conflict")
+}
+
+/// Up to 10 names, then how many more.
+fn name_list(names: &[String]) -> String {
+    match names.len() {
+        0..=10 => names.join(", "),
+        n => format!("{} and {} more", names[..10].join(", "), n - 10),
+    }
 }
 
 /// ILM PUT body: `phases`, `_meta` and `deprecated` only.
@@ -378,16 +407,30 @@ pub fn clean_ism(mut p: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<V
 async fn put_ism(client: &EsClient, id: String, p: Value, opts: &MetaOptions) -> Result<bool> {
     let segs = [ISM, "_ism", "policies", id.as_str()];
     let body = json!({ "policy": p });
-    match send_json(
-        client,
-        opts.retry,
-        Method::PUT,
-        &segs,
-        &body,
-        "put ISM policy",
-    )
-    .await
-    {
+    let mut tries = 0;
+    let first = loop {
+        let r = send_json(
+            client,
+            opts.retry,
+            Method::PUT,
+            &segs,
+            &body,
+            "put ISM policy",
+        )
+        .await;
+        // the first policy PUTs on a fresh cluster race to create the ISM config index; the
+        // loser gets "index [.opendistro-ism-config/…] already exists" (409 on 2.x, 400 on 1.3),
+        // not "policy exists"
+        match r {
+            Err(e) if tries < 5 && is_ism_index_race(&e) => {
+                tries += 1;
+                log::info!("ISM policy '{id}': config index created concurrently; retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(200 * tries)).await;
+            }
+            r => break r,
+        }
+    };
+    match first {
         Ok(_) => Ok(true),
         Err(e) if status_of(&e) == Some(409) => {
             if opts.skip_existing {

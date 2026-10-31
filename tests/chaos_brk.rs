@@ -5630,3 +5630,140 @@ async fn l650a_signal_during_a_metadata_dump_to_a_file_leaves_no_staging() {
         "seed {seed}: no round stopped the run while it was staged"
     );
 }
+
+// L-651 (TST-BRK-ILM-001): restoring a set of ILM policies into OpenSearch with
+// --convertIlmToIsm. One policy with an unsupported action refuses the whole set before
+// anything is written (no PUT at all), naming the policy, phase and action; with
+// --lenientPolicyConversion every policy is written and the dropped part is reported
+// (`DROPPED ...`); a min_age that is not a duration is refused in both modes, again with
+// nothing written; a policy the cluster itself rejects names what was already written.
+#[tokio::test(flavor = "multi_thread")]
+async fn l651_unconvertible_ilm_policies_never_leave_a_partial_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let set = |bad: serde_json::Value| {
+        let mut m = serde_json::Map::new();
+        for i in 0..6 {
+            let mut phases = serde_json::json!({
+                "hot": {"min_age": "0ms", "actions": {"rollover": {"max_age": "1d"}, "set_priority": {"priority": 100}}},
+                "delete": {"min_age": "30d", "actions": {"delete": {}}}
+            });
+            if i == 3 {
+                phases["warm"] = bad.clone();
+            }
+            m.insert(
+                format!("p{i}"),
+                serde_json::json!({"version": 1, "modified_date": "2026-01-01", "policy": {"phases": phases}, "in_use_by": {}}),
+            );
+        }
+        serde_json::Value::Object(m).to_string() + "\n"
+    };
+    let downsample = serde_json::json!({"min_age": "7d", "actions": {"downsample": {"fixed_interval": "1h"}, "readonly": {}}});
+    let bad_age = serde_json::json!({"min_age": 7, "actions": {"readonly": {}}});
+    let start = |reject_at: Option<usize>| async move {
+        let n = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        RouterMock::builder()
+            .handler(move |req| {
+                let n = n.clone();
+                async move {
+                    match (req.method.as_str(), req.path.as_str()) {
+                        ("GET", "/") => Reply::ok(INFO),
+                        ("PUT", p) if p.starts_with("/_plugins/_ism/policies/") => {
+                            let k = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            if Some(k) == reject_at {
+                                Reply::json(400, r#"{"error":{"type":"illegal_argument_exception","reason":"FAKE-rejected"},"status":400}"#)
+                            } else {
+                                Reply::json(201, r#"{"_id":"x","_version":1,"_primary_term":1,"_seq_no":0}"#)
+                            }
+                        }
+                        _ => Reply::json(404, "{}"),
+                    }
+                }
+            })
+            .start()
+            .await
+    };
+    let puts = |m: &RouterMock| -> Vec<(String, serde_json::Value)> {
+        m.requests()
+            .into_iter()
+            .filter(|r| r.method == "PUT")
+            .map(|r| (r.path.clone(), serde_json::from_slice(&r.body).unwrap()))
+            .collect()
+    };
+    let run = |file: std::path::PathBuf, url: String, extra: &[&str]| {
+        let mut a = s(&[
+            "--input",
+            file.to_str().unwrap(),
+            "--output",
+            &url,
+            "--type",
+            "policy",
+            "--convertIlmToIsm",
+        ]);
+        a.extend(s(extra));
+        run_async(a, vec![])
+    };
+    for (what, bad) in [("downsample", &downsample), ("min_age", &bad_age)] {
+        let f = dir.path().join(format!("{what}.json"));
+        std::fs::write(&f, set(bad.clone())).unwrap();
+        // strict: refused, nothing written
+        let m = start(None).await;
+        let o = run(f.clone(), m.url(), &[]).await;
+        let e = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{what}: {e}");
+        assert!(
+            e.contains("ILM policy 'p3'") && e.contains("phase 'warm'"),
+            "{what}: {e}"
+        );
+        if what == "downsample" {
+            assert!(
+                e.contains("action 'downsample'") && e.contains("--lenientPolicyConversion"),
+                "{e}"
+            );
+        } else {
+            assert!(e.contains("min_age 7"), "{e}");
+        }
+        assert!(puts(&m).is_empty(), "{what}: wrote {:?}", puts(&m));
+        // lenient: drops the action (all six written) but never an unsafe min_age
+        let m = start(None).await;
+        let o = run(f.clone(), m.url(), &["--lenientPolicyConversion"]).await;
+        let e = stderr(&o);
+        if what == "downsample" {
+            assert!(o.status.success(), "{e}");
+            assert!(
+                e.contains("DROPPED phase 'warm' action 'downsample'"),
+                "{e}"
+            );
+            let p = puts(&m);
+            assert_eq!(p.len(), 6, "{p:?}");
+            let p3 = &p.iter().find(|(path, _)| path.ends_with("/p3")).unwrap().1;
+            let text = p3.to_string();
+            assert!(
+                !text.contains("downsample") && text.contains("read_only"),
+                "{text}"
+            );
+        } else {
+            assert_eq!(o.status.code(), Some(1), "{e}");
+            assert!(
+                e.contains("not dropped by --lenientPolicyConversion"),
+                "{e}"
+            );
+            assert!(puts(&m).is_empty(), "wrote {:?}", puts(&m));
+        }
+    }
+    // the cluster rejects the third policy: the error names it and the two written before
+    let f = dir.path().join("good.json");
+    std::fs::write(
+        &f,
+        set(serde_json::json!({"min_age": "7d", "actions": {"readonly": {}}})),
+    )
+    .unwrap();
+    let m = start(Some(2)).await;
+    let o = run(f, m.url(), &[]).await;
+    let e = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{e}");
+    assert!(
+        e.contains("restoring policy 'p2'") && e.contains("already written by this run: p0, p1"),
+        "{e}"
+    );
+    assert_eq!(puts(&m).len(), 3);
+}

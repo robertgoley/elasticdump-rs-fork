@@ -179,6 +179,24 @@ impl Cluster {
     }
 
     pub async fn call(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+        let (mut status, mut v) = self.call_once(method, path, body.clone()).await;
+        // concurrent first ISM PUTs on a fresh cluster race to create the config index
+        // (409 on 2.x, 400 resource_already_exists_exception on 1.3)
+        for i in 1..=5 {
+            let t = v.to_string();
+            if !((status == 409 || status == 400)
+                && t.contains("ism-config")
+                && t.contains("already exists"))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200 * i)).await;
+            (status, v) = self.call_once(method, path, body.clone()).await;
+        }
+        (status, v)
+    }
+
+    async fn call_once(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
         let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let mut rb = self.req(m, path);
         if let Some(b) = body {

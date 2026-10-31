@@ -1408,6 +1408,205 @@ async fn policies_1050_round_trip_paging_and_overwrite() {
     }
 }
 
+// L-651 (TST-BRK-ILM-001, extra): OpenSearch accepts every converted policy. Every ILM
+// action (and an unknown one) in every phase, with no options, each option alone, and all of
+// its convertible options, is restored with --convertIlmToIsm --lenientPolicyConversion:
+// every policy is written (unconvertible parts dropped, on 1.3 also shrink) and reads back
+// as a valid ISM policy; one run without --lenientPolicyConversion over the policies that
+// need nothing dropped writes the same policies.
+/// (option, value, convertible)
+type L651Option = (&'static str, Value, bool);
+
+#[tokio::test]
+async fn l651_opensearch_accepts_every_converted_ilm_policy() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) {
+        return;
+    }
+    let p = unique("api_ilm");
+    let actions: &[(&str, &[L651Option])] = &[
+        ("set_priority", &[("priority", json!(50), true)]),
+        ("unfollow", &[]),
+        (
+            "rollover",
+            &[
+                ("max_age", json!("1d"), true),
+                ("max_docs", json!(10), true),
+                ("max_size", json!("5gb"), true),
+                ("max_primary_shard_size", json!("1gb"), true),
+                ("max_primary_shard_docs", json!(5), false),
+                ("min_docs", json!(1), false),
+                ("min_primary_shard_size", json!("1gb"), false),
+            ],
+        ),
+        ("readonly", &[]),
+        ("downsample", &[("fixed_interval", json!("1h"), true)]),
+        (
+            "shrink",
+            &[
+                ("number_of_shards", json!(1), true),
+                ("allow_write_after_shrink", json!(true), false),
+            ],
+        ),
+        (
+            "forcemerge",
+            &[
+                ("max_num_segments", json!(1), true),
+                ("index_codec", json!("best_compression"), false),
+            ],
+        ),
+        (
+            "searchable_snapshot",
+            &[("snapshot_repository", json!("r"), true)],
+        ),
+        (
+            "allocate",
+            &[
+                ("number_of_replicas", json!(0), true),
+                ("require", json!({"box": "w"}), true),
+                ("include", json!({"zone": "a"}), true),
+                ("exclude", json!({"zone": "b"}), true),
+                ("total_shards_per_node", json!(1), false),
+            ],
+        ),
+        ("migrate", &[("enabled", json!(false), true)]),
+        ("freeze", &[]),
+        ("wait_for_snapshot", &[("policy", json!("s"), true)]),
+        (
+            "delete",
+            &[("delete_searchable_snapshot", json!(true), true)],
+        ),
+        ("future_action", &[]),
+    ];
+    let mut policies: Vec<Value> = Vec::new();
+    for phase in ["hot", "warm", "cold", "frozen", "delete"] {
+        for (a, opts) in actions {
+            let mut variants: Vec<serde_json::Map<String, Value>> = vec![Default::default()];
+            for (k, v, _) in opts.iter() {
+                variants.push([(k.to_string(), v.clone())].into_iter().collect());
+            }
+            variants.push(
+                opts.iter()
+                    .filter(|(_, _, ok)| *ok)
+                    .map(|(k, v, _)| (k.to_string(), v.clone()))
+                    .collect(),
+            );
+            variants.push(json!({"future_option": 1}).as_object().unwrap().clone());
+            for cfg in variants {
+                let mut phases = json!({"hot": {"min_age": "0ms", "actions": {"set_priority": {"priority": 1}}}});
+                let def = phases
+                    .as_object_mut()
+                    .unwrap()
+                    .entry(phase)
+                    .or_insert_with(|| json!({"min_age": "3d", "actions": {}}));
+                def["actions"][*a] = Value::Object(cfg);
+                if phase != "delete" {
+                    phases["delete"] = json!({"min_age": "30d", "actions": {"delete": {}}});
+                }
+                policies.push(phases);
+            }
+        }
+    }
+    // whole policies: every phase and age form at once
+    policies.push(json!({
+        "hot": {"min_age": "0ms", "actions": {"rollover": {"max_age": "1d", "max_primary_shard_size": "50gb"}, "set_priority": {"priority": 100}}},
+        "warm": {"min_age": "90m", "actions": {"forcemerge": {"max_num_segments": 1}, "allocate": {"number_of_replicas": 0, "require": {"box": "warm"}}, "shrink": {"number_of_shards": 1}, "readonly": {}}},
+        "cold": {"min_age": "7d", "actions": {"set_priority": {"priority": 0}, "searchable_snapshot": {"snapshot_repository": "r"}}},
+        "frozen": {"min_age": "14d", "actions": {"searchable_snapshot": {"snapshot_repository": "r"}}},
+        "delete": {"min_age": "30d", "actions": {"wait_for_snapshot": {"policy": "s"}, "delete": {}}}
+    }));
+    policies.push(json!({"warm": {"min_age": "2d", "actions": {"readonly": {}}}, "delete": {"min_age": "0", "actions": {"delete": {}}}}));
+    let n = policies.len();
+    let name = |i: usize| format!("{p}_{i:04}");
+    let doc: serde_json::Map<String, Value> = policies
+        .iter()
+        .enumerate()
+        .map(|(i, ph)| (name(i), json!({"version": 1, "policy": {"phases": ph}})))
+        .collect();
+    let file = tmp_path("api_ilm", "json");
+    std::fs::write(&file, Value::Object(doc).to_string() + "\n").unwrap();
+    let o = run_loud(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &[
+            "--type",
+            "policy",
+            "--convertIlmToIsm",
+            "--lenientPolicyConversion",
+        ],
+    ))
+    .await;
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains(&format!("Total Writes: {n}")), "{err}");
+    assert!(
+        err.contains("DROPPED phase 'cold' action 'searchable_snapshot'"),
+        "{err}"
+    );
+    let mut sent = Vec::new();
+    for i in 0..n {
+        let v = c
+            .ok("GET", &format!("_plugins/_ism/policies/{}", name(i)), None)
+            .await;
+        let pol = &v["policy"];
+        let states = pol["states"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{i}: {v}"));
+        assert!(!states.is_empty(), "{i}: {v}");
+        assert_eq!(pol["default_state"], states[0]["name"], "{i}: {v}");
+        sent.push(states.clone());
+    }
+    // strict, over the policies the lenient run dropped nothing from: same result
+    let strict: serde_json::Map<String, Value> = policies
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !err.contains(&format!("ILM → ISM '{}': DROPPED", name(*i))))
+        .map(|(i, ph)| {
+            (
+                format!("{}_strict", name(i)),
+                json!({"policy": {"phases": ph}, "i": i}),
+            )
+        })
+        .collect();
+    assert!(strict.len() > 40, "{}", strict.len());
+    let sfile = tmp_path("api_ilm_strict", "json");
+    let idx: Vec<(String, usize)> = strict
+        .iter()
+        .map(|(k, v)| (k.clone(), v["i"].as_u64().unwrap() as usize))
+        .collect();
+    std::fs::write(&sfile, Value::Object(strict).to_string() + "\n").unwrap();
+    let o = run_loud(io(
+        &c,
+        sfile.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "policy", "--convertIlmToIsm"],
+    ))
+    .await;
+    assert_success(&o);
+    for (k, i) in &idx {
+        let v = c
+            .ok("GET", &format!("_plugins/_ism/policies/{k}"), None)
+            .await;
+        assert_eq!(v["policy"]["states"].as_array().unwrap(), &sent[*i], "{k}");
+        let _ = c
+            .call("DELETE", &format!("_plugins/_ism/policies/{k}"), None)
+            .await;
+    }
+    for i in 0..n {
+        let _ = c
+            .call(
+                "DELETE",
+                &format!("_plugins/_ism/policies/{}", name(i)),
+                None,
+            )
+            .await;
+    }
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_file(sfile);
+}
+
 // L-422 (TST-API-038): on OpenSearch 1.3 a policy created through the legacy
 // `_opendistro/_ism` path is visible to the tool, which only ever uses `_plugins/_ism`
 // (asserted statically for the binary's endpoint inventory, and live through the recorder).
