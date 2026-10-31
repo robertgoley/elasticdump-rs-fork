@@ -5,7 +5,7 @@
 # as `test_query_*.json` or `oom`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-snap() { git status --porcelain --ignored --untracked-files=all | grep -v ' target/' | sort; }
+snap() { git status --porcelain --ignored --untracked-files=all | { grep -v ' target/' || true; } | sort; }
 before=$(snap)
 cargo test --lib --bins --test cli_contract --test injection --test secrets -q "$@" >/dev/null
 after=$(snap)
