@@ -100,6 +100,78 @@ pub fn strip_settings(def: &mut Value, extra: &[&str]) {
             remove_path(index, p);
         }
     }
+    // settings without the `index.` prefix (`{"settings":{"frozen":true}}`) are index
+    // settings as well, so an exclusion covers them too (L-656)
+    if let Some(settings) = def.get_mut("settings").and_then(Value::as_object_mut) {
+        for p in extra.iter().filter(|p| **p != "index") {
+            remove_path(settings, p);
+        }
+    }
+}
+
+/// L-656 (BRK-XV-005): index settings an Elasticsearch OSS build (no X-Pack) rejects as
+/// unknown, found live on 7.10.2: ILM, frozen indices and X-Pack's own keys.
+const XPACK_ONLY: &[&str] = &["lifecycle", "frozen", "xpack"];
+/// ... and the ones OpenSearch rejects (it has ISM, not ILM).
+const OPENSEARCH_REJECTS: &[&str] = &["lifecycle"];
+
+fn flat_keys(prefix: &str, m: &Map<String, Value>, out: &mut Vec<String>) {
+    for (k, v) in m {
+        let key = if prefix.is_empty() {
+            k.clone()
+        } else {
+            format!("{prefix}.{k}")
+        };
+        match v {
+            // an object left empty by an exclusion holds no setting
+            Value::Object(o) => flat_keys(&key, o, out),
+            _ => out.push(key),
+        }
+    }
+}
+
+/// Index settings in `def` (`{"settings":{..}}`) that `target` rejects because it lacks the
+/// feature: ILM (and other X-Pack keys) on an Elasticsearch OSS build, ILM on OpenSearch.
+/// Names are `index.`-prefixed.
+pub(crate) fn rejected_settings(def: &Value, target: &ClusterInfo) -> Vec<String> {
+    let prefixes = if target.is_opensearch() {
+        OPENSEARCH_REJECTS
+    } else if target.oss {
+        XPACK_ONLY
+    } else {
+        return Vec::new();
+    };
+    let mut d = def.clone();
+    let mut keys = Vec::new();
+    if let Some(settings) = d.get("settings").and_then(Value::as_object) {
+        // settings without the `index.` prefix are index settings as well
+        let bare: Map<String, Value> = settings
+            .iter()
+            .filter(|(k, _)| *k != "index" && !k.starts_with("index."))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        flat_keys("", &bare, &mut keys);
+    }
+    if let Some(index) = index_settings_mut(&mut d) {
+        flat_keys("", index, &mut keys);
+    }
+    keys.into_iter()
+        .filter(|k| {
+            prefixes
+                .iter()
+                .any(|p| k == p || k.starts_with(&format!("{p}.")))
+        })
+        .map(|k| format!("index.{k}"))
+        .collect()
+}
+
+/// Why `target` has none of the features behind [`rejected_settings`].
+pub(crate) fn rejected_settings_reason(target: &ClusterInfo) -> &'static str {
+    if target.is_opensearch() {
+        "OpenSearch has no ILM; ISM policies are attached with index.plugins.index_state_management.policy_id"
+    } else {
+        "X-Pack settings, and an OSS build has no X-Pack"
+    }
 }
 
 /// Keys in `def` that belong to the other engine, without changing `def`.
@@ -284,7 +356,8 @@ pub async fn write(
 }
 
 /// L-655 (BRK-XV-004): before anything is written, refuse every index whose mapping has a
-/// field type the target has no type for, naming each field (see [`super::field_types`]).
+/// field type the target has no type for, naming each field (see [`super::field_types`]),
+/// and (L-656) settings the target rejects for want of the feature (ILM on an OSS build).
 /// With `--ignore-errors` those indices are skipped as failures and the rest is restored.
 fn refuse_unportable_fields(
     indices: &mut Map<String, Value>,
@@ -293,23 +366,49 @@ fn refuse_unportable_fields(
     opts: &MetaOptions,
     report: &mut WriteReport,
 ) -> Result<()> {
-    if !matches!(opts.kind, MetaKind::Mapping | MetaKind::Index) {
+    if !matches!(
+        opts.kind,
+        MetaKind::Mapping | MetaKind::Index | MetaKind::Settings
+    ) {
         return Ok(());
     }
     let mut refused = Vec::new();
     for (src_index, def) in indices.iter() {
+        let mut why = Vec::new();
         let mappings = match (opts.kind, def.get("mappings")) {
-            (_, Some(m)) => m,
-            (MetaKind::Mapping, None) => def,
-            _ => continue,
+            (MetaKind::Settings, _) => None,
+            (_, Some(m)) => Some(m),
+            (MetaKind::Mapping, None) => Some(def),
+            _ => None,
         };
-        let found = super::field_types::unportable(mappings, info);
-        if !found.is_empty() {
-            let target = dst.target_index(src_index)?;
-            refused.push((
-                src_index.clone(),
-                super::field_types::refusal_message(&target, &found, info),
-            ));
+        let target = dst.target_index(src_index)?;
+        if let Some(mappings) = mappings {
+            let found = super::field_types::unportable(mappings, info);
+            if !found.is_empty() {
+                why.push(super::field_types::refusal_message(&target, &found, info));
+            }
+        }
+        // L-656: settings the target rejects for want of the feature, after the exclusions
+        // and cross-engine stripping the restore itself applies
+        if opts.kind != MetaKind::Mapping
+            && (def.get("settings").is_some() || opts.kind == MetaKind::Settings)
+        {
+            let eff = effective_settings(def, info, opts);
+            let rejected = rejected_settings(&eff, info);
+            if !rejected.is_empty() {
+                why.push(format!(
+                    "the settings of '{target}' have {} that {} {}{} rejects ({}): drop them with --excludeSettings={}; nothing was written",
+                    rejected.join(", "),
+                    info.flavor_name(),
+                    info.version,
+                    if info.oss { " (OSS build)" } else { "" },
+                    rejected_settings_reason(info),
+                    rejected.join(",")
+                ));
+            }
+        }
+        if !why.is_empty() {
+            refused.push((src_index.clone(), why.join("; ")));
         }
     }
     if refused.is_empty() {
@@ -325,6 +424,32 @@ fn refuse_unportable_fields(
         report.failed += 1;
     }
     Ok(())
+}
+
+/// The settings a restore of `def` would send, without logging (see [`prepare_settings`]).
+fn effective_settings(def: &Value, info: &ClusterInfo, opts: &MetaOptions) -> Value {
+    let mut d = match def.get("settings") {
+        Some(s) => json!({ "settings": s.clone() }),
+        None => json!({ "settings": def.clone() }),
+    };
+    let extra: Vec<&str> = SETTINGS_NOT_CREATABLE
+        .iter()
+        .copied()
+        .chain(
+            opts.exclude_settings
+                .iter()
+                .map(|s| s.trim_start_matches("index.")),
+        )
+        .collect();
+    strip_settings(&mut d, &extra);
+    if opts
+        .source_info
+        .as_ref()
+        .is_some_and(|s| s.flavor != info.flavor)
+    {
+        strip_for_flavor(&mut d, info);
+    }
+    d
 }
 
 /// Strip generated, excluded and (for known sources) foreign-engine keys from
@@ -700,6 +825,58 @@ async fn apply_mapping(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn cluster(body: &str) -> ClusterInfo {
+        ClusterInfo::parse(body.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn settings_a_target_rejects_for_want_of_the_feature() {
+        let oss = cluster(r#"{"version":{"number":"7.10.2","build_flavor":"oss"}}"#);
+        let es = cluster(r#"{"version":{"number":"7.10.2","build_flavor":"default"}}"#);
+        let os = cluster(r#"{"version":{"distribution":"opensearch","number":"1.3.20"}}"#);
+        let def = json!({"settings": {
+            "index.lifecycle.name": "p",
+            "frozen": true,
+            "index": {
+                "lifecycle": {"rollover_alias": "a"},
+                "xpack": {"version": "x"},
+                "number_of_replicas": "0",
+                "routing": {"allocation": {"include": {"_tier_preference": "data_hot"}}}
+            }
+        }});
+        let mut got = rejected_settings(&def, &oss);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "index.frozen",
+                "index.lifecycle.name",
+                "index.lifecycle.rollover_alias",
+                "index.xpack.version"
+            ]
+        );
+        let mut got = rejected_settings(&def, &os);
+        got.sort();
+        assert_eq!(
+            got,
+            ["index.lifecycle.name", "index.lifecycle.rollover_alias"]
+        );
+        assert!(rejected_settings(&def, &es).is_empty());
+        // an exclusion removes prefixed, nested and bare keys alike, and the empty objects it
+        // leaves are no settings
+        let mut d = def.clone();
+        strip_settings(
+            &mut d,
+            &[
+                "lifecycle.name",
+                "lifecycle.rollover_alias",
+                "frozen",
+                "xpack",
+            ],
+        );
+        assert!(rejected_settings(&d, &oss).is_empty(), "{d}");
+    }
 
     #[test]
     fn data_stream_backing_indices_are_skipped() {

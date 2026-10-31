@@ -118,6 +118,8 @@ struct Inner {
     gate: RequestGate,
     info: OnceCell<ClusterInfo>,
     debug: bool,
+    /// basic auth or an `Authorization`/`x-api-key` header is sent (L-656)
+    credentials: bool,
 }
 
 /// Query parameters whose values are safe to log; every other value (for
@@ -316,6 +318,7 @@ impl EsClient {
             headers.insert(name, value);
         }
 
+        let credentials = headers.contains_key(AUTHORIZATION) || headers.contains_key("x-api-key");
         if opts.tls.insecure {
             log::warn!(
                 "TLS certificate verification is DISABLED for {}",
@@ -369,6 +372,7 @@ impl EsClient {
             gate,
             info: OnceCell::new(),
             debug: opts.debug,
+            credentials,
         })))
     }
 
@@ -516,6 +520,14 @@ impl EsClient {
                     info.version,
                     crate::endpoint::redacted_url(&self.0.base)
                 );
+                if info.oss && self.0.credentials {
+                    // L-656 (BRK-XV-005): an OSS build ignores credentials without an error
+                    log::warn!(
+                        "{} is Elasticsearch {} (OSS build), which has no X-Pack security: it does not check the credentials given for it (only a proxy in front of it could)",
+                        crate::endpoint::redacted_url(&self.0.base),
+                        info.version
+                    );
+                }
                 Ok(info)
             })
             .await

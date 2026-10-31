@@ -308,6 +308,20 @@ an existing target index, and index templates. The API-071 expectation table is 
 these types). Live, the refusals match what the server rejects on OpenSearch 1.3.20, 2.19.7, 3.9.0 and
 Elasticsearch 7.10.2 (OSS and default), 7.17.29, 8.6.1, 8.19.23 and 9.1.2.
 
+Features the target does not have (L-656): restoring templates (`--type template`/`index_template`/
+`component_template`), settings or indices checks them against the target before any write. A composable template
+with `data_stream` on the Elasticsearch OSS build (data streams are X-Pack) or before 7.9, and settings the target
+rejects as unknown (`index.lifecycle.*` on OpenSearch, which attaches ISM policies with
+`index.plugins.index_state_management.policy_id`; `index.lifecycle.*`, `index.frozen` and `index.xpack.*` on the
+OSS build) are refused with one error naming each item, the feature, the reason and the exclusion that drops it
+(`--excludeTemplateFields=data_stream`, `--excludeSettings=...`); nothing is written. With `--ignore-errors` only
+those items are skipped (counted as failed). Templates are all prepared before the first PUT. ILM policies are
+refused on the OSS build and on OpenSearch (use `--convertIlmToIsm`), `--searchType pit` falls back to scroll with a
+warning where there is no PIT, and credentials sent to the OSS build (which has no security) give a warning, since
+it does not check them. Writing to a data stream with the default `--bulkAction index` fails per document; the
+first such failure prints a hint to use `--bulkAction create`. Checked live on Elasticsearch 7.10.2 (OSS and
+default), 7.17.29, 8.6.1, 8.19.23 and 9.1.2, and OpenSearch 1.3.20, 2.19.7 and 3.9.0.
+
 ## Renaming indices
 
 `--renamePrefix old:new` (repeatable) and `--renameIndex '<regex>:<replacement>'` (repeatable, Rust `regex`

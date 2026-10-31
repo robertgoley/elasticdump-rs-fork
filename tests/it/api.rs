@@ -2881,3 +2881,218 @@ async fn l655_fields_without_an_equivalent_are_refused_exactly_when_missing() {
         assert_eq!(c.call("HEAD", &dst, None).await.0, 404, "{ty}");
     }
 }
+
+// L-656 (BRK-XV-005): Elasticsearch 7.10 OSS (no X-Pack) and OpenSearch 1.3 (and the other
+// pinned engines) as targets. A template or index restore is refused before any write exactly
+// when this cluster rejects the feature (a direct PUT answers "unknown setting" / "unknown
+// field [data_stream]"), and nothing is created; ILM policies, PIT, credentials and data
+// streams fail or degrade with a clear message.
+#[tokio::test]
+async fn l656_missing_features_on_the_target_fail_clearly() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let version = c.version().await;
+    let oss = c.is_oss().await;
+    let (maj, min) = c.vnum().await;
+    let missing = |body: &Value| {
+        let s = body.to_string();
+        s.contains("unknown setting [") || s.contains("unknown field [data_stream]")
+    };
+    // (case, --type, template?, body)
+    let cases = [
+        (
+            "data_stream",
+            "index_template",
+            true,
+            json!({"data_stream": {}, "template": {"settings": {"number_of_replicas": 0}}}),
+        ),
+        (
+            "ilm_template",
+            "index_template",
+            true,
+            json!({"template": {"settings": {"index.lifecycle.name": "p1", "number_of_replicas": 0}}}),
+        ),
+        (
+            "ilm_index",
+            "index",
+            false,
+            json!({"settings": {"index": {"lifecycle": {"name": "p1"}, "number_of_replicas": "0"}}}),
+        ),
+        (
+            "rollover_alias_settings",
+            "settings",
+            false,
+            json!({"settings": {"index.lifecycle.rollover_alias": "a", "index.number_of_replicas": "0"}}),
+        ),
+        (
+            "tier_preference",
+            "index",
+            false,
+            json!({"settings": {"index.routing.allocation.include._tier_preference": "data_hot", "index.number_of_replicas": "0"}}),
+        ),
+    ];
+    let mut refused = vec![];
+    for (case, ty, template, body) in &cases {
+        if *template && es && (maj, min) < (7, 8) {
+            continue;
+        }
+        let name = unique(&format!("l656_{case}"));
+        let path = if *template {
+            format!("_index_template/{name}")
+        } else {
+            name.clone()
+        };
+        let mut direct = body.clone();
+        if *template {
+            direct["index_patterns"] = json!([format!("{name}-*")]);
+            direct["priority"] = json!(500);
+        }
+        let (st, resp) = c.call("PUT", &path, Some(direct.clone())).await;
+        let _ = c.call("DELETE", &path, None).await;
+        let file = tmp_path("l656", "json");
+        std::fs::write(&file, json!({ &name: direct }).to_string() + "\n").unwrap();
+        let out = if *template {
+            c.url_with_auth("")
+        } else {
+            c.url_with_auth(&name)
+        };
+        let o = run_loud(io(&c, file.to_str().unwrap(), &out, &["--type", ty])).await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let tool_refused = err.contains("nothing was written")
+            && (err.contains("cannot take these") || err.contains("rejects ("));
+        let (exists, _) = c.call("GET", &path, None).await;
+        let _ = c.call("DELETE", &path, None).await;
+        if tool_refused {
+            assert_eq!(o.status.code(), Some(1), "{case}: {err}");
+            assert_eq!(exists, 404, "{case}: refused, but it was created");
+            assert!(
+                st != 200 && missing(&resp),
+                "{version}: the tool refuses {case}, but the cluster takes it: {st} {resp}"
+            );
+            refused.push(*case);
+        } else {
+            assert!(
+                st == 200 || !missing(&resp),
+                "{version}: the cluster rejects {case} ({resp}) but the tool did not refuse it: {err}"
+            );
+            if st == 200 {
+                assert_success(&o);
+            }
+        }
+    }
+    println!("L-656 {version} oss={oss}: refused {refused:?}");
+
+    // ILM policies: OSS build and OpenSearch refuse before any write
+    let pol = tmp_path("l656_ilm", "json");
+    let pname = unique("l656_pol");
+    std::fs::write(
+        &pol,
+        json!({ &pname: {"policy": {"phases": {"delete": {"min_age": "30d", "actions": {"delete": {}}}}}} }).to_string() + "\n",
+    )
+    .unwrap();
+    let o = run_loud(io(
+        &c,
+        pol.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "policy"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    if oss {
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains("ILM is an X-Pack feature and this is an OSS build"),
+            "{err}"
+        );
+    } else if !es {
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(err.contains("--convertIlmToIsm"), "{err}");
+    } else {
+        assert_success(&o);
+        let _ = c
+            .call("DELETE", &format!("_ilm/policy/{pname}"), None)
+            .await;
+    }
+
+    // PIT: no PIT on the OSS build and OpenSearch < 2.4: scroll, with a warning
+    let src = unique("l656_src");
+    seed_index(&c, &src, 3).await;
+    let n = c.count(&src).await;
+    let dump = tmp_path("l656_pit", "json");
+    let o = run_loud(io(
+        &c,
+        &c.url_with_auth(&src),
+        dump.to_str().unwrap(),
+        &["--searchType", "pit"],
+    ))
+    .await;
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert_success(&o);
+    assert_eq!(lines(&dump).len() as u64, n);
+    let no_pit = oss || (!es && (maj, min) < (2, 4)) || (es && (maj, min) < (7, 10));
+    assert_eq!(err.contains("using scroll instead"), no_pit, "{err}");
+
+    // credentials sent to the OSS build are not checked by it: warned
+    if oss && !c.url.starts_with("https") {
+        let dst = unique("l656_auth");
+        let url = c.url_with_auth(&dst).replacen("://", "://u:FAKE-pw@", 1);
+        let doc = tmp_path("l656_auth", "json");
+        std::fs::write(
+            &doc,
+            "{\"_index\":\"x\",\"_id\":\"1\",\"_source\":{\"n\":1}}\n",
+        )
+        .unwrap();
+        let o = run_loud(io(&c, doc.to_str().unwrap(), &url, &[])).await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert_success(&o);
+        assert!(
+            err.contains("which has no X-Pack security: it does not check the credentials"),
+            "{err}"
+        );
+        assert!(!err.contains("FAKE-pw"), "{err}");
+        c.delete_index(&dst).await;
+    }
+    c.delete_index(&src).await;
+
+    // data streams (OpenSearch, Elasticsearch >= 7.9 with X-Pack): `index` fails with one hint
+    if !oss && (!es || (maj, min) >= (7, 9)) {
+        let ds = unique("l656_ds");
+        c.ok(
+            "PUT",
+            &format!("_index_template/{ds}"),
+            Some(json!({"index_patterns": [ds.clone()], "data_stream": {}, "priority": 500})),
+        )
+        .await;
+        let data = tmp_path("l656_ds", "json");
+        std::fs::write(
+            &data,
+            (1..=2)
+                .map(|i| json!({"_index": ds, "_id": format!("{i}"), "_source": {"@timestamp": "2026-01-01T00:00:00Z", "n": i}}).to_string() + "\n")
+                .collect::<String>(),
+        )
+        .unwrap();
+        let o = run_loud(io(&c, data.to_str().unwrap(), &c.url_with_auth(&ds), &[])).await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert_eq!(o.status.code(), Some(3), "{err}");
+        assert_eq!(
+            err.matches("the target is a data stream, which accepts only `create`")
+                .count(),
+            1,
+            "{err}"
+        );
+        let o = run_loud(io(
+            &c,
+            data.to_str().unwrap(),
+            &c.url_with_auth(&ds),
+            &["--bulkAction", "create"],
+        ))
+        .await;
+        assert_success(&o);
+        assert_eq!(c.count(&ds).await, 2);
+        let _ = c.call("DELETE", &format!("_data_stream/{ds}"), None).await;
+        let _ = c
+            .call("DELETE", &format!("_index_template/{ds}"), None)
+            .await;
+    }
+}

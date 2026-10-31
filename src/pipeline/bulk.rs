@@ -150,6 +150,7 @@ pub struct BulkSink {
     uuid_checked: bool,
     /// The 409 explanation is printed once per run (TST-BRK-SRV-011).
     conflict_hint_shown: bool,
+    data_stream_hint_shown: bool,
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -412,6 +413,7 @@ impl BulkSink {
             target_uuid: None,
             uuid_checked: false,
             conflict_hint_shown: false,
+            data_stream_hint_shown: false,
         }
     }
 
@@ -539,6 +541,7 @@ impl BulkSink {
             target_uuid: None,
             uuid_checked: false,
             conflict_hint_shown: false,
+            data_stream_hint_shown: false,
         }
     }
 
@@ -1040,6 +1043,19 @@ impl BulkSink {
             } else if (status == 429 || status == 503) && self.opts.retry.attempts > 0 {
                 rejected.push((doc_idx, item.as_raw_str().to_string()));
             } else {
+                if status == 400
+                    && !self.data_stream_hint_shown
+                    && self.opts.action == BulkAction::Index
+                    && item
+                        .as_raw_str()
+                        .contains("op_type of create are allowed in data streams")
+                {
+                    // L-656: name the fix once, not per document
+                    self.data_stream_hint_shown = true;
+                    log::warn!(
+                        "the target is a data stream, which accepts only `create`: every document written with --bulkAction index fails; re-run with --bulkAction create"
+                    );
+                }
                 if status == 409 && !self.conflict_hint_shown {
                     // TST-BRK-SRV-011: name the concurrent change once, not per document
                     self.conflict_hint_shown = true;

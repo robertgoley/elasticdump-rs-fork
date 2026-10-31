@@ -1599,6 +1599,185 @@ async fn fields_without_an_equivalent_are_refused_before_any_write() {
     );
 }
 
+// L-656 (BRK-XV-005): features the target does not have fail clearly before any write: an
+// Elasticsearch OSS build (no X-Pack) refuses templates with a data_stream and ILM settings,
+// and settings restores with ILM keys; OpenSearch refuses ILM settings. Credentials sent to an
+// OSS build are warned about (it does not check them), and a data stream written with
+// `--bulkAction index` names `--bulkAction create` once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn missing_features_on_the_target_fail_clearly_before_any_write() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    const OSS: &str =
+        r#"{"version":{"number":"7.10.2","build_flavor":"oss"},"tagline":"You Know, for Search"}"#;
+    const OS13: &str = r#"{"version":{"distribution":"opensearch","number":"1.3.20"},"tagline":"The OpenSearch Project: https://opensearch.org/"}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let tpl = dir.path().join("t.json");
+    std::fs::write(
+        &tpl,
+        r#"{"ds":{"index_patterns":["ds-*"],"data_stream":{},"template":{"settings":{"number_of_replicas":0}}},"ilm":{"index_patterns":["lc-*"],"template":{"settings":{"index":{"lifecycle":{"name":"p1"}},"frozen":true}}},"good":{"index_patterns":["g-*"],"template":{"settings":{"number_of_replicas":0}}}}"#,
+    )
+    .unwrap();
+    let settings = dir.path().join("s.json");
+    std::fs::write(
+        &settings,
+        r#"{"lc":{"settings":{"index.lifecycle.name":"p1","index":{"number_of_replicas":"0","routing":{"allocation":{"include":{"_tier_preference":"data_hot"}}}}}}}"#,
+    )
+    .unwrap();
+    let mock = |info: &'static str| {
+        RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::prefix("PUT", "/").reply(Reply::ok(r#"{"acknowledged":true}"#)))
+            .start()
+    };
+    let args = |input: &std::path::Path, url: String, ty: &str, extra: &[&str]| {
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            url,
+            "--type".into(),
+            ty.into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    };
+    let puts = |m: &RouterMock| -> Vec<String> {
+        m.requests()
+            .iter()
+            .filter(|r| r.method == "PUT")
+            .map(|r| r.path.clone())
+            .collect()
+    };
+
+    // templates on the OSS build
+    let m = mock(OSS).await;
+    let o = run_async(args(&tpl, m.url(), "index_template", &[]), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("Elasticsearch 7.10.2 (OSS build) cannot take these")
+            && err.contains(
+                "index_template 'ds' has a data_stream (data streams are an X-Pack feature"
+            )
+            && err.contains("--excludeTemplateFields=data_stream")
+            && err.contains("index_template 'ilm' has settings index.frozen, index.lifecycle.name")
+            && err.contains("--excludeSettings=index.frozen,index.lifecycle.name")
+            && !err.contains("'good'")
+            && err.contains("nothing was written"),
+        "{err}"
+    );
+    assert!(puts(&m).is_empty(), "{:?}", m.requests());
+    let m = mock(OSS).await;
+    let o = run_async(
+        args(&tpl, m.url(), "index_template", &["--ignore-errors"]),
+        vec![],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(puts(&m), vec!["/_index_template/good".to_string()]);
+    // the exclusions the hint names are enough
+    let m = mock(OSS).await;
+    let o = run_async(
+        args(
+            &tpl,
+            m.url(),
+            "index_template",
+            &[
+                "--excludeTemplateFields=data_stream",
+                "--excludeSettings=index.lifecycle.name,index.frozen",
+            ],
+        ),
+        vec![],
+    )
+    .await;
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert_eq!(puts(&m).len(), 3, "{:?}", m.requests());
+
+    // settings: ILM refused on the OSS build and on OpenSearch; _tier_preference is not
+    for (info, who) in [
+        (OSS, "Elasticsearch 7.10.2 (OSS build)"),
+        (OS13, "OpenSearch 1.3.20"),
+    ] {
+        for ty in ["settings", "index"] {
+            let m = mock(info).await;
+            let o = run_async(args(&settings, m.url(), ty, &[]), vec![]).await;
+            let err = stderr(&o);
+            assert_eq!(o.status.code(), Some(1), "{ty}: {err}");
+            assert!(
+                err.contains(&format!(
+                    "the settings of 'lc' have index.lifecycle.name that {who} rejects"
+                )) && err.contains("--excludeSettings=index.lifecycle.name;")
+                    && !err.contains("_tier_preference that")
+                    && err.contains("nothing was written"),
+                "{ty}: {err}"
+            );
+            assert!(puts(&m).is_empty(), "{ty}: {:?}", m.requests());
+        }
+    }
+
+    // credentials sent to the OSS build
+    let data = dir.path().join("d.json");
+    std::fs::write(
+        &data,
+        r#"{"_index":"x","_id":"1","_source":{"a":1}}"#.to_owned() + "\n",
+    )
+    .unwrap();
+    for (info, warned) in [(OSS, true), (OS13, false)] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(info)))
+            .route(Route::contains("POST", "_bulk").reply(Reply::ok(
+                r#"{"took":1,"errors":false,"items":[{"index":{"_index":"x","_id":"1","status":201}}]}"#,
+            )))
+            .route(Route::any().reply(Reply::ok("{}")))
+            .start()
+            .await;
+        let url = m.url().replace("http://", "http://u:FAKE-pw@") + "/x";
+        let o = run_async(args(&data, url, "data", &[]), vec![]).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{err}");
+        assert_eq!(
+            err.contains(
+                "(OSS build), which has no X-Pack security: it does not check the credentials"
+            ),
+            warned,
+            "{err}"
+        );
+        assert!(!err.contains("FAKE-pw"), "{err}");
+    }
+
+    // a data stream written with `index`: the fix is named once
+    std::fs::write(
+        &data,
+        r#"{"_index":"ds-b","_id":"1","_source":{"@timestamp":"2026-01-01T00:00:00Z"}}
+{"_index":"ds-b","_id":"2","_source":{"@timestamp":"2026-01-01T00:00:00Z"}}
+"#,
+    )
+    .unwrap();
+    let item = r#"{"index":{"_index":"ds-b","_id":"1","status":400,"error":{"type":"illegal_argument_exception","reason":"only write ops with an op_type of create are allowed in data streams"}}}"#;
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(OS13)))
+        .route(Route::contains("POST", "_bulk").reply(Reply::ok(format!(
+            r#"{{"took":1,"errors":true,"items":[{item},{item}]}}"#
+        ))))
+        .route(Route::any().reply(Reply::ok("{}")))
+        .start()
+        .await;
+    let o = run_async(
+        args(&data, format!("{}/ds-b", m.url()), "data", &[]),
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(3), "{err}");
+    assert_eq!(
+        err.matches("the target is a data stream, which accepts only `create`")
+            .count(),
+        1,
+        "{err}"
+    );
+    assert!(err.contains("re-run with --bulkAction create"), "{err}");
+}
+
 // L-425 (TST-API-041): `X-Elastic-Product` missing or unexpected is tolerated (the tool does not
 // enforce the official client's product check); a `Warning` on `GET /` is logged once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

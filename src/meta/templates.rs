@@ -7,7 +7,8 @@ use serde_json::{Map, Value, json};
 
 use super::http::{body_contains, get_json_opt, send_json_q};
 use super::index_scoped::{
-    foreign_settings, other_engine, strip_for_flavor, strip_settings, typeless_mapping,
+    foreign_settings, other_engine, rejected_settings, rejected_settings_reason, strip_for_flavor,
+    strip_settings, typeless_mapping,
 };
 use super::{MetaOptions, MetaTarget, TemplateKind};
 use crate::http::{ClusterInfo, EsClient};
@@ -282,7 +283,15 @@ pub fn prepare(
                 }
                 Some(false) => {}
                 None => {
-                    let f = foreign_settings(&def, info);
+                    let rejected = rejected_settings(&def, info);
+                    let f: Vec<String> = foreign_settings(&def, info)
+                        .into_iter()
+                        .filter(|f| {
+                            !rejected
+                                .iter()
+                                .any(|r| r == f || r.starts_with(&format!("{f}.")))
+                        })
+                        .collect();
                     if !f.is_empty() {
                         log::warn!(
                             "{} '{name}' settings contain {}-only keys: {}; drop them with --excludeSettings={}",
@@ -354,8 +363,57 @@ pub async fn write(
         );
     }
     let mut report = WriteReport::default();
+    // prepare and check every template before the first write (L-656)
+    let mut ready = Vec::new();
+    let mut refused = Vec::new();
     for (name, body) in items {
-        let result = put_one(&name, body, kind, client, info, dst, opts).await;
+        match prepare(&name, body, kind, info, dst, opts) {
+            Ok(body) => {
+                let why = unsupported(&body, kind, info);
+                if why.is_empty() {
+                    ready.push((name, body));
+                } else {
+                    refused.push(format!(
+                        "{} '{name}' has {}",
+                        kind.type_name(),
+                        why.join(" and ")
+                    ));
+                }
+            }
+            Err(e) if opts.ignore_errors => {
+                log::error!(
+                    "{} '{name}' failed (--ignore-errors): {e:#}",
+                    kind.type_name()
+                );
+                report.failed += 1;
+            }
+            Err(e) => return Err(e.context(format!("restoring {} '{name}'", kind.type_name()))),
+        }
+    }
+    if !refused.is_empty() {
+        let target = format!(
+            "{} {}{}",
+            info.flavor_name(),
+            info.version,
+            if info.oss { " (OSS build)" } else { "" }
+        );
+        if !opts.ignore_errors {
+            bail!(
+                "--type {}: {target} cannot take these: {}; nothing was written",
+                kind.type_name(),
+                refused.join("; ")
+            );
+        }
+        for r in &refused {
+            log::error!(
+                "--type {} (--ignore-errors): {target} cannot take this: {r}",
+                kind.type_name()
+            );
+            report.failed += 1;
+        }
+    }
+    for (name, body) in ready {
+        let result = put_one(&name, body, kind, client, opts).await;
         match result {
             Ok(true) => report.written += 1,
             Ok(false) => {}
@@ -372,16 +430,50 @@ pub async fn write(
     Ok(report)
 }
 
+/// L-656 (BRK-XV-005): what in a prepared template `info` has no feature for: a
+/// `data_stream` on Elasticsearch without data streams (OSS build, or < 7.9), and settings
+/// the target rejects (ILM on an OSS build or on OpenSearch).
+fn unsupported(body: &Value, kind: TemplateKind, info: &ClusterInfo) -> Vec<String> {
+    let mut why = Vec::new();
+    if kind == TemplateKind::Composable
+        && body.get("data_stream").is_some()
+        && !info.is_opensearch()
+        && (info.oss || (info.version.major, info.version.minor) < (7, 9))
+    {
+        why.push(format!(
+            "a data_stream ({}; drop it with --excludeTemplateFields=data_stream to get a plain index template)",
+            if info.oss {
+                "data streams are an X-Pack feature and an OSS build has no X-Pack"
+            } else {
+                "data streams need Elasticsearch >= 7.9"
+            }
+        ));
+    }
+    let settings = match kind {
+        TemplateKind::Legacy => body.get("settings"),
+        _ => body.get("template").and_then(|t| t.get("settings")),
+    };
+    if let Some(settings) = settings {
+        let rejected = rejected_settings(&json!({ "settings": settings }), info);
+        if !rejected.is_empty() {
+            why.push(format!(
+                "settings {} ({}; drop them with --excludeSettings={})",
+                rejected.join(", "),
+                rejected_settings_reason(info),
+                rejected.join(",")
+            ));
+        }
+    }
+    why
+}
+
 async fn put_one(
     name: &str,
     body: Value,
     kind: TemplateKind,
     client: &EsClient,
-    info: &ClusterInfo,
-    dst: &MetaTarget,
     opts: &MetaOptions,
 ) -> Result<bool> {
-    let body = prepare(name, body, kind, info, dst, opts)?;
     if kind == TemplateKind::Composable {
         let ignore: Vec<&str> = body
             .get("ignore_missing_component_templates")
@@ -463,6 +555,28 @@ mod tests {
             .unwrap(),
             file: Default::default(),
         }
+    }
+
+    #[test]
+    fn data_streams_and_ilm_settings_need_the_feature_on_the_target() {
+        let info = |b: &str| ClusterInfo::parse(b.as_bytes()).unwrap();
+        let oss = info(r#"{"version":{"number":"7.10.2","build_flavor":"oss"}}"#);
+        let es78 = info(r#"{"version":{"number":"7.8.1","build_flavor":"default"}}"#);
+        let es79 = info(r#"{"version":{"number":"7.9.3","build_flavor":"default"}}"#);
+        let os13 = info(r#"{"version":{"distribution":"opensearch","number":"1.3.20"}}"#);
+        let ds = json!({"index_patterns": ["d-*"], "data_stream": {}});
+        let c = TemplateKind::Composable;
+        assert!(unsupported(&ds, c, &oss)[0].contains("X-Pack feature"));
+        assert!(unsupported(&ds, c, &es78)[0].contains("need Elasticsearch >= 7.9"));
+        assert!(unsupported(&ds, c, &es79).is_empty());
+        assert!(unsupported(&ds, c, &os13).is_empty());
+        let ilm = json!({"index_patterns": ["l-*"], "template": {"settings": {"index.lifecycle.name": "p"}}});
+        assert!(unsupported(&ilm, c, &oss)[0].contains("settings index.lifecycle.name"));
+        assert!(unsupported(&ilm, c, &os13)[0].contains("OpenSearch has no ILM"));
+        assert!(unsupported(&ilm, c, &es79).is_empty());
+        let legacy =
+            json!({"index_patterns": ["l-*"], "settings": {"index": {"lifecycle": {"name": "p"}}}});
+        assert_eq!(unsupported(&legacy, TemplateKind::Legacy, &oss).len(), 1);
     }
 
     fn opts() -> MetaOptions {
