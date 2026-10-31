@@ -296,50 +296,58 @@ fn push_id_like(out: &mut Vec<u8>, name: &str, v: &LazyValue) -> Result<()> {
     push_id_like_raw(out, name, v.as_raw_str())
 }
 
-/// [`push_id_like`] for an already validated raw JSON value.
+/// [`push_id_like`] for an already validated raw JSON value. L-629a: a string is sent as
+/// given and a number literal becomes a string of exactly its text (`-0` -> "-0", `1e3` ->
+/// "1e3", `0.0` -> "0.0"): ids are kept byte for byte, never parsed as numbers (this
+/// replaces L-629's Node-style `Number#toString`, which turned `-0` into "0").
 fn push_id_like_raw(out: &mut Vec<u8>, name: &str, raw: &str) -> Result<()> {
     match raw.as_bytes().first() {
         Some(b'"') => out.extend_from_slice(raw.as_bytes()),
-        Some(b'-' | b'0'..=b'9') => push_json_str(out, &js_number_string(name, raw)?),
+        Some(b'-' | b'0'..=b'9') => {
+            if !is_json_number(raw) {
+                bail!("{name} is not a valid JSON number: {}", short(raw));
+            }
+            push_json_str(out, raw)
+        }
         _ => bail!("{name} must be a string or a number, got {}", short(raw)),
     }
     Ok(())
 }
 
-/// The string the engine stores for a numeric `_id`/`_routing` as Node sends it
-/// (TST-BRK-IN-011): integer literals keep every digit (Node's json-bigint keeps big ones
-/// exact), `-0` is `0`, and other numbers are JavaScript's `Number#toString` (`1e3` -> `1000`,
-/// `1.50` -> `1.5`, `1e21` -> `1e+21`). Non-finite values (`1e400`) are refused.
-pub(crate) fn js_number_string(name: &str, raw: &str) -> Result<String> {
-    let digits = raw.strip_prefix('-').unwrap_or(raw);
-    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Ok(if digits.bytes().all(|b| b == b'0') {
-            "0".to_string()
-        } else {
-            raw.to_string()
-        });
-    }
-    let v: f64 = raw
-        .parse()
-        .map_err(|_| anyhow!("{name} is not a valid number: {}", short(raw)))?;
-    if !v.is_finite() {
-        bail!(
-            "{name} {} is out of range for a JavaScript number (Node would send null); use a string",
-            short(raw)
-        );
-    }
-    let a = v.abs();
-    Ok(if v == 0.0 {
-        "0".to_string()
-    } else if (1e-6..1e21).contains(&a) {
-        format!("{v}")
-    } else {
-        let e = format!("{v:e}");
-        match e.split_once('e') {
-            Some((m, x)) if !x.starts_with('-') => format!("{m}e+{x}"),
-            _ => e,
+/// RFC 8259 number grammar: `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`.
+fn is_json_number(raw: &str) -> bool {
+    fn digits(b: &[u8], i: &mut usize) -> usize {
+        let start = *i;
+        while *i < b.len() && b[*i].is_ascii_digit() {
+            *i += 1;
         }
-    })
+        *i - start
+    }
+    let b = raw.as_bytes();
+    let mut i = usize::from(b.first() == Some(&b'-'));
+    match b.get(i) {
+        Some(b'0') => i += 1,
+        Some(b'1'..=b'9') => {
+            digits(b, &mut i);
+        }
+        _ => return false,
+    }
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        if digits(b, &mut i) == 0 {
+            return false;
+        }
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        if digits(b, &mut i) == 0 {
+            return false;
+        }
+    }
+    i == b.len()
 }
 
 /// `version` must be an integer within u64 (INJ-F3).
@@ -1190,6 +1198,38 @@ mod tests {
         );
     }
 
+    /// L-629a: numeric ids and routing reach the action line as the exact literal text;
+    /// JSON whitespace around the value is not part of it.
+    #[test]
+    fn numeric_ids_reach_the_action_line_byte_for_byte() {
+        let mut s = sink(os(), |_| {});
+        for (id, want) in [
+            ("-0", r#""-0""#),
+            (" 1", r#""1""#),
+            ("1e3", r#""1e3""#),
+            ("0.0", r#""0.0""#),
+            ("\"00\"", r#""00""#),
+            ("\" 1\"", r#"" 1""#),
+            ("\"+1\"", r#""+1""#),
+            ("\"NaN\"", r#""NaN""#),
+        ] {
+            let line = format!(r#"{{"_index":"i","_id":{id},"_routing": -0 ,"_source":{{}}}}"#);
+            let got = enc(&mut s, &line);
+            assert!(
+                got.starts_with(&format!(
+                    r#"{{"index":{{"_index":"i","_id":{want},"routing":"-0"}}}}"#
+                )),
+                "{id}: {got}"
+            );
+        }
+        for bad in ["00", "+1", "NaN"] {
+            let line = format!(r#"{{"_index":"i","_id":{bad},"_source":{{}}}}"#);
+            let mut out = vec![];
+            assert!(s.encode_doc(line.as_bytes(), &mut out).is_err(), "{bad}");
+            assert!(out.is_empty(), "{bad}: nothing encoded");
+        }
+    }
+
     #[test]
     fn index_action_keeps_raw_source_and_routing() {
         let mut s = sink(os(), |_| {});
@@ -1763,25 +1803,68 @@ mod prop_bulk {
 const UUID_CAPTURE_AFTER: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
-mod js_number_tests {
-    use super::js_number_string as j;
+mod id_literal_tests {
+    use super::{is_json_number, push_id_like_raw};
+
+    fn id(raw: &str) -> anyhow::Result<String> {
+        let mut out = Vec::new();
+        push_id_like_raw(&mut out, "_id", raw)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    /// L-629a: number literals become a string of exactly their text; nothing is parsed
+    /// as a number, normalized, rounded or refused for range.
     #[test]
-    fn numeric_ids_match_node() {
-        for (raw, want) in [
-            ("12345678901234567890123", "12345678901234567890123"),
-            ("-0", "0"),
-            ("0", "0"),
-            ("1e3", "1000"),
-            ("1.5", "1.5"),
-            ("1.50", "1.5"),
-            ("-2.5E2", "-250"),
-            ("1e21", "1e+21"),
-            ("1.5e-7", "1.5e-7"),
-            ("0.000001", "0.000001"),
-            ("0.0", "0"),
+    fn numeric_ids_are_kept_byte_for_byte() {
+        for raw in [
+            "-0",
+            "0",
+            "0.0",
+            "-0.0",
+            "1e3",
+            "1E+3",
+            "-2.5E2",
+            "1.50",
+            "1e21",
+            "1e400",
+            "-1e-400",
+            "12345678901234567890123",
+            "18446744073709551617",
+            "0.1000000000000000055511151231257827",
         ] {
-            assert_eq!(j("_id", raw).unwrap(), want, "{raw}");
+            assert_eq!(id(raw).unwrap(), format!("\"{raw}\""), "{raw}");
         }
-        assert!(j("_id", "1e400").is_err());
+    }
+
+    /// String ids that look like numbers (or not quite) are sent exactly as given,
+    /// escapes included.
+    #[test]
+    fn number_like_string_ids_are_kept_byte_for_byte() {
+        for raw in [
+            r#""-0""#,
+            r#""0.0""#,
+            r#""1e3""#,
+            r#""00""#,
+            r#"" 1""#,
+            r#""+1""#,
+            r#""NaN""#,
+            r#""Infinity""#,
+            r#""\u002d0""#,
+        ] {
+            assert_eq!(id(raw).unwrap(), raw, "{raw}");
+        }
+    }
+
+    /// Literals that are not JSON numbers are refused by name, never coerced.
+    #[test]
+    fn invalid_number_literals_are_refused() {
+        for raw in [
+            "00", "+1", "NaN", "-", "1.", ".5", "1e", "1e+", "-01", "0x10", "Infinity",
+        ] {
+            let e = id(raw).unwrap_err().to_string();
+            assert!(e.starts_with("_id "), "{raw}: {e}");
+            assert!(!is_json_number(raw), "{raw}");
+        }
+        assert!(is_json_number("-0") && is_json_number("0e0") && is_json_number("10.25E-3"));
     }
 }
