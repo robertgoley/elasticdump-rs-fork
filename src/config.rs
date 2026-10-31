@@ -179,7 +179,8 @@ pub fn request_gate(cli: &Cli) -> RequestGate {
     RequestGate::new(cli.max_sockets, interval)
 }
 
-/// Resolve credentials for an ES endpoint (URL → auth file → env → CLI).
+/// Resolve credentials for an ES endpoint: `--{input,output}-username/-password`
+/// over the URL over `--httpAuthFile`/env (see [`endpoint::resolve_auth`]).
 pub fn resolve_endpoint_auth(
     cli: &Cli,
     ep: &mut EsEndpoint,
@@ -188,8 +189,11 @@ pub fn resolve_endpoint_auth(
 ) {
     let env = |k: &str| std::env::var(k).ok();
     let (u, p) = match dir {
-        Direction::Input => (cli.username.as_deref(), cli.password.as_deref()),
-        Direction::Output => (None, None),
+        Direction::Input => (cli.input_username.as_deref(), cli.input_password.as_deref()),
+        Direction::Output => (
+            cli.output_username.as_deref(),
+            cli.output_password.as_deref(),
+        ),
     };
     endpoint::resolve_auth(ep, dir, auth_file, &env, u, p);
 }

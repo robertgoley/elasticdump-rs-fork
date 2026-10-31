@@ -19,6 +19,7 @@ Short smoke runs only (<= 300 s per target, one at a time, `-rss_limit_mb=1024`,
 | json_split | 300 s | 2,407,718 | 223 | ok |
 | parse_size | 300 s | 56,205,718 | 182 | ok |
 | renamer_new_index | 300 s | 497,607 | 14079 | ok |
+| secret_redaction (L-645) | not run | - | - | libFuzzer needs a C++ compiler, which is not installed on this machine (apt downloads fail); the same property runs as the proptest `secrets::tests::generated_passwords_never_survive_scrubbing` (256 cases) and the unit smoke test |
 
 Also from L-505 (property test, not libFuzzer): F-505-2, `url_props::redaction_never_shows_the_password`
 shrank to `http://a:/Qz%E5?\éK#@ziclmqln/us`: a password with `/` spills into the path, and the

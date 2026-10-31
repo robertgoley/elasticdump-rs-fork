@@ -129,3 +129,10 @@ path = "fuzz_targets/meta_names.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "secret_redaction"
+path = "fuzz_targets/secret_redaction.rs"
+test = false
+doc = false
+bench = false

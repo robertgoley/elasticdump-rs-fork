@@ -52,7 +52,7 @@ Legend:
 | `--support-big-int`, `--big-int-fields` | false | ✅ | Raw passthrough is lossless in both directions (§6.2). Accepted as no-ops | M1 |
 | `--parseExtraFields` | '' | ✅ | Extra meta fields copied into the bulk action (§6.6) | M2 |
 | `--sourceOnly` | false | ✅ | Write only the raw `_source` bytes | M2 |
-| rs-only `--slices`, `--workers`, `--bufferSize`, `--searchType`, `--requestTimeout`, `--username/--password`, `--caFile`, `--insecure` | – | ✅ | Keep as documented extensions. `--caFile` becomes an alias of `--input-ca` | – |
+| rs-only `--slices`, `--workers`, `--bufferSize`, `--searchType`, `--requestTimeout`, `--username/--password` (= `--input-username/--input-password`; D-4 adds `--output-username/--output-password`), `--caFile`, `--insecure` | – | ✅ | Keep as documented extensions. `--caFile` becomes an alias of `--input-ca` | – |
 
 ### 3.3 Data writing (ES output)
 
@@ -90,7 +90,7 @@ Legend:
 |---|---|---|---|---|
 | URL basic auth | – | ✅ | keep (percent-decoding, redacted logs) | – |
 | `ELASTICDUMP_INPUT_USERNAME/PASSWORD`, `ELASTICDUMP_OUTPUT_…` | – | ✅ | Used when the URL has no credentials | M1 |
-| `--httpAuthFile` | null | ✅ | INI `user=`/`password=`. Applies to both endpoints when the URL lacks credentials. Error `Malformed Auth File` | M1 |
+| `--httpAuthFile` | null | ✅ | INI `user=`/`password=`. Applies to both endpoints when the URL (plus `--{input,output}-username/-password`) lacks a username or password. Error `Malformed Auth File`. Warns when world-readable; CRLF trimmed (L-645) | M1 |
 | `--tlsAuth` | false | ✅ | Accepted. Rust **always** honours `--ca/--cert/--key` when given; Node silently ignores them without `--tlsAuth` (divergence). Warn when cert flags are set without `--tlsAuth` | M1 |
 | `--ca`, `--input-ca`, `--output-ca` | null | ✅ | PEM bundle per direction. The shared `--ca` wins over the direction flag when both are set (Node assignment order) | M1 |
 | `--cert` / `--key` (+ input/output) | null | ✅ | PEM client cert chain and key (PKCS#8 / PKCS#1 / SEC1) → rustls client auth | M1 |

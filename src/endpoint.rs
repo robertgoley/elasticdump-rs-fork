@@ -25,7 +25,7 @@ impl Direction {
             Direction::Output => "output",
         }
     }
-    fn env_prefix(self) -> &'static str {
+    pub fn env_prefix(self) -> &'static str {
         match self {
             Direction::Input => "ELASTICDUMP_INPUT",
             Direction::Output => "ELASTICDUMP_OUTPUT",
@@ -207,7 +207,19 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         return Ok(Endpoint::File(PathBuf::from(raw)));
     }
 
-    let url = Url::parse(raw).with_context(|| format!("Failed to parse --{flag} URL"))?;
+    let encode_hint = || {
+        format!(
+            "if the password contains '#', '?', '/' or '@', percent-encode it (%23, %3F, %2F, %40) or pass it with --{flag}-password"
+        )
+    };
+    let url = match Url::parse(raw) {
+        Ok(u) => u,
+        // never quote the URL: the text after the scheme may be a password
+        Err(e) if raw.contains('@') => {
+            bail!("Failed to parse --{flag} URL: {e}; {}", encode_hint())
+        }
+        Err(e) => return Err(e).with_context(|| format!("Failed to parse --{flag} URL")),
+    };
     if url.host_str().is_none_or(str::is_empty) {
         bail!("--{flag} URL has no host");
     }
@@ -215,6 +227,20 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
     // or `#` that spilled into the path or query (`http://u:/pw?x@h`), so no
     // message may quote path or query text (L-505, url_props finding).
     let quiet = url.password().is_none() && raw.contains('@');
+    // `http://u:12#x@h/i` parses as host `u`, port 12 and a fragment: the
+    // dump would silently go to the wrong host with no credentials (L-645).
+    if quiet && (url.fragment().is_some() || url.query().is_some_and(|q| q.contains('@'))) {
+        bail!(
+            "--{flag} URL has '@' after the host, so its user:password@ was not recognised; {}",
+            encode_hint()
+        );
+    }
+    if quiet {
+        log::warn!(
+            "--{flag} URL contains '@' but no user:password@ was recognised; {}",
+            encode_hint()
+        );
+    }
 
     let segments: Vec<&str> = url
         .path_segments()
@@ -289,27 +315,70 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
     }))
 }
 
-/// Parse an `--httpAuthFile` (INI with `user=` and `password=`).
+/// Parse an `--httpAuthFile` (INI with `user=` and `password=`). Warns when
+/// every user on the machine can read it.
 pub fn read_auth_file(path: &str) -> Result<(String, String)> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read --httpAuthFile '{path}'"))?;
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(path) {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(w) = auth_file_mode_warning(path, meta.permissions().mode()) {
+            log::warn!("{w}");
+        }
+    }
     parse_auth_ini(&text).map_err(|e| anyhow::anyhow!("--httpAuthFile '{path}': {e:#}"))
 }
 
-/// `user=` and `password=` from the text of an auth file.
+/// The warning for an auth file with permission bits `mode`, if it is
+/// world-readable.
+pub fn auth_file_mode_warning(path: &str, mode: u32) -> Option<String> {
+    (mode & 0o004 != 0).then(|| {
+        format!(
+            "--httpAuthFile '{path}' is readable by every user on this machine (mode {:o}); restrict it with: chmod 600 '{path}'",
+            mode & 0o7777
+        )
+    })
+}
+
+/// `user=` and `password=` from the text of an auth file. `\` is a literal
+/// character (no INI escapes), surrounding spaces and quotes are removed, a
+/// CRLF line end is not part of the value, and `#`/`;` inside a value are
+/// kept (Node's `ini` would cut the password there).
 pub fn parse_auth_ini(text: &str) -> Result<(String, String)> {
-    let ini = ini::Ini::load_from_str(text).context("not a valid INI file")?;
+    let opt = ini::ParseOption {
+        enabled_escape: false,
+        ..Default::default()
+    };
+    let ini = ini::Ini::load_from_str_opt(text, opt).context("not a valid INI file")?;
     let section = ini.general_section();
     match (section.get("user"), section.get("password")) {
-        (Some(u), Some(p)) => Ok((u.to_string(), p.to_string())),
+        (Some(u), Some(p)) => Ok((strip_eol(u), strip_eol(p))),
         _ => bail!("Malformed Auth File: it must define both user= and password="),
     }
 }
 
-/// Fill in credentials that the URL did not carry, in Node order: URL →
-/// `--httpAuthFile` → `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}`.
-/// `cli_user`/`cli_pass` (elasticdump-rs `--username/--password`) override
-/// everything.
+/// A credential without trailing CR/LF: a value pasted from a CRLF file or
+/// `$(cat file)` would otherwise carry a `\r` and fail with a confusing 401.
+fn strip_eol(v: &str) -> String {
+    v.trim_end_matches(['\r', '\n']).to_string()
+}
+
+/// Resolve the basic-auth credentials of an endpoint. Precedence, highest
+/// first (README "Credentials"):
+///
+/// 1. `--{input,output}-username` / `--{input,output}-password`
+///    (`--username`/`--password` are aliases of the input pair), each
+///    overriding one field;
+/// 2. `user:password@` in the URL;
+/// 3. `--httpAuthFile`, and otherwise
+///    `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (used when its
+///    username is set): only when 1 and 2 together do not give both a
+///    username and a password (Node applies the auth file when the URL
+///    lacks either), and then as a pair, with any flag still winning.
+///
+/// A trailing CR/LF is removed from every value; an empty password is sent
+/// as is (`user:`).
 pub fn resolve_auth(
     ep: &mut EsEndpoint,
     dir: Direction,
@@ -318,25 +387,30 @@ pub fn resolve_auth(
     cli_user: Option<&str>,
     cli_pass: Option<&str>,
 ) {
-    if ep.username.is_none() && ep.password.is_none() {
-        if let Some((u, p)) = auth_file {
-            ep.username = Some(u.clone());
-            ep.password = Some(p.clone());
-        } else {
-            let user = env(&format!("{}_USERNAME", dir.env_prefix()));
-            let pass = env(&format!("{}_PASSWORD", dir.env_prefix()));
-            if user.is_some() {
-                ep.username = user;
-                ep.password = pass;
-            }
+    let apply_flags = |ep: &mut EsEndpoint| {
+        if let Some(u) = cli_user {
+            ep.username = Some(strip_eol(u));
+        }
+        if let Some(p) = cli_pass {
+            ep.password = Some(strip_eol(p));
+        }
+    };
+    apply_flags(ep);
+    if ep.username.is_some() && ep.password.is_some() {
+        return;
+    }
+    if let Some((u, p)) = auth_file {
+        ep.username = Some(strip_eol(u));
+        ep.password = Some(strip_eol(p));
+    } else {
+        let user = env(&format!("{}_USERNAME", dir.env_prefix()));
+        let pass = env(&format!("{}_PASSWORD", dir.env_prefix()));
+        if let Some(u) = user {
+            ep.username = Some(strip_eol(&u));
+            ep.password = pass.as_deref().map(strip_eol);
         }
     }
-    if let Some(u) = cli_user {
-        ep.username = Some(u.to_string());
-    }
-    if let Some(p) = cli_pass {
-        ep.password = Some(p.to_string());
-    }
+    apply_flags(ep);
 }
 
 #[cfg(test)]
@@ -462,6 +536,195 @@ mod tests {
         std::fs::write(&bad, "user=alice\n").unwrap();
         let err = read_auth_file(bad.to_str().unwrap()).unwrap_err();
         assert!(err.to_string().contains("Malformed Auth File"));
+    }
+
+    /// url, auth file?, env?, flag user, flag password => (user, password)
+    type Case<'a> = (
+        &'a str,
+        bool,
+        bool,
+        Option<&'a str>,
+        Option<&'a str>,
+        (Option<String>, Option<String>),
+    );
+
+    /// L-645 / D-4: per-direction flags beat the URL, the URL beats the auth
+    /// file and env, and the auth file/env fill in only an incomplete pair.
+    #[test]
+    fn auth_precedence_matrix_for_both_directions() {
+        let env = |k: &str| match k {
+            "ELASTICDUMP_INPUT_USERNAME" => Some("env-input-u".to_string()),
+            "ELASTICDUMP_INPUT_PASSWORD" => Some("FAKE-env-input\r\n".to_string()),
+            "ELASTICDUMP_OUTPUT_USERNAME" => Some("env-output-u".to_string()),
+            "ELASTICDUMP_OUTPUT_PASSWORD" => Some("FAKE-env-output".to_string()),
+            _ => None,
+        };
+        let no_env = |_: &str| None;
+        let file = ("file-u".to_string(), "FAKE-file".to_string());
+        let pair = |e: &EsEndpoint| (e.username.clone(), e.password.clone());
+        let p = |u: &str, pw: &str| (Some(u.to_string()), Some(pw.to_string()));
+        for dir in [Direction::Input, Direction::Output] {
+            let d = dir.as_str();
+            let env_pair = p(&format!("env-{d}-u"), &format!("FAKE-env-{d}"));
+            let cases: Vec<Case> = vec![
+                ("http://h/i", false, false, None, None, (None, None)),
+                ("http://h/i", false, true, None, None, env_pair.clone()),
+                (
+                    "http://h/i",
+                    true,
+                    true,
+                    None,
+                    None,
+                    p("file-u", "FAKE-file"),
+                ),
+                (
+                    "http://url-u:FAKE-url@h/i",
+                    true,
+                    true,
+                    None,
+                    None,
+                    p("url-u", "FAKE-url"),
+                ),
+                // Node parity: a URL with only a username takes the auth file pair
+                (
+                    "http://url-u@h/i",
+                    true,
+                    false,
+                    None,
+                    None,
+                    p("file-u", "FAKE-file"),
+                ),
+                (
+                    "http://url-u@h/i",
+                    false,
+                    false,
+                    None,
+                    None,
+                    (Some("url-u".into()), None),
+                ),
+                // flags win over everything, field by field
+                (
+                    "http://url-u:FAKE-url@h/i",
+                    true,
+                    true,
+                    Some("flag-u"),
+                    Some("FAKE-flag"),
+                    p("flag-u", "FAKE-flag"),
+                ),
+                (
+                    "http://url-u:FAKE-url@h/i",
+                    true,
+                    true,
+                    None,
+                    Some("FAKE-flag"),
+                    p("url-u", "FAKE-flag"),
+                ),
+                (
+                    "http://url-u:FAKE-url@h/i",
+                    true,
+                    true,
+                    Some("flag-u"),
+                    None,
+                    p("flag-u", "FAKE-url"),
+                ),
+                (
+                    "http://h/i",
+                    true,
+                    false,
+                    Some("flag-u"),
+                    None,
+                    p("flag-u", "FAKE-file"),
+                ),
+                (
+                    "http://h/i",
+                    false,
+                    false,
+                    Some("flag-u"),
+                    Some("FAKE-flag\r"),
+                    p("flag-u", "FAKE-flag"),
+                ),
+                // a complete pair from the flags needs nothing else
+                (
+                    "http://h/i",
+                    true,
+                    true,
+                    Some("flag-u"),
+                    Some(""),
+                    p("flag-u", ""),
+                ),
+            ];
+            for (url, use_file, use_env, fu, fp, want) in cases {
+                let mut e = es(url, None);
+                let envf: &dyn Fn(&str) -> Option<String> = if use_env { &env } else { &no_env };
+                resolve_auth(&mut e, dir, use_file.then_some(&file), envf, fu, fp);
+                assert_eq!(
+                    pair(&e),
+                    want,
+                    "{d}: {url} file={use_file} env={use_env} {fu:?} {fp:?}"
+                );
+            }
+        }
+    }
+
+    /// TST-BRK-CLI-006: hostile characters survive the auth file and the
+    /// URL intact; CRLF is trimmed; `\` is literal.
+    #[test]
+    fn auth_values_keep_special_characters() {
+        let hostile = r"FAKE:@%#/?é ü\x";
+        let ini = format!("user=u ser\r\npassword=\"{hostile}\"\r\n");
+        assert_eq!(
+            parse_auth_ini(&ini).unwrap(),
+            ("u ser".into(), hostile.into())
+        );
+        let ini = "user=u\npassword=FAKE;semi#hash\\back\n";
+        assert_eq!(parse_auth_ini(ini).unwrap().1, "FAKE;semi#hash\\back");
+        assert_eq!(parse_auth_ini("user=u\npassword=\n").unwrap().1, "");
+        let enc =
+            percent_encoding::utf8_percent_encode(hostile, percent_encoding::NON_ALPHANUMERIC);
+        let e = es(&format!("http://us%40er:{enc}@h:9200/i"), None);
+        assert_eq!(e.username.as_deref(), Some("us@er"));
+        assert_eq!(e.password.as_deref(), Some(hostile));
+        let e = es("http://u:FAKE pw@h:9200/i", None);
+        assert_eq!(e.password.as_deref(), Some("FAKE pw"));
+    }
+
+    #[test]
+    fn world_readable_auth_file_is_warned_about() {
+        assert_eq!(auth_file_mode_warning("/a", 0o100600), None);
+        assert_eq!(auth_file_mode_warning("/a", 0o100640), None);
+        let w = auth_file_mode_warning("/a", 0o100644).unwrap();
+        assert!(
+            w.contains("readable by every user")
+                && w.contains("chmod 600 '/a'")
+                && w.contains("644"),
+            "{w}"
+        );
+    }
+
+    /// `#`, `?` or `/` unencoded in a URL password: a clear error that never
+    /// quotes the password, instead of a dump to the wrong host.
+    #[test]
+    fn unencoded_url_password_is_a_clear_error_without_the_password() {
+        for raw in [
+            "http://u:FAKE#pw@h:9200/i",
+            "http://u:FAKE?pw@h:9200/i",
+            "http://u:FAKE/pw@h:9200/i",
+            "http://u:1234#FAKEpw@h:9200/i",
+            "http://u:1234?FAKEpw@h:9200/i",
+        ] {
+            for dir in [Direction::Input, Direction::Output] {
+                let e = format!("{:#}", parse(raw, dir, None).unwrap_err());
+                assert!(!e.contains("FAKE"), "{raw}: {e}");
+                assert!(
+                    e.contains("percent-encode") && e.contains("%23"),
+                    "{raw}: {e}"
+                );
+                assert!(
+                    e.contains(&format!("--{}-password", dir.as_str())),
+                    "{raw}: {e}"
+                );
+            }
+        }
     }
 }
 

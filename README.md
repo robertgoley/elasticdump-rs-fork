@@ -89,7 +89,8 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
   roots are used; if `SSL_CERT_FILE`/`SSL_CERT_DIR` was set, this fallback is logged as a warning naming it.
 * **Redirects** are never followed (Node follows them): a 3xx answer stops the run and names the target, so
   credentials and documents only go to the cluster you named. Use the final URL directly.
-* **Auth/TLS:** `--httpAuthFile`, `--tlsAuth`, `--ca`/`--cert`/`--key`/`--pass` and their `--input-*`/`--output-*` forms.
+* **Auth/TLS:** `--httpAuthFile`, `--input-username`/`--input-password`, `--output-username`/`--output-password`
+  (see [Credentials](#credentials)), `--tlsAuth`, `--ca`/`--cert`/`--key`/`--pass` and their `--input-*`/`--output-*` forms.
 * **Metadata:** `--templateRegex`, `--filterSystemTemplates` (Node), and the extensions `--filterManaged`
   (default true), `--closeIndex`, `--excludeTemplateFields`, `--convertIlmToIsm`, `--lenientPolicyConversion`,
   `--metaFormat string|object`, `--renamePrefix`, `--renameIndex`, `--renameAliases`, `--renamePatterns`.
@@ -97,7 +98,7 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices`, `--workers`, `--bufferSize`,
 `--searchType scroll|pit`, `--skip-existing`, `--force` (allow the same file/index as input and output), `--excludeSettings`, `--maxBulkBytes`, `--retryOn`,
 `--retryBackoff`, `--noImplicitRetry`, `--insecure`/`--input-insecure`/`--output-insecure`, `--username`/`--password`
-(input), `--caFile`, `--requestTimeout` (seconds; a deadline for the whole request, body included), `--idleTimeout` (seconds of server silence before a request fails or is retried; default 300, 0 = never; unlike Node, a stalled server cannot hang a run), `--maxResponseMb` (largest response body read into memory, default 256, 0 = unlimited; a bigger page fails with a hint to lower `--limit` instead of an OOM kill), `--allowMerge` (let `--renamePrefix`/`--renameIndex` rename several source indices to one target; refused by default, before anything is read for a cluster source, and before the batch is sent for a file source), `--maxDocMb` (largest single document read from a file or stdin, default 100 like `http.max_content_length`, 0 = unlimited; a bigger one stops the run naming its position instead of being buffered whole), `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
+(aliases of `--input-username`/`--input-password`), `--caFile`, `--requestTimeout` (seconds; a deadline for the whole request, body included), `--idleTimeout` (seconds of server silence before a request fails or is retried; default 300, 0 = never; unlike Node, a stalled server cannot hang a run), `--maxResponseMb` (largest response body read into memory, default 256, 0 = unlimited; a bigger page fails with a hint to lower `--limit` instead of an OOM kill), `--allowMerge` (let `--renamePrefix`/`--renameIndex` rename several source indices to one target; refused by default, before anything is read for a cluster source, and before the batch is sent for a file source), `--maxDocMb` (largest single document read from a file or stdin, default 100 like `http.max_content_length`, 0 = unlimited; a bigger one stops the run naming its position instead of being buffered whole), `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
 environment proxy is used, a warning names it).
 
 Input safety: every hit is written as exactly one NDJSON line (pretty-printed `_source` is flattened),
@@ -158,7 +159,10 @@ for every place the tool changes what is loaded, and for the tested versions, se
   wins in Node and the later line wins here (file order). Verified on 10,000 random documents by
   `scripts/node/bulk-diff.py` (L-506): every other byte difference is one of these.
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
-* **`--username`/`--password` apply to the input only.**
+* **`--username`/`--password` apply to the input only** (they are aliases of `--input-username`/`--input-password`;
+  use `--output-username`/`--output-password` for the output).
+* **`--httpAuthFile` values are taken literally:** `#`, `;` and `\` inside a value are kept (Node's INI parser cuts
+  the password at `#`/`;`); surrounding spaces and quotes are removed as in Node.
 * **Metadata types** fix several Node bugs (listed in [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md)); intentional
   choices: `--filterManaged` (default on), `--output-index`/`--prefix`/`--suffix` apply to alias targets,
   cluster-level types ignore the output index (warning), the source is read before the target is contacted,
@@ -323,8 +327,32 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
 
 ## Security notes
 
-* Credentials in URLs are redacted in every log line; prefer `--httpAuthFile` or the environment variables so
-  they stay out of shell history and `ps`.
+* Passwords never appear in logs, `--debug` output, error messages or panic reports, in any form (as given,
+  percent-encoded, JSON-escaped, or inside the `Authorization: Basic` token), even when a server echoes the request
+  back. Prefer `--httpAuthFile` or the environment variables so they also stay out of shell history and `ps`.
+  Values shorter than 4 characters are only masked inside the Basic token (masking them everywhere would mangle
+  messages).
+
+### Credentials
+
+Each direction resolves its basic-auth username and password on its own (L-645). Highest first:
+
+1. `--input-username`/`--input-password` (aliases `--username`/`--password`) and
+   `--output-username`/`--output-password`; each flag overrides one field and they never apply to the other
+   direction.
+2. `user:password@` in the `--input`/`--output` URL (percent-decoded).
+3. `--httpAuthFile` (INI with `user=` and `password=`, used for both directions), otherwise
+   `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (when its `_USERNAME` is set). These are used only when 1 and 2
+   together do not give both a username and a password; like Node, the auth file's pair replaces a URL that has only
+   a username. A flag still wins over them.
+
+* A trailing CR/LF is removed from every value (an auth file saved with CRLF line ends, `$(cat file)`), so it never
+  turns into a confusing 401. An empty password is sent as is (`user:`).
+* In a URL, `#`, `?`, `/` and `@` inside the password must be percent-encoded (`%23`, `%3F`, `%2F`, `%40`); `:`,
+  spaces and unicode work as they are. An unencoded `#`/`?`/`/` is a usage error (exit 2) that says so without
+  quoting the password, instead of a dump to the wrong host; or pass the password with `--input-password` /
+  `--output-password`, where any character works.
+* A `--httpAuthFile` readable by every user on the machine is used, with a warning to `chmod 600` it.
 * `--insecure` / `NODE_TLS_REJECT_UNAUTHORIZED=0` disable certificate verification and print a warning.
 * Encrypted client keys: PKCS#8 only (convert legacy keys with `openssl pkcs8 -topk8`).
 

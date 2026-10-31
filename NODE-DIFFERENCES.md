@@ -31,6 +31,7 @@ This file lists only the places where elasticdump-rs behaves differently **becau
 | 18 | Parallel script restore | `async.each` (`_script.js:64`) | Sequential, `--skip-existing` honoured | yes | IT `scripts_round_trip_search_template_and_node` |
 | 19 | ISM → ES / ILM → OpenSearch | Sends the other engine's body to the wrong API and fails with a server error | Clear refusal; ILM → ISM only with `--convertIlmToIsm` | n/a | IT `cross::*policy*` |
 | 20 | Typed 6.x template/mapping files into 7+/OpenSearch | Sent as-is; rejected by typeless clusters | Single mapping type unwrapped with an info log | yes | IT templates test (Node `template_6x.json` fixture) |
+| 21 | `--httpAuthFile` values | The `ini` parser cuts a value at an unquoted `#` or `;` (`password=a#b` → `a`), so such a password fails with 401; a CRLF file is handled (`lib/add-auth.js`) | Values are literal (`#`, `;`, `\` kept; quotes and surrounding spaces removed as in Node); a trailing CR/LF is removed from every credential source; a world-readable file is warned about (L-645) | yes | unit `endpoint::tests::auth_values_keep_special_characters`; contract `secrets::credential_flags_pick_their_endpoint_and_never_leak` |
 
 Found during this implementation (not in the original list): #2, #14 (closed-index on failure, many-to-one
 application), #18, #19, #20. The Node interop tests run when Node elasticdump is installed at
