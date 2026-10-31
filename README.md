@@ -190,7 +190,7 @@ for every place the tool changes what is loaded, and for the tested versions, se
 |---|---|---|
 | `data`, `mapping`, `settings` | as before | as before |
 | `index` | `GET /{index}` (host-only: `GET /*`): settings + mappings + aliases, generated settings stripped | one `PUT /{index}` per index (`--skip-existing` skips existing ones); `data_stream` indices are skipped with a warning |
-| `analyzer` | `{index}/_settings` (the analysis block is what matters) | new index: created with the analysis; existing index: error, `--skip-existing`, or `--closeIndex` (close → update → always reopen; the index is **offline** meanwhile) |
+| `analyzer` | `{index}/_settings` (the analysis block is what matters) | new index: created with the analysis; existing index: error, `--skip-existing`, or `--closeIndex` (close → update → always reopen; the index is **offline** meanwhile; Ctrl+C / SIGTERM while it is closed abandons the update, reopens it and exits 130 / 143; a second Ctrl+C before the reopen finished force-quits and names the index that may still be closed, with the `POST /{index}/_open` to run) |
 | `alias` | `GET {index\|*}/_alias/{alias\|*}` (`--input-index idx/alias*` filters) | one atomic `POST /_aliases`; targets follow `--output-index`/`--prefix`/`--suffix`/rename rules |
 | `template` | legacy `_template` | `PUT _template/{name}` (deprecated on ES ≥ 8, warned once) |
 | `component_template` | `_component_template` | `PUT _component_template/{name}` |
@@ -343,6 +343,10 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   the same output prints a warning naming each one with its size (D-5); check and remove them yourself. A killed
   restore never changes its input file; the cluster got the first documents of the file, without gaps (with the
   default `--concurrency`). Checked by `kill -9` at random points, 50 runs each for dump, split and restore (L-648).
+* A second Ctrl+C (or SIGTERM) while the first one is still being cleaned up force-quits at once (130 / 143). It
+  never commits output: an unfinished `--output` stays uncommitted, the exit message says so, and its hidden staging
+  files are named by the next run. Anything else it could not clean up (an index `--closeIndex` closed) is named
+  too (L-649).
 * Ctrl+C clears the scroll / closes the PIT (ES input pipelines).
 * Ctrl+C (or SIGTERM) during a restore into a cluster (file -> cluster or cluster -> cluster) stops reading,
   lets the bulk requests already sent finish (none is cut off), prints `Total Writes` and exits 130 / 143 with

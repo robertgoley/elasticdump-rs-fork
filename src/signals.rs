@@ -3,15 +3,20 @@
 //! (close the scroll/PIT, remove staged output) and the run exits with
 //! 128 + the signal number (130 / 143). A second signal, or a signal while no
 //! transfer is listening ([`graceful`]), exits at once with that status.
+//! Before such a forced exit, every [`note_on_force_quit`] still registered is
+//! printed, so what the run could not clean up (a closed index, staged output)
+//! is named (TST-BRK-SIG-004).
 
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use tokio_util::sync::CancellationToken;
 
 static TOKEN: OnceLock<CancellationToken> = OnceLock::new();
 static RECEIVED: AtomicI32 = AtomicI32::new(0);
 static GRACEFUL: AtomicUsize = AtomicUsize::new(0);
+static NOTES: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
+static NEXT_NOTE: AtomicU64 = AtomicU64::new(0);
 
 pub const SIGINT: i32 = 2;
 pub const SIGTERM: i32 = 15;
@@ -148,6 +153,54 @@ impl Drop for Graceful {
     }
 }
 
+/// While the guard lives, a forced exit (a second signal, or a signal no
+/// transfer listens for) prints `msg` first: what the run leaves behind
+/// when it cannot finish its cleanup.
+pub struct ForceQuitNote(u64);
+
+pub fn note_on_force_quit(msg: impl Into<String>) -> ForceQuitNote {
+    let id = NEXT_NOTE.fetch_add(1, Ordering::SeqCst);
+    NOTES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((id, msg.into()));
+    ForceQuitNote(id)
+}
+
+impl Drop for ForceQuitNote {
+    fn drop(&mut self) {
+        NOTES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(id, _)| *id != self.0);
+    }
+}
+
+/// The notes registered now, oldest first.
+fn force_quit_notes() -> Vec<String> {
+    NOTES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .map(|(_, m)| m.clone())
+        .collect()
+}
+
+fn force_quit(sig: i32, during_cleanup: bool) -> ! {
+    if during_cleanup {
+        eprintln!(
+            "Error: force-quit by user ({}) before the cleanup finished",
+            name(sig)
+        );
+    } else {
+        eprintln!("Error: dump interrupted by user ({})", name(sig));
+    }
+    for note in force_quit_notes() {
+        eprintln!("Error: {note}");
+    }
+    std::process::exit(128 + sig);
+}
+
 async fn next_signal() -> i32 {
     #[cfg(unix)]
     {
@@ -181,8 +234,7 @@ pub fn install() {
         let sig = next_signal().await;
         RECEIVED.store(sig, Ordering::SeqCst);
         if GRACEFUL.load(Ordering::SeqCst) == 0 {
-            eprintln!("Error: dump interrupted by user ({})", name(sig));
-            std::process::exit(128 + sig);
+            force_quit(sig, false);
         }
         log::warn!(
             "{} received; cancelling and cleaning up (send it again to force-quit)",
@@ -190,13 +242,29 @@ pub fn install() {
         );
         token.cancel();
         let again = next_signal().await;
-        std::process::exit(128 + again);
+        force_quit(again, true);
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn force_quit_notes_live_as_long_as_their_guard() {
+        let a = note_on_force_quit("FAKE-note-a");
+        let b = note_on_force_quit("FAKE-note-b");
+        let mine = |v: Vec<String>| -> Vec<String> {
+            v.into_iter()
+                .filter(|m| m.starts_with("FAKE-note-"))
+                .collect()
+        };
+        assert_eq!(mine(force_quit_notes()), ["FAKE-note-a", "FAKE-note-b"]);
+        drop(a);
+        assert_eq!(mine(force_quit_notes()), ["FAKE-note-b"]);
+        drop(b);
+        assert!(mine(force_quit_notes()).is_empty());
+    }
 
     #[test]
     fn stopped_messages_name_the_resume_offset() {

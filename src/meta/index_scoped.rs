@@ -502,7 +502,10 @@ async fn apply_analyzer(
 }
 
 /// Close `target`, PUT `_settings`, and always try to reopen it, also when
-/// the update fails or the user interrupts.
+/// the update fails or the user interrupts (SIGINT or SIGTERM: the update is
+/// abandoned, the index reopened, and the run exits 130 / 143). If a second
+/// signal force-quits before the reopen finished, the forced exit names the
+/// index that may still be closed (TST-BRK-SIG-004).
 pub(crate) async fn close_put_open(
     client: &EsClient,
     target: &str,
@@ -513,6 +516,16 @@ pub(crate) async fn close_put_open(
     // (INJ-F2, TST-INJ-016).
     crate::rename::validate_index_name(target)
         .map_err(|e| anyhow::anyhow!("refusing to close '{target}': {e}"))?;
+    let _graceful = crate::signals::graceful();
+    let interrupt = crate::signals::token();
+    if interrupt.is_cancelled() {
+        return Err(
+            crate::signals::interrupted_error().context(format!("index '{target}' was not closed"))
+        );
+    }
+    let closed_note = crate::signals::note_on_force_quit(format!(
+        "index '{target}' may still be CLOSED (offline); reopen it with POST /{target}/_open"
+    ));
     send_json(
         client,
         opts.retry,
@@ -526,7 +539,7 @@ pub(crate) async fn close_put_open(
     let segs = [target, "_settings"];
     let put = tokio::select! {
         r = send_json(client, opts.retry, Method::PUT, &segs, settings, "update settings") => r.map(|_| ()),
-        _ = tokio::signal::ctrl_c() => Err(anyhow::anyhow!("interrupted while index '{target}' was closed")),
+        _ = interrupt.cancelled() => Err(crate::signals::interrupted_error()),
     };
     let open = send_json(
         client,
@@ -539,19 +552,30 @@ pub(crate) async fn close_put_open(
     .await;
     match &open {
         Ok(_) => {
+            drop(closed_note);
             log::info!("Index '{target}' reopened");
-            let _ = super::http::get_json_q(
-                client,
-                opts.retry,
-                &["_cluster", "health", target],
-                &[("wait_for_status", "yellow"), ("timeout", "60s")],
-                "cluster health",
-            )
-            .await;
+            if !interrupt.is_cancelled() {
+                let _ = super::http::get_json_q(
+                    client,
+                    opts.retry,
+                    &["_cluster", "health", target],
+                    &[("wait_for_status", "yellow"), ("timeout", "60s")],
+                    "cluster health",
+                )
+                .await;
+            }
         }
         Err(e) => log::error!("Index '{target}' could NOT be reopened; it is still closed: {e:#}"),
     }
+    let interrupted = |p: &anyhow::Error| p.downcast_ref::<crate::signals::Interrupted>().is_some();
     match (put, open) {
+        (Err(p), Ok(_)) if interrupted(&p) => Err(p.context(format!(
+            "interrupted while index '{target}' was closed: its analysis settings were not updated and the index was reopened"
+        ))),
+        (Ok(()), Ok(_)) if interrupt.is_cancelled() => Err(crate::signals::interrupted_error()
+            .context(format!(
+                "interrupted after index '{target}' was updated and reopened"
+            ))),
         (Ok(()), Ok(_)) => Ok(()),
         (Err(p), Ok(_)) => Err(p.context(format!(
             "updating '{target}' failed (the index was reopened)"

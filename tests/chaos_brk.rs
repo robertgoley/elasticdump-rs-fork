@@ -4413,3 +4413,307 @@ async fn l648_kill_9_at_random_points_is_crash_consistent() {
     }
     eprintln!("L-648 outcomes over {RUNS} runs per mode: {tally:?}");
 }
+
+/// L-649: requests as they ARRIVE at a handler mock (the mock's own log is written after
+/// the reply, too late for a slow one).
+type L649Seen = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+fn l649_saw(seen: &L649Seen, method: &str, path_prefix: &str) -> bool {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .any(|r| r.starts_with(&format!("{method} {path_prefix}")))
+}
+
+/// Waits (≤ 30 s) until `method path_prefix…` reached the mock.
+fn l649_wait_for(seen: &L649Seen, method: &str, path_prefix: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !l649_saw(seen, method, path_prefix) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never saw {method} {path_prefix}: {:?}",
+            seen.lock().unwrap()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn l649_signal(child: &std::process::Child, sig: &str) {
+    assert!(
+        Command::new("kill")
+            .args([&format!("-{sig}"), &child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+/// Waits (≤ `within`) for the child to exit; returns (exit code, stderr).
+fn l649_exit(mut child: std::process::Child, within: std::time::Duration) -> (Option<i32>, String) {
+    let deadline = std::time::Instant::now() + within;
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let mut err = String::new();
+            let _ = std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err);
+            panic!("no exit within {within:?}: {err}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    let mut err = String::new();
+    std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err).unwrap();
+    (status.code(), err)
+}
+
+/// A cluster where index `t` exists; `PUT /t/_settings` and `POST /t/_open` answer after
+/// the given delays.
+async fn l649_analyzer_cluster(
+    put_delay: std::time::Duration,
+    open_delay: std::time::Duration,
+) -> (RouterMock, L649Seen) {
+    let seen: L649Seen = Default::default();
+    let s2 = seen.clone();
+    let m = RouterMock::builder()
+        .handler(move |req| {
+            let seen = s2.clone();
+            async move {
+                seen.lock()
+                    .unwrap()
+                    .push(format!("{} {}", req.method, req.path));
+                const ACK: &str = r#"{"acknowledged":true}"#;
+                match (req.method.as_str(), req.path.as_str()) {
+                    ("GET", "/") => Reply::ok(INFO),
+                    ("PUT", "/t/_settings") => {
+                        tokio::time::sleep(put_delay).await;
+                        Reply::ok(ACK)
+                    }
+                    ("POST", "/t/_open") => {
+                        tokio::time::sleep(open_delay).await;
+                        Reply::ok(ACK)
+                    }
+                    (_, p) if p.starts_with("/_cluster/health") => {
+                        Reply::ok(r#"{"status":"green"}"#)
+                    }
+                    ("HEAD", _) => Reply::ok("{}"),
+                    _ => Reply::ok(ACK),
+                }
+            }
+        })
+        .start()
+        .await;
+    (m, seen)
+}
+
+fn l649_analyzer_cmd(dir: &std::path::Path, out: &str) -> Command {
+    let f = dir.join("an.json");
+    std::fs::write(
+        &f,
+        r#""{\"s\":{\"settings\":{\"index\":{\"analysis\":{\"analyzer\":{\"a\":{\"type\":\"custom\",\"tokenizer\":\"standard\"}}}}}}}""#,
+    )
+    .unwrap();
+    let mut c = bin();
+    c.args([
+        "--input",
+        f.to_str().unwrap(),
+        "--output",
+        out,
+        "--type",
+        "analyzer",
+        "--closeIndex",
+    ])
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::piped());
+    c
+}
+
+// L-649 (TST-BRK-SIG-004), part 1: SIGINT or SIGTERM while `--closeIndex` has the index
+// closed (the settings update hangs) abandons the update, REOPENS the index, says so, and
+// exits 130 / 143 without waiting for the update. Before L-649 the signal exited at once and
+// left the index closed, with no word about it.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l649_signal_while_the_analyzer_index_is_closed_reopens_it() {
+    use std::time::{Duration, Instant};
+    for (sig, code) in [("INT", 130), ("TERM", 143)] {
+        let (m, seen) =
+            l649_analyzer_cluster(Duration::from_secs(20), Duration::from_millis(0)).await;
+        let dir = tempfile::tempdir().unwrap();
+        let child = l649_analyzer_cmd(dir.path(), &format!("{}/t", m.url()))
+            .spawn()
+            .unwrap();
+        let t = Instant::now();
+        let (code_got, err) = tokio::task::block_in_place(|| {
+            l649_wait_for(&seen, "PUT", "/t/_settings");
+            l649_signal(&child, sig);
+            l649_exit(child, Duration::from_secs(10))
+        });
+        assert_eq!(code_got, Some(code), "SIG{sig}: {err}");
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "SIG{sig}: waited for the update"
+        );
+        let order: Vec<String> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.contains("/t/_"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            order,
+            ["POST /t/_close", "PUT /t/_settings", "POST /t/_open"],
+            "SIG{sig}: {err}"
+        );
+        assert!(
+            err.contains("interrupted while index 't' was closed")
+                && err.contains("not updated and the index was reopened")
+                && err.contains(&format!("dump interrupted by user (SIG{sig})")),
+            "SIG{sig}: {err}"
+        );
+        assert!(!err.contains("may still be CLOSED"), "SIG{sig}: {err}");
+    }
+}
+
+// L-649 part 2: a second SIGINT while the reopen is still in flight force-quits at once
+// (130) and the forced exit names the index that may still be closed and how to reopen it.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l649_second_sigint_during_the_reopen_names_the_closed_index() {
+    use std::time::Duration;
+    let (m, seen) = l649_analyzer_cluster(Duration::from_secs(20), Duration::from_secs(20)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let child = l649_analyzer_cmd(dir.path(), &format!("{}/t", m.url()))
+        .spawn()
+        .unwrap();
+    let (code, err) = tokio::task::block_in_place(|| {
+        l649_wait_for(&seen, "PUT", "/t/_settings");
+        l649_signal(&child, "INT");
+        l649_wait_for(&seen, "POST", "/t/_open");
+        l649_signal(&child, "INT");
+        l649_exit(child, Duration::from_secs(10))
+    });
+    assert_eq!(code, Some(130), "{err}");
+    assert!(
+        err.contains("force-quit by user (SIGINT) before the cleanup finished")
+            && err
+                .contains("index 't' may still be CLOSED (offline); reopen it with POST /t/_open"),
+        "{err}"
+    );
+}
+
+// L-649 part 3: a second SIGINT while a dump to a file (single or split) is cleaning up
+// (the scroll clear hangs) force-quits at once (130): nothing is committed at the output,
+// the forced exit says so, and any staging files it left are named by the next run (D-5).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l649_second_sigint_during_dump_cleanup_commits_nothing() {
+    use std::time::Duration;
+    for split in [false, true] {
+        let seen: L649Seen = Default::default();
+        let s2 = seen.clone();
+        let page_at = |k: usize| {
+            let hits: Vec<String> = (k * 10 + 1..=k * 10 + 10)
+                .map(|i| hit(&i.to_string(), &format!("{{\"n\":{i}}}")))
+                .collect();
+            Reply::ok(page(&format!("p{}", k + 1), &hits, 100_000))
+        };
+        let m = RouterMock::builder()
+            .handler(move |req| {
+                let seen = s2.clone();
+                async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(format!("{} {}", req.method, req.path));
+                    match (req.method.as_str(), req.path.as_str()) {
+                        ("GET", "/") => Reply::ok(INFO),
+                        ("DELETE", _) => {
+                            tokio::time::sleep(Duration::from_secs(20)).await;
+                            Reply::ok(CLEARED)
+                        }
+                        ("POST", "/_search/scroll") => {
+                            let v: serde_json::Value =
+                                serde_json::from_slice(&req.body).unwrap_or_default();
+                            let k = v["scroll_id"]
+                                .as_str()
+                                .and_then(|s| s.strip_prefix('p'))
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            page_at(k)
+                        }
+                        _ => page_at(0),
+                    }
+                }
+            })
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let mut args = s(&[
+            "--input",
+            &format!("{}/idx", m.url()),
+            "--output",
+            out.to_str().unwrap(),
+            "--limit",
+            "10",
+        ]);
+        if split {
+            args.extend(s(&["--maxRows", "15"]));
+        }
+        let child = bin()
+            .args(&args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let (code, err) = tokio::task::block_in_place(|| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.starts_with("POST /_search/scroll"))
+                .count()
+                < 5
+            {
+                assert!(std::time::Instant::now() < deadline, "dump never got going");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            l649_signal(&child, "INT");
+            l649_wait_for(&seen, "DELETE", "/_search/scroll");
+            l649_signal(&child, "INT");
+            l649_exit(child, Duration::from_secs(10))
+        });
+        let ctx = format!("split {split}");
+        assert_eq!(code, Some(130), "{ctx}: {err}");
+        assert!(
+            err.contains("force-quit by user (SIGINT) before the cleanup finished")
+                && err.contains(&format!("--output '{}' was not committed", out.display())),
+            "{ctx}: {err}"
+        );
+        let names = dir_names(dir.path());
+        assert!(
+            names
+                .iter()
+                .all(|n| n.starts_with('.') && n.contains(".part-")),
+            "{ctx}: committed or unexpected files: {names:?}"
+        );
+        eprintln!("{ctx}: left behind {names:?}");
+        if names.is_empty() {
+            continue;
+        }
+        // D-5: the next run names them (and refuses nothing: no committed output exists)
+        let o = run_async(
+            s(&["--input", "/dev/null", "--output", out.to_str().unwrap()]),
+            vec![],
+        )
+        .await;
+        let err = stderr(&o);
+        for n in &names {
+            assert!(err.contains(n.as_str()), "{ctx}: '{n}' not named: {err}");
+        }
+    }
+}

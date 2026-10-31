@@ -350,6 +350,8 @@ pub struct FileSink {
     next_part: u64,
     pub(crate) scratch: Vec<u8>,
     pub(crate) written: u64,
+    /// Named by a forced exit (second SIGINT) until the sink is committed or aborted.
+    _uncommitted: Option<crate::signals::ForceQuitNote>,
 }
 
 impl FileSink {
@@ -361,9 +363,14 @@ impl FileSink {
             next_part: 0,
             scratch: Vec::new(),
             written: 0,
+            _uncommitted: None,
         };
         if let Some(root) = &sink.opts.path {
             warn_about_leftovers(root);
+            sink._uncommitted = Some(crate::signals::note_on_force_quit(format!(
+                "--output '{}' was not committed (if the force-quit hit its final commit, a split set may be partly committed); its hidden staging files are left next to it and the next run to it names them",
+                root.display()
+            )));
         }
         match (&sink.opts.path, sink.opts.split) {
             (Some(root), Some(_)) => {
