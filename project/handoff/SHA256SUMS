@@ -1,3 +1,5 @@
+# Not committed: ./elasticdump-rs-b4134af.bundle (the git history replaces it; branch `rewrite` at b4134af).
+# Its checksum when it was cut: d75718d853a95356a5403eb3e22bc5082fb637efb4c7a89cfd7491e35401535e
 83bafbf885a3dae5506a88ff859117127cc3fa331b58fcb8ac5aa4347c54c536  ./DECISIONS.md
 cf84ba785e68ef72fac647c83e28e3a26cda4c66e61419c473138ef196ee8923  ./HANDOFF-GROK-OPENCODE.md
 612d59a8243d43971796121b63bd36561c07e862d1bfd110f6ec7852aab0a8d6  ./README-HANDOFF.md
@@ -11,7 +13,6 @@ db3c071805135666b5a34cf08cb8f3f3facf5dd00ae7f0d24628c20d35955f87  ./cards/T-L643
 7e7343ad422fa6dbc64382cafb769e2d160332a72866a471d3be1c80a6386636  ./cards/T-L651-ilm-refusal-atomic.md
 e1e4657fef5066bb8f96db6df5073ba283f61b8ba7e43bc9f43534609bfa1f39  ./cards/T-L652-ilm-odd-valid.md
 ba13953087fe4b97441231cf0d03fd030e96b9146c889b633320ed3fec602c99  ./cards/T-L657-total-int-type.md
-d75718d853a95356a5403eb3e22bc5082fb637efb4c7a89cfd7491e35401535e  ./elasticdump-rs-b4134af.bundle
 44e12cbb3d68eda31f55e387a953c5d0691d7ae87dd52b31855bf1d02b847871  ./opencode/AGENTS.md
 75e1ddb5b3b2e21553d03bb33f912783446c186a426e99dd4d525926806a22d6  ./opencode/opencode.json
 c6f237da1d262b67f2574e480ae592ffb8c4ce1ad3d3030a0957155df27a2a72  ./opencode/prompts/impl.md
@@ -25,7 +26,7 @@ b4344a4ecfe67b6546eb8e2c2902e9cfce493f997aa3bfe63bfc0f10b12e0a14  ./opencode/scr
 639c40a6c6285cb072f5123f8a7366d088b9b20073f24ec07d891d8847a5086a  ./plan/GAPS.md
 630239c380d9993f09e8a4da6bde2b27ac053d768d49b7cc86e89f6f95038f21  ./plan/HANDOFF-TASKPLAN.md
 2b3d438b7af10441adcf5c16666573cd4c7b3b78448476632e586fa80c0afa79  ./plan/PLAN.md
-8c4f91cbabff2b8d4b9d9adda5ef7b73756ca5e53b3b1cb893409a35e009c064  ./plan/PROGRESS.md
+2bbc4436d49abc17f4ccf48f914e15df38695c2e786b759aa829a6bb82b82ff1  ./plan/PROGRESS.md
 2944a34be6fb96407ba8a7e7302c64c31c31b6d845257dbc1cdf626843353653  ./plan/TASKS-LOCAL.md
 c2dc12324fe2c8ce46851cd6016b4f0e9827010c91baf155c4a640b70b9550ab  ./plan/TEST-REQUIREMENTS.md
 4e7747784cea76fffd93ee69f1091c903ef080eefe34dc027b1a0568beb36c2a  ./plan/TYPES-PLAN.md
