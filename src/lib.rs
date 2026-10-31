@@ -835,18 +835,23 @@ async fn transfer(
                         sink.abort().await;
                         return Err(e);
                     }
-                    // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
-                    // stop the dump unless the search body filters _source itself (anything but `true`).
-                    let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
-                        .is_some_and(|v| sonic_rs::JsonValueTrait::as_bool(v) != Some(true));
-                    retrieval::set_require_source(!cli.allow_missing_source && !own_choice);
-                    // L-455a: `stored_fields` without `_source` makes the cluster leave _source
-                    // out; still refused by default, but the error names the search body
-                    retrieval::set_body_drops_source(
-                        sonic_rs::JsonValueTrait::get(&opts.search_body, "stored_fields").is_some()
-                            && sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
-                                .is_none(),
-                    );
+                    // TST-BRK-XV-002: hits without _source stop the dump unless
+                    // --allowMissingSource. L-455b (behaviour change): this now holds for a
+                    // search body that turns _source off too; `"_source": false` is refused
+                    // before the first search, a filter that leaves no _source at the first
+                    // such hit. Either error names the search body (as L-455a's stored_fields).
+                    if !cli.allow_missing_source
+                        && sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
+                            .and_then(sonic_rs::JsonValueTrait::as_bool)
+                            == Some(false)
+                    {
+                        sink.abort().await;
+                        anyhow::bail!(
+                            "documents cannot be fully dumped: the search body sets \"_source\": false, so every hit would come back without _source (only _id and metadata could be written). Nothing was written; remove \"_source\": false from the search body to keep the documents, or pass --allowMissingSource to dump them without _source"
+                        );
+                    }
+                    retrieval::set_require_source(!cli.allow_missing_source);
+                    retrieval::set_body_drops_source(retrieval::BodySource::of(&opts.search_body));
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {

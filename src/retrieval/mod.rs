@@ -48,9 +48,33 @@ enum CancelReason {
 
 /// Whether every hit must carry `_source` (see [`extract`]); set once per run.
 static REQUIRE_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Whether the search body itself makes the cluster leave `_source` out (`stored_fields`
-/// without `_source`), so a missing `_source` is not the mapping's doing (L-455a).
-static BODY_DROPS_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the search body itself may make the cluster leave `_source` out, so a missing
+/// `_source` is not the mapping's doing: [`BodySource`] as u8 (L-455a, L-455b).
+static BODY_DROPS_SOURCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// What in the search body can leave `_source` out of the hits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodySource {
+    /// nothing: a hit without `_source` comes from the mapping
+    Kept = 0,
+    /// `stored_fields` without `_source` (L-455a)
+    StoredFields = 1,
+    /// a `_source` filter other than `true` (L-455b)
+    Filter = 2,
+}
+
+impl BodySource {
+    /// Reads a search body's `_source` / `stored_fields`.
+    pub fn of(body: &sonic_rs::Value) -> Self {
+        use sonic_rs::JsonValueTrait;
+        match body.get("_source") {
+            Some(v) if v.as_bool() == Some(true) => Self::Kept,
+            Some(_) => Self::Filter,
+            None if body.get("stored_fields").is_some() => Self::StoredFields,
+            None => Self::Kept,
+        }
+    }
+}
 
 /// Fuzz hook (TST-API-084): search response extraction, both pagination shapes.
 #[cfg(any(feature = "fuzz", test))]
@@ -90,12 +114,16 @@ pub(crate) fn require_source() -> bool {
     REQUIRE_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn set_body_drops_source(on: bool) {
-    BODY_DROPS_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
+pub fn set_body_drops_source(cause: BodySource) {
+    BODY_DROPS_SOURCE.store(cause as u8, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub(crate) fn body_drops_source() -> bool {
-    BODY_DROPS_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
+pub(crate) fn body_drops_source() -> BodySource {
+    match BODY_DROPS_SOURCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => BodySource::StoredFields,
+        2 => BodySource::Filter,
+        _ => BodySource::Kept,
+    }
 }
 
 /// Everything the Elasticsearch/OpenSearch reader needs.

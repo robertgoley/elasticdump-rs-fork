@@ -3366,19 +3366,37 @@ async fn hits_without_source_are_refused_unless_allowed() {
     };
     let dir = tempfile::tempdir().unwrap();
     // L-455a: stored_fields without _source makes the cluster leave _source out; still
-    // refused by default, and the error names the search body, not the mapping
+    // refused by default, and the error names the search body, not the mapping.
+    // L-455b (behaviour change): a body that turns _source off is refused too unless
+    // --allowMissingSource: `"_source": false` before the first search, a filter that
+    // leaves no _source (`[]`, `{"excludes":["*"]}`) at the first such hit
     let stored = r#"{"stored_fields":["x"]}"#;
-    for (n, (extra, ok)) in [
-        (vec![], false),
-        (vec!["--searchBody", stored], false),
-        (vec!["--searchBody", stored, "--allowMissingSource"], true),
-        (vec!["--allowMissingSource"], true),
+    let off = r#"{"query":{"match_all":{}},"_source":false}"#;
+    let empty_list = r#"{"_source":[]}"#;
+    let excl_all = r#"{"_source":{"excludes":["*"]}}"#;
+    #[derive(PartialEq, Debug)]
+    enum Want {
+        Ok,
+        Mapping,
+        Stored,
+        Off,
+        Filter,
+    }
+    for (n, (extra, want)) in [
+        (vec![], Want::Mapping),
+        (vec!["--searchBody", stored], Want::Stored),
         (
-            vec![
-                "--searchBody",
-                r#"{"query":{"match_all":{}},"_source":false}"#,
-            ],
-            true,
+            vec!["--searchBody", stored, "--allowMissingSource"],
+            Want::Ok,
+        ),
+        (vec!["--allowMissingSource"], Want::Ok),
+        (vec!["--searchBody", off], Want::Off),
+        (vec!["--searchBody", off, "--allowMissingSource"], Want::Ok),
+        (vec!["--searchBody", empty_list], Want::Filter),
+        (vec!["--searchBody", excl_all], Want::Filter),
+        (
+            vec!["--searchBody", excl_all, "--allowMissingSource"],
+            Want::Ok,
         ),
     ]
     .into_iter()
@@ -3395,35 +3413,57 @@ async fn hits_without_source_are_refused_unless_allowed() {
         args.extend(extra.iter().map(|s| s.to_string()));
         let o = run_async(args, vec![]).await;
         let err = stderr(&o);
-        if ok {
+        if want == Want::Ok {
             assert_eq!(o.status.code(), Some(0), "{extra:?}: {err}");
             assert!(
                 std::fs::read_to_string(&out)
                     .unwrap()
                     .contains("\"_id\":\"1\"")
             );
-        } else {
-            assert_eq!(o.status.code(), Some(1), "{err}");
-            assert!(err.contains("documents cannot be fully dumped"), "{err}");
-            assert!(
-                err.contains("'nosrc'") && err.contains("--allowMissingSource"),
-                "{err}"
-            );
-            assert!(!out.exists(), "nothing written");
-            if extra.is_empty() {
+            continue;
+        }
+        assert_eq!(o.status.code(), Some(1), "{extra:?}: {err}");
+        assert!(err.contains("documents cannot be fully dumped"), "{err}");
+        assert!(err.contains("--allowMissingSource"), "{err}");
+        assert!(!out.exists(), "nothing written");
+        let searched = m.requests().iter().any(|r| r.path.contains("_search"));
+        match want {
+            Want::Mapping => {
                 assert!(
-                    err.contains("its mapping has _source.enabled: false"),
+                    err.contains("'nosrc'")
+                        && err.contains("its mapping has _source.enabled: false"),
                     "{err}"
                 );
                 assert!(!err.contains("stored_fields"), "{err}");
-            } else {
+            }
+            Want::Stored => {
                 assert!(
-                    err.contains("the search body sets stored_fields without _source"),
+                    err.contains("'nosrc'")
+                        && err.contains("the search body sets stored_fields without _source")
+                        && err.contains("\"_source\": true"),
                     "{err}"
                 );
-                assert!(err.contains("\"_source\": true"), "{err}");
                 assert!(!err.contains("_source.enabled"), "{err}");
             }
+            Want::Off => {
+                assert!(
+                    err.contains("the search body sets \"_source\": false")
+                        && err.contains("remove \"_source\": false from the search body"),
+                    "{err}"
+                );
+                assert!(!err.contains("_source.enabled"), "{err}");
+                assert!(!searched, "refused before the first search");
+            }
+            Want::Filter => {
+                assert!(
+                    err.contains("'nosrc'")
+                        && err.contains("the search body's _source filter leaves it out")
+                        && err.contains("remove the _source filter from the search body"),
+                    "{err}"
+                );
+                assert!(!err.contains("_source.enabled"), "{err}");
+            }
+            Want::Ok => unreachable!(),
         }
     }
 }

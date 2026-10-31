@@ -350,17 +350,50 @@ async fn search_body_variants_and_meta_from_fields() {
             Box::new(|d| d["_source"]["n"].is_u64()),
         ),
     ];
+    // L-455b: `"_source": []` and `{"excludes":["*"]}` do not leave _source out of the hits
+    // (checked on OpenSearch 1.3.20/2.19.7/3.9.0 and Elasticsearch 7.17/8.6/8.19/9.1: the
+    // first returns the whole _source, the second `{}`), so they are not refused; the
+    // dump writes what the cluster returned. `"_source": false` is (the "fields" variant).
+    for (body, whole) in [
+        (r#"{"_source":[]}"#, true),
+        (r#"{"_source":{"excludes":["*"]}}"#, false),
+    ] {
+        let mut b: Value = serde_json::from_str(body).unwrap();
+        b["size"] = 1.into();
+        let v = c.ok("POST", &format!("{src}/_search"), Some(b)).await;
+        let hit = &v["hits"]["hits"][0];
+        assert!(hit["_source"].is_object(), "{body}: {hit}");
+        let (f, o) = dump(&c, &src, &["--limit", "50", "--searchBody", body]).await;
+        assert_success(&o);
+        let docs = parsed(&f);
+        assert_eq!(docs.len(), 300, "{body}");
+        for d in &docs {
+            let n = d["_source"].as_object().map(|m| m.len());
+            assert_eq!(n, Some(if whole { 4 } else { 0 }), "{body}: {d}");
+        }
+        let _ = std::fs::remove_file(f);
+    }
     for (name, body, pred) in &variants {
         // L-455a: stored_fields without _source leaves _source out, which is refused by
-        // default (naming the search body); this variant opts in
+        // default (naming the search body); L-455b: so is "_source": false (behaviour
+        // change; it was allowed before). These variants then opt in
         let mut args = vec!["--limit", "50", "--searchBody", body];
-        if *name == "stored_fields" {
+        let refusal = match *name {
+            "stored_fields" => Some("the search body sets stored_fields without _source"),
+            "fields" => Some("the search body sets \"_source\": false"),
+            _ => None,
+        };
+        if let Some(why) = refusal {
             let (f, o) = dump(&c, &src, &args).await;
             let err = String::from_utf8_lossy(&o.stderr).into_owned();
-            assert_eq!(o.status.code(), Some(1), "{err}");
+            assert_eq!(o.status.code(), Some(1), "{name}: {err}");
             assert!(
-                err.contains("the search body sets stored_fields without _source"),
-                "{err}"
+                err.contains(why) && err.contains("--allowMissingSource"),
+                "{name}: {err}"
+            );
+            assert!(
+                !f.exists() || lines(&f).is_empty(),
+                "{name}: nothing written"
             );
             let _ = std::fs::remove_file(f);
             args.push("--allowMissingSource");

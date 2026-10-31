@@ -276,13 +276,19 @@ pub(crate) fn extract_batch_metadata(
 
 /// A hit without `_source` (TST-BRK-XV-002): either its index does not store it, or the
 /// search body asked for `stored_fields` without `_source`, which makes the cluster leave
-/// `_source` out (L-455a); the message names whichever applies.
-fn missing_source_error(hit: &LazyValue<'_>, body_drops_source: bool) -> anyhow::Error {
+/// `_source` out (L-455a), or its `_source` filter leaves nothing (L-455b); the message
+/// names whichever applies.
+fn missing_source_error(hit: &LazyValue<'_>, body: super::BodySource) -> anyhow::Error {
     let index = hit
         .get("_index")
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "?".to_string());
-    if body_drops_source {
+    if body == super::BodySource::Filter {
+        return anyhow!(
+            "documents cannot be fully dumped: a hit from index '{index}' has no _source because the search body's _source filter leaves it out (only _id and metadata could be written). Nothing of this page was written; remove the _source filter from the search body to keep the documents, or pass --allowMissingSource to dump them without _source"
+        );
+    }
+    if body == super::BodySource::StoredFields {
         return anyhow!(
             "documents cannot be fully dumped: a hit from index '{index}' has no _source because the search body sets stored_fields without _source, so the cluster leaves _source out (only _id, metadata and the stored fields could be written). Nothing of this page was written; add \"_source\": true to the search body to keep the documents, or pass --allowMissingSource to dump them without _source"
         );
@@ -386,7 +392,7 @@ mod tests {
     fn missing_source_names_the_search_body_or_the_mapping() {
         let hit =
             sonic_rs::from_str::<sonic_rs::LazyValue<'_>>(r#"{"_index":"i1","_id":"1"}"#).unwrap();
-        let body = missing_source_error(&hit, true).to_string();
+        let body = missing_source_error(&hit, super::super::BodySource::StoredFields).to_string();
         assert!(body.contains("'i1'"), "{body}");
         assert!(
             body.contains("the search body sets stored_fields without _source"),
@@ -394,7 +400,14 @@ mod tests {
         );
         assert!(body.contains("\"_source\": true") && body.contains("--allowMissingSource"));
         assert!(!body.contains("_source.enabled"), "{body}");
-        let mapping = missing_source_error(&hit, false).to_string();
+        let mapping = missing_source_error(&hit, super::super::BodySource::Kept).to_string();
+        let filter = missing_source_error(&hit, super::super::BodySource::Filter).to_string();
+        assert!(
+            filter.contains("the search body's _source filter")
+                && filter.contains("--allowMissingSource")
+                && !filter.contains("_source.enabled"),
+            "{filter}"
+        );
         assert!(
             mapping.contains("its mapping has _source.enabled: false"),
             "{mapping}"
