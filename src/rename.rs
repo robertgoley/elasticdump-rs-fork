@@ -227,7 +227,7 @@ impl IndexRenamer {
     }
 
     /// Target name of `name` before validation (rules, then prefix/suffix).
-    fn target_of(&self, name: &str) -> String {
+    pub(crate) fn target_of(&self, name: &str) -> String {
         let base = self
             .rename_raw(name)
             .map_or_else(|| name.to_string(), |(n, _)| n);

@@ -3814,3 +3814,78 @@ fn l642a_same_target_check_applies_prefix_and_suffix() {
         assert_ne!(o.status.code(), Some(2), "{args:?}: {err}");
     }
 }
+
+/// L-642b: a host-only output writes each source index to its own name (after --prefix/--suffix
+/// and the rename rules), so that resolved name is what is compared with the input index.
+#[test]
+fn l642b_host_only_output_resolves_the_target_index() {
+    let host = "http://127.0.0.1:1";
+    let at = |i: &str| format!("{host}/{i}");
+    let args_of = |a: &[String]| {
+        let mut v = vec![
+            "--input".to_string(),
+            a[0].clone(),
+            "--output".into(),
+            host.into(),
+        ];
+        v.extend(a[1..].iter().cloned());
+        v
+    };
+    // (input index and flags, expected wording after "same file or index")
+    let refused: Vec<(Vec<String>, &str)> = vec![
+        (vec![at("idx")], ""),
+        (vec![at("other,idx")], ""),
+        (vec![at("logs-*")], ""),
+        (
+            vec![at("idx"), "--renameIndex".into(), "^nomatch$:x".into()],
+            " (after --renamePrefix/--renameIndex)",
+        ),
+        (
+            vec![
+                at("p-idx"),
+                "--renameIndex".into(),
+                "^p-(.*)$:$1".into(),
+                "--prefix".into(),
+                "p-".into(),
+            ],
+            " (after --renamePrefix/--renameIndex and --prefix/--suffix)",
+        ),
+    ];
+    for (a, wording) in refused {
+        let args = args_of(&a);
+        let o = bin().args(&args).output().expect("spawn");
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {err}");
+        assert!(
+            err.contains(&format!("same file or index{wording};")),
+            "{args:?}: {err}"
+        );
+    }
+    let allowed: Vec<Vec<String>> = vec![
+        vec![at("idx"), "--prefix".into(), "p-".into()],
+        vec![at("idx"), "--suffix=-copy".into()],
+        vec![at("idx"), "--renameIndex".into(), "^idx$:idx2".into()],
+        vec![at("idx"), "--renamePrefix".into(), "id:new-id".into()],
+        vec![at("logs-*"), "--suffix=-copy".into()],
+        // which indices a wildcard matches is only known at run time
+        vec![
+            at("logs-*"),
+            "--renameIndex".into(),
+            "^logs-(.*)$:old-$1".into(),
+        ],
+        vec![
+            at("idx"),
+            "--prefix".into(),
+            "p-".into(),
+            "--suffix=-s".into(),
+        ],
+    ];
+    for a in allowed {
+        let mut args = args_of(&a);
+        args.extend(["--retryAttempts", "1", "--noImplicitRetry"].map(String::from));
+        let o = bin().args(&args).output().expect("spawn");
+        let err = stderr(&o);
+        assert!(!err.contains("same file or index"), "{args:?}: {err}");
+        assert_ne!(o.status.code(), Some(2), "{args:?}: {err}");
+    }
+}

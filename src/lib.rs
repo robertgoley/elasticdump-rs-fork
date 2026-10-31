@@ -46,7 +46,19 @@ impl std::error::Error for UsageError {}
 /// L-642a: the output index is compared as written to, i.e. with `--prefix`/`--suffix`
 /// applied (`--input …/p-idx --output …/idx --prefix p-` writes into the input index;
 /// `--input …/idx --output …/idx --suffix -copy` does not).
-fn same_target(input: &Endpoint, output: &Endpoint, prefix: &str, suffix: &str) -> bool {
+/// Whether a run would read and write the same file or index. The output index is resolved the
+/// way documents are written: `--prefix`/`--suffix` around the explicit output index, or, for a
+/// host-only output, around each source index name after the `--renamePrefix`/`--renameIndex`
+/// rules (`renamer`). A wildcard input on a host-only output writes each match back onto itself
+/// unless an affix or rule renames it; with rules, which matches they hit is only known at run
+/// time, so such an input is not refused here.
+fn same_target(
+    input: &Endpoint,
+    output: &Endpoint,
+    prefix: &str,
+    suffix: &str,
+    renamer: Option<&rename::IndexRenamer>,
+) -> bool {
     fn canon(p: &std::path::Path) -> Option<std::path::PathBuf> {
         if let Ok(c) = p.canonicalize() {
             return Some(c);
@@ -69,7 +81,23 @@ fn same_target(input: &Endpoint, output: &Endpoint, prefix: &str, suffix: &str) 
                     (Some(src), Some(dst)) => *src == format!("{prefix}{dst}{suffix}"),
                     // host to host: every index onto itself unless an affix renames it
                     (None, None) => prefix.is_empty() && suffix.is_empty(),
-                    _ => false,
+                    // host-only output: each source index is written to its own name, affixed
+                    // and renamed (L-642b)
+                    (Some(src), None) => src
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|n| !n.is_empty() && !n.starts_with('-'))
+                        .any(|n| {
+                            if n.contains(['*', '?']) {
+                                renamer.is_none() && prefix.is_empty() && suffix.is_empty()
+                            } else {
+                                match renamer {
+                                    Some(r) => r.target_of(n) == n,
+                                    None => format!("{prefix}{n}{suffix}") == n,
+                                }
+                            }
+                        }),
+                    (None, Some(_)) => false,
                 }
         }
         _ => false,
@@ -1010,11 +1038,24 @@ pub async fn run() -> Result<()> {
         node_alias_url(&cli, &mut input);
     }
     validate(&cli, &input, &output)?;
-    if !cli.force() && same_target(&input, &output, &cli.prefix, &cli.suffix) {
-        let affix = if cli.prefix.is_empty() && cli.suffix.is_empty() {
-            ""
-        } else {
-            " (after --prefix/--suffix)"
+    let target_renamer = renamer(&cli)?;
+    if !cli.force()
+        && same_target(
+            &input,
+            &output,
+            &cli.prefix,
+            &cli.suffix,
+            target_renamer.as_ref(),
+        )
+    {
+        let affix = match (
+            cli.prefix.is_empty() && cli.suffix.is_empty(),
+            target_renamer.is_some(),
+        ) {
+            (true, false) => "",
+            (false, false) => " (after --prefix/--suffix)",
+            (true, true) => " (after --renamePrefix/--renameIndex)",
+            (false, true) => " (after --renamePrefix/--renameIndex and --prefix/--suffix)",
         };
         return Err(usage(format!(
             "--input and --output name the same file or index{affix}; refusing to read and write it at once (pass --force to do it anyway)"
