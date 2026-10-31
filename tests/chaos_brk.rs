@@ -5782,7 +5782,8 @@ async fn l650a_signal_during_a_metadata_dump_to_a_file_leaves_no_staging() {
 // anything is written (no PUT at all), naming the policy, phase and action; with
 // --lenientPolicyConversion every policy is written and the dropped part is reported
 // (`DROPPED ...`); a min_age that is not a duration is refused in both modes, again with
-// nothing written; a policy the cluster itself rejects names what was already written.
+// nothing written; a policy the cluster itself rejects rolls back what was already written
+// (L-651a; overwrites and failed rollbacks in l651a_a_rejected_policy_rolls_back_the_set).
 #[tokio::test(flavor = "multi_thread")]
 async fn l651_unconvertible_ilm_policies_never_leave_a_partial_set() {
     let dir = tempfile::tempdir().unwrap();
@@ -5820,6 +5821,9 @@ async fn l651_unconvertible_ilm_policies_never_leave_a_partial_set() {
                             } else {
                                 Reply::json(201, r#"{"_id":"x","_version":1,"_primary_term":1,"_seq_no":0}"#)
                             }
+                        }
+                        ("DELETE", p) if p.starts_with("/_plugins/_ism/policies/") => {
+                            Reply::json(200, r#"{"_id":"x","result":"deleted"}"#)
                         }
                         _ => Reply::json(404, "{}"),
                     }
@@ -5908,10 +5912,249 @@ async fn l651_unconvertible_ilm_policies_never_leave_a_partial_set() {
     let e = stderr(&o);
     assert_eq!(o.status.code(), Some(1), "{e}");
     assert!(
-        e.contains("restoring policy 'p2'") && e.contains("already written by this run: p0, p1"),
+        e.contains("restoring policy 'p2' (the cluster rejected it)")
+            && e.contains("rolled back this run's 2 write(s): deleted the policies it had created: p0, p1. Rollback succeeded"),
         "{e}"
     );
     assert_eq!(puts(&m).len(), 3);
+    let deletes: Vec<String> = m
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == "DELETE")
+        .map(|r| r.path)
+        .collect();
+    assert_eq!(
+        deletes,
+        ["/_plugins/_ism/policies/p1", "/_plugins/_ism/policies/p0"]
+    );
+}
+
+// L-651a (user decision): a policy the cluster rejects partway through a set rolls back
+// what this run wrote, and only that. Created policies are deleted; an overwritten one gets
+// its previous body back (ISM: by sequence number, server fields dropped; ILM: re-PUT of the
+// body read before the overwrite); a policy skipped by --skip-existing is not touched. When
+// the rollback itself fails, the error names exactly the policies left as this run wrote them.
+#[tokio::test(flavor = "multi_thread")]
+async fn l651a_a_rejected_policy_rolls_back_the_set() {
+    use std::sync::{Arc, Mutex};
+    let dir = tempfile::tempdir().unwrap();
+    // ISM: a0 new, a1 exists (overwritten), a2 rejected, a3 never sent
+    let ism_file = dir.path().join("ism.json");
+    let mut m = serde_json::Map::new();
+    for i in 0..4 {
+        m.insert(
+            format!("a{i}"),
+            serde_json::json!({"policy": {"description": format!("NEW{i}"), "default_state": "hot", "states": [{"name": "hot", "actions": [], "transitions": []}]}}),
+        );
+    }
+    std::fs::write(&ism_file, serde_json::Value::Object(m).to_string() + "\n").unwrap();
+    let old_a1 = r#"{"_id":"a1","_version":3,"_seq_no":7,"_primary_term":2,"policy":{"policy_id":"a1","description":"OLD1","last_updated_time":1,"schema_version":21,"error_notification":null,"default_state":"keep","states":[{"name":"keep","actions":[],"transitions":[]}],"ism_template":[{"index_patterns":["old-*"],"priority":5,"last_updated_time":1}]}}"#;
+    let ism_mock = |delete_fails: bool| async move {
+        let a1_puts = Arc::new(Mutex::new(0usize));
+        RouterMock::builder()
+            .handler(move |req| {
+                let a1_puts = a1_puts.clone();
+                async move {
+                    let p = req.path.as_str();
+                    match (req.method.as_str(), p) {
+                        ("GET", "/") => Reply::ok(INFO),
+                        ("GET", "/_plugins/_ism/policies/a1") => {
+                            if *a1_puts.lock().unwrap() > 1 {
+                                Reply::json(200, r#"{"_id":"a1","_version":4,"_seq_no":8,"_primary_term":2,"policy":{"policy_id":"a1","description":"NEW1"}}"#)
+                            } else {
+                                Reply::json(200, old_a1)
+                            }
+                        }
+                        ("PUT", "/_plugins/_ism/policies/a1") => {
+                            let mut n = a1_puts.lock().unwrap();
+                            *n += 1;
+                            if *n == 1 {
+                                Reply::json(409, r#"{"error":{"type":"version_conflict_engine_exception","reason":"FAKE-exists"},"status":409}"#)
+                            } else {
+                                Reply::json(200, r#"{"_id":"a1","_version":4,"_primary_term":2,"_seq_no":8}"#)
+                            }
+                        }
+                        ("PUT", "/_plugins/_ism/policies/a2") => Reply::json(
+                            400,
+                            r#"{"error":{"type":"illegal_argument_exception","reason":"FAKE-rejected"},"status":400}"#,
+                        ),
+                        ("PUT", _) => Reply::json(201, r#"{"_id":"x","_version":1,"_primary_term":1,"_seq_no":0}"#),
+                        ("DELETE", _) if delete_fails => Reply::json(
+                            403,
+                            r#"{"error":{"type":"security_exception","reason":"FAKE-no-delete"},"status":403}"#,
+                        ),
+                        ("DELETE", _) => Reply::json(200, r#"{"result":"deleted"}"#),
+                        _ => Reply::json(404, "{}"),
+                    }
+                }
+            })
+            .start()
+            .await
+    };
+    let run = |file: &std::path::Path, url: String| {
+        run_async(
+            s(&[
+                "--input",
+                file.to_str().unwrap(),
+                "--output",
+                &url,
+                "--type",
+                "policy",
+            ]),
+            vec![],
+        )
+    };
+    let m = ism_mock(false).await;
+    let o = run(&ism_file, m.url()).await;
+    let e = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{e}");
+    assert!(
+        e.contains("restoring policy 'a2' (the cluster rejected it)")
+            && e.contains("FAKE-rejected")
+            && e.contains("rolled back this run's 2 write(s): deleted the policies it had created: a0; put back the previous version of the policies it had overwritten: a1. Rollback succeeded"),
+        "{e}"
+    );
+    let reqs = m.requests();
+    let sent: Vec<(String, String)> = reqs
+        .iter()
+        .filter(|r| r.method != "GET")
+        .map(|r| (r.method.clone(), r.path.clone()))
+        .collect();
+    let want: Vec<(String, String)> = [
+        ("PUT", "a0"),
+        ("PUT", "a1"),
+        ("PUT", "a1"),
+        ("PUT", "a2"),
+        ("PUT", "a1"),
+        ("DELETE", "a0"),
+    ]
+    .iter()
+    .map(|(m, n)| (m.to_string(), format!("/_plugins/_ism/policies/{n}")))
+    .collect();
+    assert_eq!(sent, want, "a3 never sent; rollback newest first");
+    let restore = reqs
+        .iter()
+        .filter(|r| r.method == "PUT" && r.path.ends_with("/a1"))
+        .nth(2)
+        .unwrap();
+    assert!(
+        restore
+            .query
+            .iter()
+            .any(|(k, v)| k == "if_seq_no" && v == "8"),
+        "{:?}",
+        restore.query
+    );
+    let body: serde_json::Value = serde_json::from_slice(&restore.body).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({"policy": {"description": "OLD1", "error_notification": null, "default_state": "keep", "states": [{"name": "keep", "actions": [], "transitions": []}], "ism_template": [{"index_patterns": ["old-*"], "priority": 5}]}})
+    );
+
+    // the rollback itself fails: the error says so and names what is left
+    let m = ism_mock(true).await;
+    let o = run(&ism_file, m.url()).await;
+    let e = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{e}");
+    assert!(
+        e.contains("put back the previous version of the policies it had overwritten: a1")
+            && e.contains(
+                "Rollback FAILED for 1 policy: a0 (not deleted, it stays as this run wrote it"
+            )
+            && !e.contains("Rollback succeeded"),
+        "{e}"
+    );
+
+    // ILM to Elasticsearch: b0 exists (read first, re-PUT on rollback), b1 new, b2 rejected;
+    // with --skip-existing the existing b0 is skipped and not touched by the rollback
+    let ilm_file = dir.path().join("ilm.json");
+    let mut m = serde_json::Map::new();
+    for i in 0..3 {
+        m.insert(
+            format!("b{i}"),
+            serde_json::json!({"policy": {"phases": {"delete": {"min_age": format!("{}d", i + 1), "actions": {"delete": {}}}}}}),
+        );
+    }
+    std::fs::write(&ilm_file, serde_json::Value::Object(m).to_string() + "\n").unwrap();
+    let es_mock = || async {
+        RouterMock::builder()
+            .handler(|req| async move {
+                match (req.method.as_str(), req.path.as_str()) {
+                    ("GET", "/") => Reply::ok(
+                        r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+                    ),
+                    ("GET", "/_ilm/policy/b0") => Reply::json(
+                        200,
+                        r#"{"b0":{"version":2,"modified_date":"2026-01-01T00:00:00.000Z","policy":{"phases":{"delete":{"min_age":"90d","actions":{"delete":{}}}},"_meta":{"owner":"OLD"}},"in_use_by":{}}}"#,
+                    ),
+                    ("PUT", "/_ilm/policy/b2") => Reply::json(
+                        400,
+                        r#"{"error":{"type":"illegal_argument_exception","reason":"FAKE-rejected"},"status":400}"#,
+                    ),
+                    ("PUT", _) | ("DELETE", _) => Reply::json(200, r#"{"acknowledged":true}"#),
+                    _ => Reply::json(404, "{}"),
+                }
+            })
+            .start()
+            .await
+    };
+    for skip in [false, true] {
+        let m = es_mock().await;
+        let mut a = s(&[
+            "--input",
+            ilm_file.to_str().unwrap(),
+            "--output",
+            &m.url(),
+            "--type",
+            "policy",
+        ]);
+        if skip {
+            a.push("--skip-existing".into());
+        }
+        let o = run_async(a, vec![]).await;
+        let e = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{e}");
+        let writes: Vec<(String, String, String)> = m
+            .requests()
+            .into_iter()
+            .filter(|r| r.method != "GET")
+            .map(|r| {
+                (
+                    r.method.clone(),
+                    r.path.clone(),
+                    String::from_utf8_lossy(&r.body).into_owned(),
+                )
+            })
+            .collect();
+        if skip {
+            assert!(
+                e.contains("rolled back this run's 1 write(s): deleted the policies it had created: b1. Rollback succeeded"),
+                "{e}"
+            );
+            assert_eq!(writes.len(), 3, "{writes:?}");
+            assert!(
+                writes.iter().all(|(_, p, _)| !p.ends_with("/b0")),
+                "{writes:?}"
+            );
+        } else {
+            assert!(
+                e.contains("deleted the policies it had created: b1; put back the previous version of the policies it had overwritten: b0. Rollback succeeded"),
+                "{e}"
+            );
+            let (m0, p0, b0) = writes.last().unwrap();
+            assert_eq!(
+                (m0.as_str(), p0.as_str()),
+                ("PUT", "/_ilm/policy/b0"),
+                "{writes:?}"
+            );
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(b0).unwrap(),
+                serde_json::json!({"policy": {"phases": {"delete": {"min_age": "90d", "actions": {"delete": {}}}}, "_meta": {"owner": "OLD"}}})
+            );
+            assert_eq!(writes[writes.len() - 2].0, "DELETE", "{writes:?}");
+            assert!(writes[writes.len() - 2].1.ends_with("/b1"), "{writes:?}");
+        }
+    }
 }
 
 // L-653 (TST-BRK-ILM-003): OpenSearch ISM policies restored to Elasticsearch are refused

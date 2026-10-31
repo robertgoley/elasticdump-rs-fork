@@ -93,6 +93,15 @@ impl Ctx {
     }
 }
 
+/// The refusal for an ILM `wait_for_snapshot` step (L-651a).
+fn wait_for_snapshot_refusal(phase: &str, cfg: &Value) -> String {
+    format!(
+        "phase '{phase}' action 'wait_for_snapshot' (snapshot policy {}): ISM has no equivalent, and without it the indices would be deleted without waiting for that snapshot; remove the step from the policy or create the ISM policy by hand",
+        cfg.get("policy")
+            .map_or_else(|| "?".into(), Value::to_string)
+    )
+}
+
 fn is_zero_age(age: &str) -> bool {
     let digits: String = age
         .chars()
@@ -130,7 +139,13 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
     let Some(phases) = ilm.get("phases").and_then(Value::as_object) else {
         bail!("ILM policy '{name}' has no phases");
     };
-    for p in phases.keys() {
+    for (p, def) in phases {
+        // L-651a (user decision): wait_for_snapshot must never end in deleted indices. ISM
+        // has no equivalent, and dropping the step would delete without waiting for the
+        // snapshot, so the policy is refused in both modes, whatever phase holds it.
+        if let Some(w) = def.get("actions").and_then(|a| a.get("wait_for_snapshot")) {
+            cx.fatal.push(wait_for_snapshot_refusal(p, w));
+        }
         if !PHASES.contains(&p.as_str()) {
             cx.problem(format!("unknown phase '{p}'"));
         }
@@ -281,6 +296,12 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
     if ilm.get("deprecated").is_some() {
         cx.notes.push("'deprecated' flag dropped".into());
     }
+    if !cx.fatal.is_empty() {
+        bail!(
+            "ILM policy '{name}' cannot be converted to ISM: {} (not dropped by --lenientPolicyConversion; fix the policy)",
+            cx.fatal.join("; ")
+        );
+    }
     if !cx.refused.is_empty() {
         bail!(
             "ILM policy '{name}' cannot be converted to ISM safely: {} (--lenientPolicyConversion drops these parts instead)",
@@ -322,9 +343,9 @@ fn convert_action(
             unknown(cx, &["priority"]);
             match c.get("priority") {
                 Some(p) if !p.is_null() => out.push(json!({"index_priority": {"priority": p}})),
-                _ => cx
-                    .notes
-                    .push(format!("phase '{phase}': set_priority null (reset) dropped")),
+                _ => cx.notes.push(format!(
+                    "phase '{phase}': set_priority null (reset) dropped"
+                )),
             }
         }
         "rollover" => {
@@ -427,10 +448,8 @@ fn convert_action(
                 "phase '{phase}': migrate dropped (OpenSearch has no data tiers)"
             ))
         }
-        "wait_for_snapshot" => cx.problem(format!(
-            "phase '{phase}' action 'wait_for_snapshot': no ISM equivalent (without it the index is deleted without waiting for snapshot policy {})",
-            c.get("policy").map_or_else(|| "?".into(), Value::to_string)
-        )),
+        // refused up front in convert_for (fatal); kept so the match stays exhaustive
+        "wait_for_snapshot" => cx.fatal.push(wait_for_snapshot_refusal(phase, cfg)),
         "searchable_snapshot" | "downsample" | "unfollow" | "freeze" => {
             cx.problem(format!(
                 "phase '{phase}' action '{action}': no ISM equivalent"
@@ -573,10 +592,6 @@ mod tests {
                 "downsample",
             ),
             (
-                json!({"phases": {"delete": {"actions": {"wait_for_snapshot": {"policy": "s"}, "delete": {}}}}}),
-                "wait_for_snapshot",
-            ),
-            (
                 json!({"phases": {"hot": {"actions": {"unfollow": {}}}}}),
                 "unfollow",
             ),
@@ -670,16 +685,32 @@ mod tests {
                 c.notes
             );
         }
-        // lenient drops wait_for_snapshot, and says what that means
-        let ilm = json!({"phases": {"delete": {"min_age": "30d", "actions": {"wait_for_snapshot": {"policy": "nightly"}, "delete": {}}}}});
-        let c = convert("p", &ilm, true).unwrap();
-        assert!(
-            c.notes
-                .iter()
-                .any(|n| n.contains("deleted without waiting for snapshot policy \"nightly\"")),
-            "{:?}",
-            c.notes
-        );
+    }
+
+    #[test]
+    fn wait_for_snapshot_is_refused_in_both_modes_naming_policy_and_phase() {
+        // L-651a: never dropped; without it ISM would delete without waiting for the snapshot
+        for (phase, extra) in [
+            ("delete", json!({"delete": {}})),
+            ("warm", json!({})),
+            ("bogus", json!({})),
+        ] {
+            let mut actions = extra.as_object().unwrap().clone();
+            actions.insert("wait_for_snapshot".into(), json!({"policy": "nightly"}));
+            let ilm = json!({"phases": {"hot": {"actions": {"rollover": {"max_age": "1d"}}}, phase: {"min_age": "30d", "actions": actions}}});
+            for lenient in [false, true] {
+                let e = format!("{:#}", convert("logs", &ilm, lenient).unwrap_err());
+                assert!(
+                    e.contains("ILM policy 'logs'")
+                        && e.contains(&format!(
+                            "phase '{phase}' action 'wait_for_snapshot' (snapshot policy \"nightly\")"
+                        ))
+                        && e.contains("deleted without waiting")
+                        && e.contains("not dropped by --lenientPolicyConversion"),
+                    "{phase} lenient={lenient}: {e}"
+                );
+            }
+        }
     }
 
     /// TST-BRK-ILM-001 over generated policies: any mix of phases (known, unknown), every
@@ -776,12 +807,16 @@ mod tests {
         }
 
         /// Expected refusals as (phase, needles that its message must contain).
-        fn expected(ilm: &Value) -> (Vec<Vec<String>>, bool, bool) {
+        fn expected(ilm: &Value) -> (Vec<Vec<String>>, Vec<&'static str>, bool) {
             let mut out = Vec::new();
-            let mut fatal = false;
+            let mut fatal = Vec::new();
             let mut convertible = false;
             for (p, def) in ilm["phases"].as_object().unwrap() {
                 let ph = format!("phase '{p}'");
+                // L-651a: refused in both modes, in any phase
+                if def["actions"].get("wait_for_snapshot").is_some() {
+                    fatal.push("action 'wait_for_snapshot'");
+                }
                 if !PHASES.contains(&p.as_str()) {
                     out.push(vec![format!("unknown phase '{p}'")]);
                     continue;
@@ -790,7 +825,7 @@ mod tests {
                     .get("min_age")
                     .is_some_and(|a| !a.as_str().is_some_and(|a| AGES.contains(&a)))
                 {
-                    fatal = true;
+                    fatal.push("min_age");
                 }
                 if p == "frozen" {
                     out.push(vec![ph]);
@@ -998,10 +1033,11 @@ mod tests {
                 let (problems, fatal, convertible) = expected(&ilm);
                 let strict = convert("gen", &ilm, false);
                 let lenient = convert("gen", &ilm, true);
-                if fatal {
+                if !fatal.is_empty() {
                     for r in [&strict, &lenient] {
                         let e = format!("{:#}", r.as_ref().unwrap_err());
-                        prop_assert!(e.contains("min_age") && e.contains("'gen'"), "{e}");
+                        prop_assert!(e.contains("'gen'") && e.contains("not dropped"), "{e}");
+                        prop_assert!(fatal.iter().all(|n| e.contains(n)), "{ilm}: {fatal:?} not named in {e}");
                     }
                     return Ok(());
                 }

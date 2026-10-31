@@ -1528,9 +1528,61 @@ async fn l651_opensearch_accepts_every_converted_ilm_policy() {
         "warm": {"min_age": "90m", "actions": {"forcemerge": {"max_num_segments": 1}, "allocate": {"number_of_replicas": 0, "require": {"box": "warm"}}, "shrink": {"number_of_shards": 1}, "readonly": {}}},
         "cold": {"min_age": "7d", "actions": {"set_priority": {"priority": 0}, "searchable_snapshot": {"snapshot_repository": "r"}}},
         "frozen": {"min_age": "14d", "actions": {"searchable_snapshot": {"snapshot_repository": "r"}}},
-        "delete": {"min_age": "30d", "actions": {"wait_for_snapshot": {"policy": "s"}, "delete": {}}}
+        "delete": {"min_age": "30d", "actions": {"delete": {}}}
     }));
     policies.push(json!({"warm": {"min_age": "2d", "actions": {"readonly": {}}}, "delete": {"min_age": "0", "actions": {"delete": {}}}}));
+    // L-651a: wait_for_snapshot is refused in both modes (dropping it would delete without
+    // waiting for the snapshot): each such policy alone is refused, naming policy and phase,
+    // and nothing is written; the rest go through as before
+    let (wfs, policies): (Vec<Value>, Vec<Value>) = policies
+        .into_iter()
+        .partition(|ph| ph.to_string().contains("wait_for_snapshot"));
+    assert!(wfs.len() >= 5, "{}", wfs.len());
+    for (i, ph) in wfs.iter().enumerate() {
+        let wname = format!("{p}_wfs_{i}");
+        let wfile = tmp_path("api_ilm_wfs", "json");
+        std::fs::write(
+            &wfile,
+            json!({ &wname: {"policy": {"phases": ph}} }).to_string() + "\n",
+        )
+        .unwrap();
+        let o = run(io(
+            &c,
+            wfile.to_str().unwrap(),
+            &c.url_with_auth(""),
+            &[
+                "--type",
+                "policy",
+                "--convertIlmToIsm",
+                "--lenientPolicyConversion",
+            ],
+        ))
+        .await;
+        let e = String::from_utf8_lossy(&o.stderr);
+        let phase = ph
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, d)| d["actions"].get("wait_for_snapshot").is_some())
+            .map(|(k, _)| k.clone())
+            .unwrap();
+        assert_eq!(o.status.code(), Some(1), "{ph}: {e}");
+        assert!(
+            e.contains(&format!("ILM policy '{wname}'"))
+                && e.contains(&format!("phase '{phase}' action 'wait_for_snapshot'"))
+                && e.contains("not dropped by --lenientPolicyConversion"),
+            "{ph}: {e}"
+        );
+        // 404, or 503 on a fresh cluster whose ISM config index does not exist yet
+        let (status, body) = c
+            .call("GET", &format!("_plugins/_ism/policies/{wname}"), None)
+            .await;
+        assert!(
+            [404, 503].contains(&status),
+            "{wname} written: {status} {body}"
+        );
+        let _ = std::fs::remove_file(wfile);
+    }
     let n = policies.len();
     let name = |i: usize| format!("{p}_{i:04}");
     let doc: serde_json::Map<String, Value> = policies
@@ -1619,6 +1671,100 @@ async fn l651_opensearch_accepts_every_converted_ilm_policy() {
     }
     let _ = std::fs::remove_file(file);
     let _ = std::fs::remove_file(sfile);
+}
+
+// L-651a (user decision): the cluster rejects a policy partway through a set (an unknown
+// ISM action, injected as the third of four). OpenSearch 1.3.20, 2.19.7 and 3.9.0: the
+// policy this run created is deleted, the one it overwrote gets its previous body back, the
+// one after the rejection is never written, and the error says so.
+#[tokio::test]
+async fn l651a_a_policy_rejected_mid_set_is_rolled_back() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) {
+        return;
+    }
+    let p = unique("rb");
+    let state = |d: &str, action: Value| json!({"description": d, "default_state": "hot", "states": [{"name": "hot", "actions": [action], "transitions": []}]});
+    let old = state("OLD", json!({"read_only": {}}));
+    let (st, body) = c
+        .call(
+            "PUT",
+            &format!("_plugins/_ism/policies/{p}_old"),
+            Some(json!({ "policy": old })),
+        )
+        .await;
+    assert!(st < 300, "{st} {body}");
+    let names = [
+        format!("{p}_new0"),
+        format!("{p}_old"),
+        format!("{p}_bad"),
+        format!("{p}_new3"),
+    ];
+    let mut doc = serde_json::Map::new();
+    doc.insert(
+        names[0].clone(),
+        json!({"policy": state("NEW", json!({"read_only": {}}))}),
+    );
+    doc.insert(
+        names[1].clone(),
+        json!({"policy": state("NEW", json!({"read_write": {}}))}),
+    );
+    doc.insert(
+        names[2].clone(),
+        json!({"policy": state("NEW", json!({"no_such_ism_action": {}}))}),
+    );
+    doc.insert(
+        names[3].clone(),
+        json!({"policy": state("NEW", json!({"read_only": {}}))}),
+    );
+    let file = tmp_path("api_ism_rollback", "json");
+    std::fs::write(&file, Value::Object(doc).to_string() + "\n").unwrap();
+    let o = run(io(
+        &c,
+        file.to_str().unwrap(),
+        &c.url_with_auth(""),
+        &["--type", "policy"],
+    ))
+    .await;
+    let e = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1), "{e}");
+    assert!(
+        e.contains(&format!("restoring policy '{}' (the cluster rejected it)", names[2]))
+            && e.contains(&format!(
+                "rolled back this run's 2 write(s): deleted the policies it had created: {}; put back the previous version of the policies it had overwritten: {}. Rollback succeeded",
+                names[0], names[1]
+            )),
+        "{e}"
+    );
+    for n in [&names[0], &names[2], &names[3]] {
+        let (st, body) = c
+            .call("GET", &format!("_plugins/_ism/policies/{n}"), None)
+            .await;
+        assert_eq!(st, 404, "{n}: {body}");
+    }
+    let v = c
+        .ok("GET", &format!("_plugins/_ism/policies/{}", names[1]), None)
+        .await;
+    assert_eq!(v["policy"]["description"], "OLD", "{v}");
+    assert_eq!(
+        v["policy"]["states"][0]["actions"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| !["retry", "timeout"].contains(&k.as_str()))
+            .collect::<Vec<_>>(),
+        ["read_only"],
+        "{v}"
+    );
+    let _ = c
+        .call(
+            "DELETE",
+            &format!("_plugins/_ism/policies/{}", names[1]),
+            None,
+        )
+        .await;
+    let _ = std::fs::remove_file(file);
 }
 
 // L-652 (TST-BRK-ILM-002): odd but valid ILM policies, restored strictly with

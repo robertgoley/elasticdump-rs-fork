@@ -212,15 +212,13 @@ pub async fn write(
     opts: &MetaOptions,
 ) -> Result<WriteReport> {
     match (normalize(&doc)?, info.is_opensearch()) {
-        (Policies::Ilm(list), false) => {
-            put_all(list, opts, |n, p| put_ilm(client, n, p, opts)).await
-        }
+        (Policies::Ilm(list), false) => put_all(list, opts, client, Kind::Ilm).await,
         (Policies::Ism(list), true) => {
             let list = list
                 .into_iter()
                 .map(|(n, p)| clean_ism(p, dst, opts).map(|p| (n, p)))
                 .collect::<Result<Vec<_>>>()?;
-            put_all(list, opts, |n, p| put_ism(client, n, p, opts)).await
+            put_all(list, opts, client, Kind::Ism).await
         }
         (Policies::Ism(list), false) => {
             if list.is_empty() {
@@ -277,47 +275,221 @@ pub async fn write(
                     "Converted ILM policies are not attached to any index: add an ism_template or use POST _plugins/_ism/add/<index>"
                 );
             }
-            let mut r = put_all(converted, opts, |n, p| put_ism(client, n, p, opts)).await?;
+            let mut r = put_all(converted, opts, client, Kind::Ism).await?;
             r.failed += failed;
             Ok(r)
         }
     }
 }
 
-async fn put_all<F, Fut>(
+#[derive(Clone, Copy)]
+enum Kind {
+    Ilm,
+    Ism,
+}
+
+/// What one policy PUT did, so a rejected set can be rolled back (L-651a).
+enum Put {
+    /// `--skip-existing` and the policy exists: nothing written.
+    Skipped,
+    /// The policy did not exist; this run created it.
+    Created,
+    /// The policy existed; this run overwrote it. Holds the PUT body of the previous version.
+    Overwrote(Value),
+}
+
+impl Kind {
+    fn segs(self, name: &str) -> Vec<&str> {
+        match self {
+            Kind::Ilm => vec!["_ilm", "policy", name],
+            Kind::Ism => vec![ISM, "_ism", "policies", name],
+        }
+    }
+}
+
+async fn put_all(
     list: Vec<(String, Value)>,
     opts: &MetaOptions,
-    put: F,
-) -> Result<WriteReport>
-where
-    F: Fn(String, Value) -> Fut,
-    Fut: std::future::Future<Output = Result<bool>>,
-{
+    client: &EsClient,
+    kind: Kind,
+) -> Result<WriteReport> {
     let mut report = WriteReport::default();
-    let mut written: Vec<String> = Vec::new();
+    let mut written: Vec<(String, Put)> = Vec::new();
     for (name, p) in list {
-        match put(name.clone(), p).await {
-            Ok(true) => {
+        let r = match kind {
+            Kind::Ilm => put_ilm(client, name.clone(), p, opts).await,
+            Kind::Ism => put_ism(client, name.clone(), p, opts).await,
+        };
+        match r {
+            Ok(Put::Skipped) => {}
+            Ok(put) => {
                 report.written += 1;
-                written.push(name);
+                written.push((name, put));
             }
-            Ok(false) => {}
             Err(e) if opts.ignore_errors => {
                 log::error!("policy '{name}' failed (--ignore-errors): {e:#}");
                 report.failed += 1;
             }
-            // L-651: everything was converted and checked before the first write; a
-            // policy the cluster still rejects names what this run already wrote
+            // L-651: everything was converted and checked before the first write. L-651a: a
+            // policy the cluster still rejects rolls back what this run wrote: policies it
+            // created are deleted, policies it overwrote get their previous body back.
             Err(e) if !written.is_empty() => {
+                let summary = roll_back(client, opts, kind, &written).await;
                 return Err(e.context(format!(
-                    "restoring policy '{name}' (the cluster rejected it; already written by this run: {}; a rerun overwrites them unless --skip-existing)",
-                    name_list(&written)
+                    "restoring policy '{name}' (the cluster rejected it); {summary}"
                 )));
             }
-            Err(e) => return Err(e.context(format!("restoring policy '{name}'"))),
+            Err(e) => {
+                return Err(e.context(format!(
+                    "restoring policy '{name}' (the cluster rejected it; nothing was written by this run)"
+                )));
+            }
         }
     }
     Ok(report)
+}
+
+/// Undo this run's writes, newest first; says what was rolled back and whether it all worked.
+async fn roll_back(
+    client: &EsClient,
+    opts: &MetaOptions,
+    kind: Kind,
+    written: &[(String, Put)],
+) -> String {
+    let mut deleted = Vec::new();
+    let mut restored = Vec::new();
+    let mut failed = Vec::new();
+    for (name, put) in written.iter().rev() {
+        let segs = kind.segs(name);
+        let r = match put {
+            Put::Skipped => continue,
+            Put::Created => send_json(
+                client,
+                opts.retry,
+                Method::DELETE,
+                &segs,
+                &Value::Null,
+                "roll back (delete) policy",
+            )
+            .await
+            .map(|_| deleted.push(name.clone())),
+            Put::Overwrote(prev) => restore_previous(client, opts, kind, &segs, prev)
+                .await
+                .map(|_| restored.push(name.clone())),
+        };
+        if let Err(e) = r {
+            let what = match put {
+                Put::Created => "not deleted, it stays as this run wrote it",
+                _ => "previous version not restored, it stays as this run wrote it",
+            };
+            log::error!("rolling back policy '{name}': {e:#}");
+            failed.push(format!("{name} ({what}: {e})"));
+        }
+    }
+    deleted.reverse();
+    restored.reverse();
+    failed.reverse();
+    let mut parts = Vec::new();
+    if !deleted.is_empty() {
+        parts.push(format!(
+            "deleted the policies it had created: {}",
+            name_list(&deleted)
+        ));
+    }
+    if !restored.is_empty() {
+        parts.push(format!(
+            "put back the previous version of the policies it had overwritten: {}",
+            name_list(&restored)
+        ));
+    }
+    let done = if parts.is_empty() {
+        "nothing".to_string()
+    } else {
+        parts.join("; ")
+    };
+    if failed.is_empty() {
+        format!(
+            "rolled back this run's {} write(s): {done}. Rollback succeeded: the policies are as they were before this run",
+            written.len()
+        )
+    } else {
+        format!(
+            "rolled back this run's writes: {done}. Rollback FAILED for {} polic{}: {}",
+            failed.len(),
+            if failed.len() == 1 { "y" } else { "ies" },
+            failed.join("; ")
+        )
+    }
+}
+
+async fn restore_previous(
+    client: &EsClient,
+    opts: &MetaOptions,
+    kind: Kind,
+    segs: &[&str],
+    prev: &Value,
+) -> Result<()> {
+    match kind {
+        Kind::Ilm => {
+            send_json(
+                client,
+                opts.retry,
+                Method::PUT,
+                segs,
+                prev,
+                "roll back (restore) ILM policy",
+            )
+            .await?;
+        }
+        Kind::Ism => {
+            // ISM refuses blind updates: overwrite this run's version by its sequence number
+            let cur = get_json_q(client, opts.retry, segs, &[], "GET ISM policy").await?;
+            let seq = cur["_seq_no"].to_string();
+            let term = cur["_primary_term"].to_string();
+            send_json_q(
+                client,
+                opts.retry,
+                Method::PUT,
+                segs,
+                &[
+                    ("if_seq_no", seq.as_str()),
+                    ("if_primary_term", term.as_str()),
+                ],
+                prev,
+                "roll back (restore) ISM policy",
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// PUT body that recreates an ISM policy as read from `GET _plugins/_ism/policies/<id>`
+/// (server-generated fields dropped, nothing renamed).
+fn ism_restore_body(cur: &Value) -> Value {
+    let mut p = cur["policy"].clone();
+    if let Value::Object(m) = &mut p {
+        for k in ["policy_id", "last_updated_time", "schema_version"] {
+            m.shift_remove(k);
+        }
+        match m.get_mut("ism_template") {
+            Some(Value::Array(ts)) => {
+                for t in ts.iter_mut() {
+                    if let Value::Object(t) = t {
+                        t.shift_remove("last_updated_time");
+                    }
+                }
+            }
+            Some(Value::Object(t)) => {
+                t.shift_remove("last_updated_time");
+            }
+            Some(Value::Null) => {
+                m.shift_remove("ism_template");
+            }
+            _ => {}
+        }
+    }
+    json!({ "policy": p })
 }
 
 /// ISM lost the race to create its config index (not an existing policy).
@@ -348,20 +520,20 @@ pub fn ilm_body(p: &Value) -> Value {
     json!({ "policy": out })
 }
 
-async fn put_ilm(client: &EsClient, name: String, p: Value, opts: &MetaOptions) -> Result<bool> {
-    if opts.skip_existing
-        && get_json_opt(
-            client,
-            opts.retry,
-            &["_ilm", "policy", &name],
-            &[],
-            "GET ILM policy",
-        )
-        .await?
-        .is_some()
-    {
+async fn put_ilm(client: &EsClient, name: String, p: Value, opts: &MetaOptions) -> Result<Put> {
+    // L-651a: read the current version first, so a rejected set can put it back
+    let prev = get_json_opt(
+        client,
+        opts.retry,
+        &["_ilm", "policy", &name],
+        &[],
+        "GET ILM policy",
+    )
+    .await?
+    .and_then(|v| v.get(&name).and_then(|e| e.get("policy")).cloned());
+    if opts.skip_existing && prev.is_some() {
         log::warn!("ILM policy '{name}' already exists; skipping it (--skip-existing)");
-        return Ok(false);
+        return Ok(Put::Skipped);
     }
     send_json(
         client,
@@ -372,7 +544,10 @@ async fn put_ilm(client: &EsClient, name: String, p: Value, opts: &MetaOptions) 
         "put ILM policy",
     )
     .await?;
-    Ok(true)
+    Ok(match prev {
+        Some(prev) => Put::Overwrote(ilm_body(&prev)),
+        None => Put::Created,
+    })
 }
 
 /// Drop server-generated ISM fields; rename `ism_template` patterns with
@@ -413,7 +588,7 @@ pub fn clean_ism(mut p: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<V
     Ok(p)
 }
 
-async fn put_ism(client: &EsClient, id: String, p: Value, opts: &MetaOptions) -> Result<bool> {
+async fn put_ism(client: &EsClient, id: String, p: Value, opts: &MetaOptions) -> Result<Put> {
     let segs = [ISM, "_ism", "policies", id.as_str()];
     let body = json!({ "policy": p });
     let mut tries = 0;
@@ -440,11 +615,11 @@ async fn put_ism(client: &EsClient, id: String, p: Value, opts: &MetaOptions) ->
         }
     };
     match first {
-        Ok(_) => Ok(true),
+        Ok(_) => Ok(Put::Created),
         Err(e) if status_of(&e) == Some(409) => {
             if opts.skip_existing {
                 log::warn!("ISM policy '{id}' already exists; skipping it (--skip-existing)");
-                return Ok(false);
+                return Ok(Put::Skipped);
             }
             // overwrite with the current sequence number (ISM refuses blind updates)
             let cur = get_json_q(client, opts.retry, &segs, &[], "GET ISM policy").await?;
@@ -471,7 +646,7 @@ async fn put_ism(client: &EsClient, id: String, p: Value, opts: &MetaOptions) ->
                     e
                 }
             })?;
-            Ok(true)
+            Ok(Put::Overwrote(ism_restore_body(&cur)))
         }
         Err(e) => Err(e),
     }

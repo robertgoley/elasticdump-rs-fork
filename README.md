@@ -242,7 +242,8 @@ dropped or approximated feature is logged as a warning. Unsafe features fail the
 | `delete` | `delete` | `delete_searchable_snapshot` dropped (warned) |
 | `migrate`, implicit tier migration | — | dropped with a warning (OpenSearch has no data tiers) |
 | `_meta.description` (a string) | `description` | other `_meta` keys (nested ones too), a non-string `description` and `deprecated` dropped (warned) |
-| `frozen` phase, `searchable_snapshot`, `downsample`, `wait_for_snapshot`, `unfollow`, `freeze`, `total_shards_per_node`, `index_codec`, `allow_write_after_shrink: true`, `max_primary_shard_docs`, `min_*` rollover conditions, a `rollover` / `forcemerge` / `shrink` without its size, unknown phases, actions, action options or phase keys | — | **refused** unless `--lenientPolicyConversion`; dropping `wait_for_snapshot` is warned as "deleted without waiting for snapshot policy …" |
+| `frozen` phase, `searchable_snapshot`, `downsample`, `unfollow`, `freeze`, `total_shards_per_node`, `index_codec`, `allow_write_after_shrink: true`, `max_primary_shard_docs`, `min_*` rollover conditions, a `rollover` / `forcemerge` / `shrink` without its size, unknown phases, actions, action options or phase keys | — | **refused** unless `--lenientPolicyConversion` |
+| `wait_for_snapshot` (any phase) | — | **refused even with `--lenientPolicyConversion`**, naming the policy and phase: ISM has no equivalent, and dropping it would delete the indices without waiting for the snapshot (L-651a) |
 | a `min_age` that is not a whole-number duration (`7`, `"soon"`, `null`, `1.5h`, which OpenSearch rejects) | — | **refused even with `--lenientPolicyConversion`**: read as 0 it would start the next phase (e.g. `delete`) at once (L-651) |
 
 Converted policies are not attached to indices (ILM attaches through `index.lifecycle.name`, ISM through
@@ -253,8 +254,12 @@ ILM policies × strict/lenient on OpenSearch 1.3.20, 2.19.7 and 3.9.0; every con
 
 A set of policies is all or nothing at conversion: every policy is converted and checked before the first one is
 written, so one refused policy writes none of them (`--ignore-errors` skips it and writes the rest). If the cluster
-itself then rejects a policy, the error names it and the policies this run already wrote (nothing is rolled back;
-a rerun overwrites them unless `--skip-existing`). The first policy writes on a fresh OpenSearch
+itself then rejects a policy partway through the set, the run is rolled back before it exits (L-651a): policies this
+run created are deleted, policies it overwrote get their previous body back (newest first; nothing it did not write is
+touched, and policies after the rejected one are never sent). The error names the rejected policy, what was rolled back
+and whether the rollback succeeded; if a delete or restore fails, it names exactly which policies could not be put back
+and how they were left. `--ignore-errors` skips the rejected policy and keeps the rest (no rollback). Live-tested on
+OpenSearch 1.3.20, 2.19.7 and 3.9.0 with an unknown ISM action injected third of four. The first policy writes on a fresh OpenSearch
 cluster can race another client creating the ISM config index; that rejection is retried, not read as an existing policy. L-651: a proptest over every phase × every ILM action (and unknown ones) × convertible and unconvertible
 options (4,096 cases per run, 300,000 once) checks against an independent model that exactly the unsupported parts
 are refused (strict) or dropped one `DROPPED` line each (lenient) and that the result is a well-formed ISM policy;
