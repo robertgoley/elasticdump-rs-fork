@@ -5491,6 +5491,88 @@ async fn l650_scroll_id_resumes_exactly_where_the_cursor_is() {
     assert!(!out.exists(), "a failed resume committed output");
 }
 
+// L-650b: what a run that did not end in time is doing, read before it is killed: the
+// output directory, /proc status, wchan, syscall and kernel stack of every thread (the last
+// two need privileges and say so when refused), load average, and a gdb backtrace of all
+// threads when gdb is installed (attaches for the dump only; the process is killed next).
+#[cfg(unix)]
+fn l650b_process_state(pid: u32, dir: &std::path::Path) -> String {
+    let rd = |p: String| {
+        std::fs::read_to_string(&p)
+            .map(|t| t.trim_end().to_string())
+            .unwrap_or_else(|e| format!("({e})"))
+    };
+    let mut out = format!(
+        "--- files ---\n{:?}\n",
+        l648_files(dir).keys().collect::<Vec<_>>()
+    );
+    out += &format!("--- loadavg ---\n{}\n", rd("/proc/loadavg".into()));
+    let status = rd(format!("/proc/{pid}/status"));
+    let keep = [
+        "State",
+        "Threads",
+        "VmRSS",
+        "voluntary_ctxt_switches",
+        "nonvoluntary_ctxt_switches",
+    ];
+    out += "--- status ---\n";
+    for l in status
+        .lines()
+        .filter(|l| keep.iter().any(|k| l.starts_with(k)))
+    {
+        out += &format!("{l}\n");
+    }
+    out += &format!("io: {}\n", rd(format!("/proc/{pid}/io")).replace('\n', " "));
+    let mut tids: Vec<String> = std::fs::read_dir(format!("/proc/{pid}/task"))
+        .map(|r| {
+            r.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    tids.sort();
+    for t in tids {
+        let base = format!("/proc/{pid}/task/{t}");
+        let stat = rd(format!("{base}/stat"));
+        let st = stat
+            .rsplit(") ")
+            .next()
+            .and_then(|r| r.split(' ').next())
+            .unwrap_or("?")
+            .to_string();
+        out += &format!(
+            "--- thread {t} {} state {st} wchan {} ---\nsyscall: {}\nstack: {}\n",
+            rd(format!("{base}/comm")),
+            rd(format!("{base}/wchan")),
+            rd(format!("{base}/syscall")),
+            rd(format!("{base}/stack")).replace('\n', " | "),
+        );
+    }
+    let gdb = Command::new("timeout")
+        .args([
+            "20",
+            "gdb",
+            "-p",
+            &pid.to_string(),
+            "-batch",
+            "-nx",
+            "-ex",
+            "thread apply all bt",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output();
+    out += &match gdb {
+        Ok(o) => format!(
+            "--- gdb ({:?}) ---\n{}{}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Err(e) => format!("--- gdb: {e} ---\n"),
+    };
+    out
+}
+
 // L-650a (TST-BRK-SIG-005): a metadata dump to a file (here a large mapping) stopped by
 // SIGINT / SIGTERM while its output is staged leaves no staging file and the earlier output
 // untouched (exit 130 / 143), or, if the signal came after the commit (also when it still
@@ -5587,10 +5669,16 @@ async fn l650a_signal_during_a_metadata_dump_to_a_file_leaves_no_staging() {
                         .status();
                     break;
                 }
-                assert!(
-                    start.elapsed() < Duration::from_secs(60),
-                    "{tag}: run never ended"
-                );
+                if start.elapsed() >= Duration::from_secs(60) {
+                    // L-650b: say whether the process is stuck (and where) or just slow
+                    let state = l650b_process_state(child.id(), &d);
+                    let _ = child.kill();
+                    let o = child.wait_with_output().unwrap();
+                    panic!(
+                        "{tag}: run never ended (60 s, staged seen: {staged}; the unsignalled reference run took {took:?})\n{state}\n--- stderr ---\n{}",
+                        String::from_utf8_lossy(&o.stderr)
+                    );
+                }
             }
             let o = child.wait_with_output().unwrap();
             (
