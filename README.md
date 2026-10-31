@@ -1,3 +1,6 @@
+# elasticdump-rs-fork
+AI powered rewrite of elasticdump based on previous partial work from the elasticdump-rs project.  Many new types and features added.  Aim is feature parity with elasticdump nodejs version with increased performance and a few add on features for usability or speed.
+
 # elasticdump-rs
 
 A Rust re-implementation of the parts of [elasticdump](https://github.com/elasticsearch-dump/elasticsearch-dump)
