@@ -155,6 +155,79 @@ runs the self-test, then `--tiers T1,T7,T2`.
 Not covered: the `--features chaos` toxiproxy tests and cross-engine runs need a second
 container or proxy reachable from the namespace; they stay in their own nightly jobs.
 
+## Syscall and file-access tracing (SUP-002, L-702)
+
+`scripts/sup/trace.sh` runs a command matrix under
+`strace -ff -y -s 0 -e trace=%file,%network,%process` and checks every traced syscall
+against the reviewed allow-list `scripts/sup/trace-allow.txt` with
+`scripts/sup/trace-check.py`. The matrix runs against single-node clusters from
+`scripts/it/up.sh`:
+
+* `plain` (`opensearch-plain`): dump data, mapping, settings, alias, analyzer and template
+  to files; split output (`--fileSize`, `--maxRows`); gzip output; output to stdout; restore
+  settings, mapping and data from files; gzip restore; restore from stdin; cluster-to-cluster
+  copy; a failing run (missing index).
+* `tls` (`opensearch-secure`): dump with `--input-ca` and `--httpAuthFile`, dump with a client
+  certificate (`--input-cert`/`--input-key --tlsAuth`), and restore over TLS.
+
+Each run starts from the work directory with `env -i PATH HOME LANG`. `HOME` is a directory
+of its own that the allow-list does not cover, so reading a dotfile would show up. The checker
+turns each syscall into an entry and rewrites it with placeholders: `@BIN`, `@WORK` (input,
+output dir, `.part` staging files, auth file), `@CA`/`@CERT`/`@KEY`/`@KEYENC` and `@PORT`.
+The entry kinds are:
+
+* `exec PATH`
+* `path PATH`: every path argument of a `%file` syscall, made absolute through the start
+  directory or the `-y`-decoded dirfd. Failed probes count too.
+* `connect ADDR`: also `sendto`/`sendmsg` with an address.
+* `bind ADDR`
+* `socket FAMILY/TYPE`
+* `process fork`: a clone without `CLONE_THREAD`.
+* `syscall NAME`
+
+Each rule is `KIND PATTERN  # reason`, where `*` and `?` are the only wildcards. Entries that
+no rule matches are the allow-list diff (`+ KIND VALUE`), and the run fails unless that diff
+is empty. A new path, address or child process therefore needs a reviewed change to
+`trace-allow.txt`.
+
+What the list allows today:
+
+* Process: the one `execve` of the binary, and threads only.
+* Network: TCP to the cluster port on 127.0.0.1 / ::1. Also glibc's `getaddrinfo("localhost")`:
+  * the nscd socket probe;
+  * a netlink RTM_GETADDR to the kernel;
+  * UDP connects to port 0 for RFC 6724 source-address selection. No datagram is sent.
+* Files:
+  * the user-named files and the work directory;
+  * the system CA store locations that rustls-native-certs probes;
+  * `/etc/{hosts,resolv.conf,nsswitch.conf,host.conf,gai.conf,localtime}` and a `stat("/")`
+    by glibc NSS;
+  * dynamic-loader paths;
+  * `/proc/self/*` and `/proc/meminfo` (memory guard);
+  * `/proc/sys/vm/overcommit_memory` (glibc malloc `check_may_shrink_heap`);
+  * CPU-count and cgroup v2 `cpu.max`/`memory.max`/`cgroup.controllers` files.
+
+Not on the list, so each of these fails the run: a DNS query, any other address or port, a
+listening socket, a child process, `$HOME` and every other path.
+
+`-s 0` keeps socket buffers out of the traces: request bytes, which may carry an
+Authorization header, show as `""...`. Pathnames are printed in full regardless.
+
+`scripts/sup/trace.sh --selftest` runs two sets of checks:
+
+* `trace-check.py --selftest`: planted strace lines for each entry kind must be caught and a
+  clean trace must pass.
+* Live plants against the plain node, each of which must fail while the control passes:
+  * the binary started through `sh -c`, which adds an `execve`, a fork and `wait4`;
+  * `--input` pointing at a port that is not the cluster's;
+  * the control trace checked against the list without its `/proc/meminfo` rule.
+
+Output goes to `${TRACE_LOG_DIR:-$IT_DIR/trace}/`: `trace-summary.log` with
+`RUN`/`TRACE case=... diff=N OK|FAIL`/`TRACE_DONE` lines, `observed.tsv` (every rewritten
+entry per case), and `<case>/{strace.*,stdout,stderr,check.log}`. The runner needs host
+`strace` (6.13 here). Tracing an own child process needs no extra privilege. Nightly
+(`nightly.yml`, job `trace`) runs the self-test, then the full matrix.
+
 ## SBOM diff per PR (SUP-011, L-207)
 
 `scripts/sup/sbom-pr.sh <base-ref>` checks the base out into a temporary worktree and compares it with HEAD. It builds the following for both sides:

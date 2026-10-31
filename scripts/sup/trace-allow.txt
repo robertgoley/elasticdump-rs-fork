@@ -1,0 +1,90 @@
+# L-702 (TST-SUP-002) allow-list for scripts/sup/trace.sh / trace-check.py.
+# `KIND PATTERN  # reason`; PATTERN is an fnmatch glob (`*` crosses `/`) over the value after
+# placeholder rewriting: @BIN the binary, @WORK the work directory (input files, output dir,
+# staging `.part` files, --httpAuthFile), @CA/@CERT/@KEY/@KEYENC the TLS files given on the
+# command line, @PORT the cluster port. @HOME (the run's own HOME) is deliberately absent.
+# Any entry no rule matches fails the run: a new path, address or child process needs a
+# reviewed change to this file (see docs/SUPPLY-CHAIN.md, "Syscall and file-access tracing").
+
+# --- process: the binary itself, threads only
+exec     @BIN                                  # the one execve: the binary under test
+syscall  clone3:thread                         # tokio / rayon worker threads (CLONE_THREAD)
+syscall  clone:thread                          # same, older libc path
+syscall  exit                                  # thread exit
+syscall  exit_group                            # process exit
+
+# --- network: loopback cluster only
+socket   AF_INET/SOCK_STREAM                   # HTTP(S) client socket
+socket   AF_INET6/SOCK_STREAM                  # same over ::1 (`localhost` may resolve to it)
+connect  127.0.0.1:@PORT                       # the test cluster
+connect  [::1]:@PORT                           # the test cluster via ::1
+syscall  socketpair                            # tokio's in-process wakeup pair (AF_UNIX, no address)
+syscall  setsockopt                            # TCP_NODELAY / keepalive on the client socket
+syscall  getsockopt                            # SO_ERROR after a non-blocking connect
+syscall  getsockname                           # local address of the client socket
+syscall  getpeername                           # peer address of the client socket
+syscall  recvfrom                              # reads on the client socket
+syscall  sendto                                # writes on the connected client socket (no address)
+syscall  shutdown                              # connection close
+
+# --- network: glibc getaddrinfo("localhost") (the TLS cases use https://localhost:PORT);
+#     all of it stays in the process or the kernel, no datagram is sent
+connect  unix:/var/run/nscd/socket             # nscd probe (absent: ENOENT), glibc tries it first
+socket   AF_UNIX/SOCK_STREAM                   # the nscd probe socket
+socket   AF_NETLINK/SOCK_RAW                   # RTM_GETADDR: which address families are configured (AI_ADDRCONFIG)
+bind     netlink:pid=0                         # that netlink socket, kernel-assigned port id
+connect  netlink:pid=0                         # its request to the kernel (sendto with the kernel's address)
+syscall  recvmsg                               # its reply
+socket   AF_INET/SOCK_DGRAM                    # RFC 6724 source-address selection ...
+socket   AF_INET6/SOCK_DGRAM                   # ... for each resolved address:
+connect  127.0.0.1:0                           # a UDP connect to port 0 only asks the kernel for a route
+connect  [::1]:0                               # same for ::1; nothing is sent
+
+# --- files: what the user names (input, output dir, staging, auth file, certs)
+path     @WORK                                 # the start directory
+path     @WORK/*                               # input files, output dir, `.part` staging files, --httpAuthFile
+path     @CA                                   # --input-ca / --output-ca
+path     @CERT                                 # --input-cert
+path     @KEY                                  # --input-key
+path     @KEYENC                               # --input-key (encrypted PKCS#8)
+path     @BIN                                  # /proc/self/exe-style lookups of the binary
+
+# --- files: system CA store (rustls-native-certs probes every distro's location)
+path     /etc/ssl/certs                        # Debian/Ubuntu CA dir
+path     /etc/ssl/certs/*                      # its hashed links and PEM files
+path     /etc/ssl/cert.pem                     # Alpine/macOS-style bundle probe
+path     /etc/ssl/certs.pem                    # bundle probe
+path     /etc/pki/tls/*                        # RHEL/Fedora probe
+path     /etc/pki/tls/certs                    # RHEL/Fedora probe
+path     /etc/pki/ca-trust/*                   # RHEL/Fedora probe
+path     /etc/security/certificates            # Android-style probe
+path     /usr/share/ca-certificates/*          # targets of the /etc/ssl/certs links
+path     /usr/local/share/certs/*              # FreeBSD-style probe
+path     /etc/openssl/certs                    # NetBSD-style probe
+path     /var/ssl/*                            # AIX-style probe
+path     /usr/local/ssl/*                      # OpenSSL-default probe
+path     /usr/lib/ssl/*                        # Debian OpenSSL dir probe
+path     /opt/etc/ssl/*                        # opkg-style probe
+
+# --- files: name resolution (glibc getaddrinfo for `localhost`)
+path     /etc/hosts                            # localhost
+path     /etc/resolv.conf                      # resolver config (read, no DNS query is allowed)
+path     /etc/nsswitch.conf                    # NSS order
+path     /etc/host.conf                        # resolver options
+path     /etc/gai.conf                         # address sorting
+path     /                                     # glibc NSS: stat("/") to notice a chroot before reloading nsswitch
+path     /etc/localtime                        # timestamps in logs
+
+# --- files: dynamic loader and runtime facts
+path     /etc/ld.so.cache                      # loader cache
+path     /etc/ld.so.preload                    # loader probe (absent)
+path     /lib/x86_64-linux-gnu/*.so*           # libc, libm, libgcc_s
+path     /usr/lib/x86_64-linux-gnu/*.so*       # same, merged-/usr path
+path     /lib64/ld-linux-x86-64.so.2           # the loader
+path     /proc/self/*                          # cgroup, limits, maps (stack guard), fd lookups
+path     /proc/meminfo                         # memory guard: available memory
+path     /proc/sys/vm/overcommit_memory        # glibc malloc (arena.c check_may_shrink_heap) when a thread arena shrinks
+path     /sys/devices/system/cpu/online        # std::thread::available_parallelism
+path     /sys/fs/cgroup/*cpu.max               # cgroup v2 CPU quota (available_parallelism)
+path     /sys/fs/cgroup/*memory.max            # cgroup v2 memory limit (memory guard)
+path     /sys/fs/cgroup/*cgroup.controllers    # cgroup v2 detection
