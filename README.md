@@ -267,6 +267,21 @@ unconditional transition); a delete-only policy, a rollover-only hot phase, nest
 (`politique-é-日本`) convert. Live, OpenSearch 1.3.20, 2.19.7 and 3.9.0 accept all 42 such policies and return the
 states, transitions and units unchanged.
 
+Elasticsearch built-in policies (L-653): with `--filterManaged false`, every built-in ILM policy of ES 7.10.2,
+7.17.29, 8.6.1, 8.19.23 and 9.1.2 (6 to 46 per version: `logs`, `metrics`, `synthetics`, `*-days-default`,
+`*@lifecycle`, `ilm-history-ilm-policy`, `slm-history-ilm-policy`, `watch-history-ilm-policy*`, APM, Fleet,
+`.deprecation-indexing-ilm-policy`, `.monitoring-8-ilm-policy`) converts strictly, with nothing dropped, ids with a
+leading `.` or an `@` kept as they are. Each one marked `_meta.managed: true` is warned as "Elasticsearch-managed
+(built-in) policy: on OpenSearch it is an ordinary policy that nothing manages or updates". With the default
+`--filterManaged` those are skipped and named instead (an info line, shown with `--debug`; only the lower
+`Total Writes` shows it otherwise); ES 7.10 marks none of its built-ins managed, and
+`.monitoring-8-ilm-policy` is not marked on 8.x/9.x, so those are always restored. OpenSearch 1.x has no ISM
+`shrink`, so there the `*-days-default` / `*-days@lifecycle` built-ins (warm-phase shrink; 5 on 7.17/8.6, 10 on
+8.19/9.1) are refused before any write, naming policy, phase and action, and `--lenientPolicyConversion` drops only
+the shrink. Live, OpenSearch 1.3.20, 2.19.7 and 3.9.0 accept the 7.17.29, 8.19.23 and 9.1.2 sets. ISM → ILM (OpenSearch policies to Elasticsearch) is refused
+before any write, with or without `--convertIlmToIsm`, `--lenientPolicyConversion` or `--ignore-errors`; the
+error names the refused policies (the first 10, then "and N more") and says nothing was written.
+
 ## Renaming indices
 
 `--renamePrefix old:new` (repeatable) and `--renameIndex '<regex>:<replacement>'` (repeatable, Rust `regex`

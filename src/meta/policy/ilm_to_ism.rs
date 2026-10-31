@@ -253,10 +253,19 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
         if let Some(d) = meta.get("description").and_then(Value::as_str) {
             description = d.to_string();
         }
+        // L-653: an Elasticsearch built-in (kept by --filterManaged=false) becomes an
+        // ordinary ISM policy; nothing on OpenSearch manages or updates it
+        if meta.get("managed").and_then(Value::as_bool) == Some(true) {
+            cx.notes.push(
+                "Elasticsearch-managed (built-in) policy: on OpenSearch it is an ordinary policy that nothing manages or updates"
+                    .into(),
+            );
+        }
         // L-652: a description that is not a string is dropped (and said so) like the rest
         let other: Vec<&String> = meta
             .keys()
             .filter(|k| *k != "description" || !meta[*k].is_string())
+            .filter(|k| *k != "managed" || meta[*k] != Value::Bool(true))
             .collect();
         if !other.is_empty() {
             cx.notes.push(format!(
@@ -894,7 +903,7 @@ mod tests {
 
         /// The ISM structure OpenSearch validates: states in phase order, unique, forward
         /// transitions with age conditions only, one-key actions it has, delete last.
-        fn check_ism(policy: &Value) -> Result<(), String> {
+        pub(super) fn check_ism(policy: &Value) -> Result<(), String> {
             let states = policy["states"].as_array().ok_or("no states")?;
             let names: Vec<&str> = states.iter().filter_map(|s| s["name"].as_str()).collect();
             if names.is_empty() || names.len() != states.len() {
@@ -1227,5 +1236,147 @@ mod tests {
             "{:?}",
             c.notes
         );
+    }
+
+    // TST-BRK-ILM-003 (L-653): the built-in policies of every pinned Elasticsearch, as
+    // `GET _ilm/policy` returned them (golden recordings; kept by --filterManaged=false).
+    fn es_builtins(v: &str) -> Vec<(String, Value)> {
+        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "tests/golden/elasticsearch-{v}/policy/002.resp.json"
+        ));
+        let resp: Value = serde_json::from_slice(&std::fs::read(&f).unwrap()).unwrap();
+        let body = match &resp["body"] {
+            Value::String(s) => serde_json::from_str(s).unwrap(),
+            b => b.clone(),
+        };
+        body.as_object()
+            .unwrap()
+            .iter()
+            .filter(|(n, _)| *n != "golden_pol")
+            .map(|(n, e)| (n.clone(), e["policy"].clone()))
+            .collect()
+    }
+
+    #[test]
+    fn es_builtin_policies_convert_strictly_and_say_they_were_managed() {
+        // (version, built-ins, of them `_meta.managed: true`)
+        for (v, n, managed) in [
+            ("7.10.2", 6, 0),
+            ("7.17.29", 13, 13),
+            ("8.6.1", 14, 13),
+            ("8.19.23", 46, 45),
+            ("9.1.2", 46, 45),
+        ] {
+            let all = es_builtins(v);
+            assert_eq!(all.len(), n, "{v}");
+            let mut seen_managed = 0;
+            for (name, p) in &all {
+                let tag = format!("{v} '{name}'");
+                let c = convert(name, p, false).unwrap_or_else(|e| panic!("{tag}: {e:#}"));
+                generated::check_ism(&c.policy).unwrap_or_else(|e| panic!("{tag}: {e}"));
+                forward_only(&c);
+                // nothing was dropped: lenient mode gives the same policy and notes
+                let l = convert(name, p, true).unwrap();
+                assert_eq!(l.policy, c.policy, "{tag}");
+                assert_eq!(l.notes, c.notes, "{tag}");
+                assert!(!c.notes.iter().any(|n| n.contains("DROPPED")), "{tag}");
+                let want = p
+                    .pointer("/_meta/description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "Converted from Elasticsearch ILM policy '{name}' by elasticdump-rs"
+                        )
+                    });
+                assert_eq!(c.policy["description"], want, "{tag}");
+                let is_managed = p.pointer("/_meta/managed") == Some(&Value::Bool(true));
+                let said = c
+                    .notes
+                    .iter()
+                    .any(|n| n.starts_with("Elasticsearch-managed (built-in) policy"));
+                assert_eq!(said, is_managed, "{tag}: {:?}", c.notes);
+                // said once, not again as a dropped _meta key
+                assert!(
+                    !c.notes
+                        .iter()
+                        .any(|n| n.starts_with("_meta keys dropped") && n.contains("managed")),
+                    "{tag}: {:?}",
+                    c.notes
+                );
+                if is_managed {
+                    seen_managed += 1;
+                }
+                // ILM's delete (and its delete_searchable_snapshot default) stays last
+                let st = c.policy["states"].as_array().unwrap();
+                if p.pointer("/phases/delete/actions/delete").is_some() {
+                    assert_eq!(st.last().unwrap()["name"], "delete", "{tag}");
+                    assert_eq!(
+                        st.last().unwrap()["actions"],
+                        json!([{"delete": {}}]),
+                        "{tag}"
+                    );
+                }
+            }
+            assert_eq!(seen_managed, managed, "{v}");
+            // OpenSearch 1.x (no ISM shrink): the built-ins with a warm-phase shrink are
+            // refused naming policy, phase and action; lenient drops only that action
+            let one = IsmCaps { shrink: false };
+            for (name, p) in &all {
+                let shrinks = p.pointer("/phases/warm/actions/shrink").is_some();
+                match convert_for(name, p, false, one) {
+                    Ok(_) => assert!(!shrinks, "{v} '{name}'"),
+                    Err(e) => {
+                        assert!(shrinks, "{v} '{name}': {e:#}");
+                        assert_eq!(
+                            format!("{e:#}"),
+                            format!(
+                                "ILM policy '{name}' cannot be converted to ISM safely: phase 'warm' action 'shrink': the target OpenSearch has no ISM shrink action (added in 2.0) (--lenientPolicyConversion drops these parts instead)"
+                            )
+                        );
+                    }
+                }
+                let l = convert_for(name, p, true, one).unwrap();
+                generated::check_ism(&l.policy).unwrap_or_else(|e| panic!("{v} '{name}': {e}"));
+                let dropped: Vec<&String> = l
+                    .notes
+                    .iter()
+                    .filter(|n| n.starts_with("DROPPED"))
+                    .collect();
+                assert_eq!(
+                    dropped.len(),
+                    usize::from(shrinks),
+                    "{v} '{name}': {dropped:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn managed_false_and_non_bool_managed_are_plain_meta_keys() {
+        let ph = json!({"hot": {"actions": {"set_priority": {"priority": 1}}}});
+        for (m, dropped) in [
+            (json!(false), true),
+            (json!("true"), true),
+            (json!(true), false),
+        ] {
+            let c = convert("p", &json!({"phases": ph, "_meta": {"managed": m}}), false).unwrap();
+            assert_eq!(
+                c.notes
+                    .iter()
+                    .any(|n| n == "_meta keys dropped (ISM has no _meta): managed"),
+                dropped,
+                "{m}: {:?}",
+                c.notes
+            );
+            assert_eq!(
+                c.notes
+                    .iter()
+                    .any(|n| n.starts_with("Elasticsearch-managed")),
+                !dropped,
+                "{m}: {:?}",
+                c.notes
+            );
+        }
     }
 }

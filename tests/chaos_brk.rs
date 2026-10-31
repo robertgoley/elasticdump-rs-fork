@@ -5866,3 +5866,88 @@ async fn l651_unconvertible_ilm_policies_never_leave_a_partial_set() {
     );
     assert_eq!(puts(&m).len(), 3);
 }
+
+// L-653 (TST-BRK-ILM-003): OpenSearch ISM policies restored to Elasticsearch are refused
+// before any request but the version probe, in every mode (--convertIlmToIsm,
+// --lenientPolicyConversion, --ignore-errors), naming the policies (ids with '.', '@'
+// and unicode included; more than 10 are summarised) and saying nothing was written.
+#[tokio::test(flavor = "multi_thread")]
+async fn l653_ism_to_ilm_is_refused_naming_the_policies_with_nothing_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let es = RouterMock::builder()
+        .handler(|req| async move {
+            match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/") => Reply::ok(
+                    r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+                ),
+                _ => Reply::json(200, r#"{"acknowledged":true}"#),
+            }
+        })
+        .start()
+        .await;
+    let ism = |id: &str| {
+        serde_json::json!({"_id": id, "_seq_no": 1, "_primary_term": 1, "policy": {
+            "policy_id": id, "description": "x", "default_state": "hot",
+            "states": [{"name": "hot", "actions": [{"rollover": {"min_doc_count": 5}}], "transitions": []}]
+        }})
+    };
+    let few = [".hidden-pol", "7-days@lifecycle", "politique-日本"];
+    let many: Vec<String> = (0..12).map(|i| format!("ism{i:02}")).collect();
+    for (label, ids) in [
+        ("few", few.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+        ("many", many.clone()),
+    ] {
+        let f = dir.path().join(format!("{label}.json"));
+        let doc = serde_json::json!({"policies": ids.iter().map(|i| ism(i)).collect::<Vec<_>>(), "total_policies": ids.len()});
+        std::fs::write(&f, doc.to_string() + "\n").unwrap();
+        for extra in [
+            &[][..],
+            &["--convertIlmToIsm"][..],
+            &["--convertIlmToIsm", "--lenientPolicyConversion"][..],
+            &["--ignore-errors"][..],
+        ] {
+            let tag = format!("{label} {extra:?}");
+            let mut a = s(&[
+                "--input",
+                f.to_str().unwrap(),
+                "--output",
+                &es.url(),
+                "--type",
+                "policy",
+            ]);
+            a.extend(s(extra));
+            let before = es.requests().len();
+            let o = run_async(a, vec![]).await;
+            let e = stderr(&o);
+            assert_eq!(o.status.code(), Some(1), "{tag}: {e}");
+            assert!(!e.contains("panicked"), "{tag}: {e}");
+            assert!(
+                e.contains("ISM → ILM conversion is not supported")
+                    && e.contains("Nothing was written; refused: "),
+                "{tag}: {e}"
+            );
+            if label == "few" {
+                assert!(
+                    e.contains("refused: .hidden-pol, 7-days@lifecycle, politique-日本"),
+                    "{tag}: {e}"
+                );
+            } else {
+                assert!(
+                    e.contains("refused: ism00, ism01, ism02, ism03, ism04, ism05, ism06, ism07, ism08, ism09 and 2 more"),
+                    "{tag}: {e}"
+                );
+            }
+            assert_eq!(
+                e.contains("(--convertIlmToIsm only converts ILM → ISM)"),
+                extra.contains(&"--convertIlmToIsm"),
+                "{tag}: {e}"
+            );
+            let sent: Vec<_> = es.requests()[before..]
+                .iter()
+                .filter(|r| !(r.method == "GET" && r.path == "/"))
+                .map(|r| format!("{} {}", r.method, r.path))
+                .collect();
+            assert!(sent.is_empty(), "{tag}: sent {sent:?}");
+        }
+    }
+}

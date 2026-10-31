@@ -226,8 +226,17 @@ pub async fn write(
             if list.is_empty() {
                 return Ok(WriteReport::default());
             }
+            // L-653: name what was not written; --convertIlmToIsm and
+            // --lenientPolicyConversion do not change this (there is no ISM → ILM mapping)
+            let names: Vec<String> = list.into_iter().map(|(n, _)| n).collect();
             bail!(
-                "these are OpenSearch ISM policies and the target is Elasticsearch: ISM → ILM conversion is not supported (ISM state machines, cron/doc-count transitions, notifications, rollups, snapshots and aliases have no ILM form); recreate them as ILM policies by hand"
+                "these are OpenSearch ISM policies and the target is Elasticsearch: ISM → ILM conversion is not supported (ISM state machines, cron/doc-count transitions, notifications, rollups, snapshots and aliases have no ILM form); recreate them as ILM policies by hand. Nothing was written; refused: {}{}",
+                name_list(&names),
+                if opts.convert_ilm_to_ism {
+                    " (--convertIlmToIsm only converts ILM → ISM)"
+                } else {
+                    ""
+                }
             )
         }
         (Policies::Ilm(list), true) => {

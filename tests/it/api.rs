@@ -2495,3 +2495,188 @@ async fn server_error_passthrough_type_and_reason() {
     }
     c.delete_index(&dst).await;
 }
+
+// L-653 (TST-BRK-ILM-003): Elasticsearch's own built-in policies, as `GET _ilm/policy`
+// returned them on 7.17.29, 8.19.23 and 9.1.2 (golden recordings), restored into
+// OpenSearch with --convertIlmToIsm. By default (--filterManaged) the ones marked
+// `_meta.managed: true` are skipped and named, and the rest written; with
+// --filterManaged false every one converts strictly (nothing dropped), ids with a leading
+// '.' or an '@' included, OpenSearch accepts each and reads it back, and each managed one
+// is reported as an Elasticsearch-managed policy that is now an ordinary ISM policy.
+#[tokio::test]
+async fn l653_es_builtin_policies_restore_into_opensearch() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) {
+        return;
+    }
+    for v in ["7.17.29", "8.19.23", "9.1.2"] {
+        let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "tests/golden/elasticsearch-{v}/policy/002.resp.json"
+        ));
+        let resp: Value = serde_json::from_slice(&std::fs::read(&golden).unwrap()).unwrap();
+        let mut body: Value = match &resp["body"] {
+            Value::String(s) => serde_json::from_str(s).unwrap(),
+            b => b.clone(),
+        };
+        body.as_object_mut().unwrap().remove("golden_pol");
+        let all: Vec<String> = body.as_object().unwrap().keys().cloned().collect();
+        let managed: Vec<&String> = all
+            .iter()
+            .filter(|n| body[n.as_str()].pointer("/policy/_meta/managed") == Some(&json!(true)))
+            .collect();
+        assert!(!managed.is_empty(), "{v}");
+        assert!(
+            v == "7.17.29"
+                || all.iter().any(|n| n.starts_with('.')) && all.iter().any(|n| n.contains('@')),
+            "{v}: {all:?}"
+        );
+        let file = tmp_path("api_ilm653", "json");
+        std::fs::write(&file, body.to_string() + "\n").unwrap();
+        let restore = |extra: &'static [&'static str]| {
+            let mut a = vec!["--type", "policy", "--convertIlmToIsm"];
+            a.extend_from_slice(extra);
+            run_loud(io(&c, file.to_str().unwrap(), &c.url_with_auth(""), &a))
+        };
+        let present = |n: String| {
+            let c = &c;
+            async move {
+                c.call("GET", &format!("_plugins/_ism/policies/{n}"), None)
+                    .await
+            }
+        };
+        // default --filterManaged: the managed ones are skipped, and named (an info line,
+        // shown with --debug)
+        let o = restore(&["--debug"]).await;
+        assert_success(&o);
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let head = format!(
+            "Skipping {} managed policies (--filterManaged; --filterManaged=false keeps them): ",
+            managed.len()
+        );
+        let line = err
+            .lines()
+            .find_map(|l| l.split_once(head.as_str()).map(|(_, r)| r))
+            .unwrap_or_else(|| panic!("{v}: {err}"));
+        let mut skipped: Vec<&str> = line.split(", ").collect();
+        skipped.sort_unstable();
+        let mut want: Vec<&str> = managed.iter().map(|n| n.as_str()).collect();
+        want.sort_unstable();
+        assert_eq!(skipped, want, "{v}");
+        assert!(
+            err.contains(&format!("Total Writes: {}", all.len() - managed.len())),
+            "{v}: {err}"
+        );
+        for n in &all {
+            let (st, got) = present(n.clone()).await;
+            assert_eq!(st == 200, !managed.contains(&n), "{v} {n}: {st} {got}");
+        }
+        // --filterManaged false, strict: every built-in written as converted. OpenSearch 1.x
+        // has no ISM shrink: the built-ins with a warm-phase shrink are refused before any
+        // write, naming policy, phase and action; --lenientPolicyConversion drops just that.
+        let shrinking: Vec<&String> = all
+            .iter()
+            .filter(|n| {
+                body[n.as_str()]
+                    .pointer("/policy/phases/warm/actions/shrink")
+                    .is_some()
+            })
+            .collect();
+        let o = if c.major().await < 2 && !shrinking.is_empty() {
+            let o = run(io(
+                &c,
+                file.to_str().unwrap(),
+                &c.url_with_auth(""),
+                &[
+                    "--type",
+                    "policy",
+                    "--convertIlmToIsm",
+                    "--filterManaged",
+                    "false",
+                ],
+            ))
+            .await;
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            assert_eq!(o.status.code(), Some(1), "{v}: {err}");
+            assert!(
+                err.contains(&format!(
+                    "ILM policy '{}' cannot be converted to ISM safely: phase 'warm' action 'shrink': the target OpenSearch has no ISM shrink action",
+                    shrinking[0]
+                )) && err.contains("--lenientPolicyConversion drops these parts instead"),
+                "{v}: {err}"
+            );
+            for n in &all {
+                let (st, got) = present(n.clone()).await;
+                assert_eq!(st == 200, !managed.contains(&n), "{v} {n}: {st} {got}");
+            }
+            let o = restore(&["--filterManaged", "false", "--lenientPolicyConversion"]).await;
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            let mut dropped: Vec<&str> = Vec::new();
+            for (n, what) in err
+                .lines()
+                .filter_map(|l| l.split_once("ILM → ISM '"))
+                .filter_map(|(_, r)| r.split_once("': DROPPED "))
+            {
+                assert!(
+                    what.starts_with("phase 'warm' action 'shrink'"),
+                    "{v}: {what}"
+                );
+                dropped.push(n);
+            }
+            dropped.sort_unstable();
+            let mut want: Vec<&str> = shrinking.iter().map(|n| n.as_str()).collect();
+            want.sort_unstable();
+            assert_eq!(dropped, want, "{v}");
+            o
+        } else {
+            let o = restore(&["--filterManaged", "false"]).await;
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            assert!(!err.contains("DROPPED"), "{v}: {err}");
+            o
+        };
+        assert_success(&o);
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(
+            err.contains(&format!("Total Writes: {}", all.len())),
+            "{v}: {err}"
+        );
+        assert_eq!(
+            err.matches(
+                "Elasticsearch-managed (built-in) policy: on OpenSearch it is an ordinary policy"
+            )
+            .count(),
+            managed.len(),
+            "{v}: {err}"
+        );
+        for n in &all {
+            let (st, got) = present(n.clone()).await;
+            assert_eq!(st, 200, "{v} {n}: {got}");
+            let pol = &got["policy"];
+            assert_eq!(pol["policy_id"], json!(n), "{v} {n}: {got}");
+            let states = pol["states"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{v} {n}: {got}"));
+            assert!(!states.is_empty(), "{v} {n}: {got}");
+            assert_eq!(pol["default_state"], states[0]["name"], "{v} {n}: {got}");
+            if body[n.as_str()]
+                .pointer("/policy/phases/delete/actions/delete")
+                .is_some()
+            {
+                let last = states.last().unwrap();
+                assert_eq!(last["name"], "delete", "{v} {n}: {got}");
+                assert_eq!(
+                    last["actions"].as_array().unwrap().len(),
+                    1,
+                    "{v} {n}: {got}"
+                );
+                assert!(last["actions"][0].get("delete").is_some(), "{v} {n}: {got}");
+            }
+        }
+        for n in &all {
+            let _ = c
+                .call("DELETE", &format!("_plugins/_ism/policies/{n}"), None)
+                .await;
+        }
+        let _ = std::fs::remove_file(file);
+    }
+}
