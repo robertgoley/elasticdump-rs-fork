@@ -420,7 +420,8 @@ pub struct Cli {
     pub allow_merge: bool,
 
     /// Extension: dump data from indices whose mapping disables _source (documents then
-    /// carry only _id and metadata). By default the first hit without _source stops the dump
+    /// carry only _id and metadata), or with a --searchBody that sets stored_fields without
+    /// _source. By default the first hit without _source stops the dump
     #[arg(long = "allowMissingSource")]
     pub allow_missing_source: bool,
 

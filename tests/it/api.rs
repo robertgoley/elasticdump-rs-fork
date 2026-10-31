@@ -351,7 +351,21 @@ async fn search_body_variants_and_meta_from_fields() {
         ),
     ];
     for (name, body, pred) in &variants {
-        let (f, o) = dump(&c, &src, &["--limit", "50", "--searchBody", body]).await;
+        // L-455a: stored_fields without _source leaves _source out, which is refused by
+        // default (naming the search body); this variant opts in
+        let mut args = vec!["--limit", "50", "--searchBody", body];
+        if *name == "stored_fields" {
+            let (f, o) = dump(&c, &src, &args).await;
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            assert_eq!(o.status.code(), Some(1), "{err}");
+            assert!(
+                err.contains("the search body sets stored_fields without _source"),
+                "{err}"
+            );
+            let _ = std::fs::remove_file(f);
+            args.push("--allowMissingSource");
+        }
+        let (f, o) = dump(&c, &src, &args).await;
         assert_success(&o);
         check(name, &parsed(&f), pred.as_ref());
         let _ = std::fs::remove_file(f);

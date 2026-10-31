@@ -840,6 +840,13 @@ async fn transfer(
                     let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
                         .is_some_and(|v| sonic_rs::JsonValueTrait::as_bool(v) != Some(true));
                     retrieval::set_require_source(!cli.allow_missing_source && !own_choice);
+                    // L-455a: `stored_fields` without `_source` makes the cluster leave _source
+                    // out; still refused by default, but the error names the search body
+                    retrieval::set_body_drops_source(
+                        sonic_rs::JsonValueTrait::get(&opts.search_body, "stored_fields").is_some()
+                            && sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
+                                .is_none(),
+                    );
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {

@@ -48,6 +48,9 @@ enum CancelReason {
 
 /// Whether every hit must carry `_source` (see [`extract`]); set once per run.
 static REQUIRE_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether the search body itself makes the cluster leave `_source` out (`stored_fields`
+/// without `_source`), so a missing `_source` is not the mapping's doing (L-455a).
+static BODY_DROPS_SOURCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Fuzz hook (TST-API-084): search response extraction, both pagination shapes.
 #[cfg(any(feature = "fuzz", test))]
@@ -85,6 +88,14 @@ pub fn set_require_source(on: bool) {
 
 pub(crate) fn require_source() -> bool {
     REQUIRE_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_body_drops_source(on: bool) {
+    BODY_DROPS_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn body_drops_source() -> bool {
+    BODY_DROPS_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Everything the Elasticsearch/OpenSearch reader needs.

@@ -274,13 +274,19 @@ pub(crate) fn extract_batch_metadata(
     )
 }
 
-/// A hit without `_source`: its index does not store it, so documents cannot
-/// be fully dumped (TST-BRK-XV-002).
-fn missing_source_error(hit: &LazyValue<'_>) -> anyhow::Error {
+/// A hit without `_source` (TST-BRK-XV-002): either its index does not store it, or the
+/// search body asked for `stored_fields` without `_source`, which makes the cluster leave
+/// `_source` out (L-455a); the message names whichever applies.
+fn missing_source_error(hit: &LazyValue<'_>, body_drops_source: bool) -> anyhow::Error {
     let index = hit
         .get("_index")
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_else(|| "?".to_string());
+    if body_drops_source {
+        return anyhow!(
+            "documents cannot be fully dumped: a hit from index '{index}' has no _source because the search body sets stored_fields without _source, so the cluster leaves _source out (only _id, metadata and the stored fields could be written). Nothing of this page was written; add \"_source\": true to the search body to keep the documents, or pass --allowMissingSource to dump them without _source"
+        );
+    }
     anyhow!(
         "documents cannot be fully dumped: a hit from index '{index}' has no _source (its mapping has _source.enabled: false, so only _id and metadata could be written). Nothing of this page was written; pass --allowMissingSource to dump such indices anyway"
     )
@@ -324,11 +330,12 @@ pub(crate) fn extract_batch(
     let mut buffer = Vec::with_capacity(response_bytes.len());
 
     let require_source = super::require_source();
+    let body_drops_source = super::body_drops_source();
     for hit in iter {
         let hit = hit.map_err(|e| malformed(response_bytes, e.into()))?;
         doc_count += 1;
         if require_source && hit.get("_source").is_none() {
-            return Err(missing_source_error(&hit));
+            return Err(missing_source_error(&hit, body_drops_source));
         }
 
         // The cluster returns `_source` byte for byte as indexed, so a
@@ -367,10 +374,33 @@ pub(crate) fn extract_batch(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_hits_and_last_sort_raw, extract_batch, extract_batch_metadata, require_hits_array,
+        count_hits_and_last_sort_raw, extract_batch, extract_batch_metadata, missing_source_error,
+        require_hits_array,
     };
     use crate::cli::SearchType;
     use bytes::Bytes;
+
+    // L-455a: a hit without _source names the search body when it set stored_fields
+    // without _source, and the mapping otherwise
+    #[test]
+    fn missing_source_names_the_search_body_or_the_mapping() {
+        let hit =
+            sonic_rs::from_str::<sonic_rs::LazyValue<'_>>(r#"{"_index":"i1","_id":"1"}"#).unwrap();
+        let body = missing_source_error(&hit, true).to_string();
+        assert!(body.contains("'i1'"), "{body}");
+        assert!(
+            body.contains("the search body sets stored_fields without _source"),
+            "{body}"
+        );
+        assert!(body.contains("\"_source\": true") && body.contains("--allowMissingSource"));
+        assert!(!body.contains("_source.enabled"), "{body}");
+        let mapping = missing_source_error(&hit, false).to_string();
+        assert!(
+            mapping.contains("its mapping has _source.enabled: false"),
+            "{mapping}"
+        );
+        assert!(!mapping.contains("stored_fields"), "{mapping}");
+    }
 
     #[test]
     fn extract_batch_metadata_reads_scroll_total_and_scroll_id() {

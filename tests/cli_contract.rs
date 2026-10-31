@@ -3365,8 +3365,13 @@ async fn hits_without_source_are_refused_unless_allowed() {
             .start()
     };
     let dir = tempfile::tempdir().unwrap();
-    for (extra, ok) in [
+    // L-455a: stored_fields without _source makes the cluster leave _source out; still
+    // refused by default, and the error names the search body, not the mapping
+    let stored = r#"{"stored_fields":["x"]}"#;
+    for (n, (extra, ok)) in [
         (vec![], false),
+        (vec!["--searchBody", stored], false),
+        (vec!["--searchBody", stored, "--allowMissingSource"], true),
         (vec!["--allowMissingSource"], true),
         (
             vec![
@@ -3375,9 +3380,12 @@ async fn hits_without_source_are_refused_unless_allowed() {
             ],
             true,
         ),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let m = mock().await;
-        let out = dir.path().join(format!("out-{}.json", extra.len()));
+        let out = dir.path().join(format!("out-{n}.json"));
         let mut args = vec![
             "--input".to_string(),
             format!("{}/nosrc", m.url()),
@@ -3402,6 +3410,20 @@ async fn hits_without_source_are_refused_unless_allowed() {
                 "{err}"
             );
             assert!(!out.exists(), "nothing written");
+            if extra.is_empty() {
+                assert!(
+                    err.contains("its mapping has _source.enabled: false"),
+                    "{err}"
+                );
+                assert!(!err.contains("stored_fields"), "{err}");
+            } else {
+                assert!(
+                    err.contains("the search body sets stored_fields without _source"),
+                    "{err}"
+                );
+                assert!(err.contains("\"_source\": true"), "{err}");
+                assert!(!err.contains("_source.enabled"), "{err}");
+            }
         }
     }
 }
