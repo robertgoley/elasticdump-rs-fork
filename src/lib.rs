@@ -160,6 +160,11 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
     if cli.file_size.is_some() && cli.max_rows.is_some() {
         return Err(usage("--fileSize and --maxRows cannot be combined"));
     }
+    // TST-BRK-CLI-005: directories, symlinks, FIFOs/devices and missing
+    // parents are refused before anything is read or sent
+    if let Endpoint::File(p) = output {
+        output::check_output_path(p).map_err(|e| usage(format!("{e:#}")))?;
+    }
     if (cli.file_size.is_some() || cli.max_rows.is_some()) && !matches!(output, Endpoint::File(_)) {
         return Err(usage("--fileSize/--maxRows require a file --output"));
     }

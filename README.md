@@ -315,7 +315,10 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   (re-sending one after a network error could skip a page). Bulk writes with explicit ids are idempotent;
   a 20-run fault-injection suite (connections cut mid-response) restores exact copies.
 * File output is staged, fsynced and committed atomically (hard link without `--overwrite`, so a file created
-  meanwhile is never clobbered).
+  meanwhile is never clobbered). `--output` must be a regular file path: a directory, a symbolic link (the link and
+  its target are both left alone; pass the target path to write there), a FIFO or device (`/dev/stdout`: use
+  `--output $`) or a missing parent directory is a usage error (exit 2) before anything is read. With
+  `--overwrite`, the replaced file's mode is kept.
 * Ctrl+C clears the scroll / closes the PIT (ES input pipelines).
 
 ## Security notes
