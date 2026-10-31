@@ -2680,3 +2680,72 @@ async fn l653_es_builtin_policies_restore_into_opensearch() {
         let _ = std::fs::remove_file(file);
     }
 }
+
+// L-654 (BRK-XV-001): OpenSearch with `compatibility.override_main_response_version: true`
+// (a dynamic setting on 1.x and 2.x) answers `GET /` as Elasticsearch 7.10.2 with no distribution;
+// the tool still detects OpenSearch at its real version (from `GET _nodes`) and a
+// `--searchType pit` dump uses the OpenSearch PIT (2.x) or scroll (1.x), never the
+// Elasticsearch one. OpenSearch 3.x rejects the setting.
+#[tokio::test]
+async fn l654_override_main_response_version_is_still_opensearch() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    if !matches!(c.engine, Engine::OpenSearch) {
+        return;
+    }
+    let real = c.version().await;
+    let set = |v: Value| {
+        let c = &c;
+        async move {
+            c.call(
+                "PUT",
+                "_cluster/settings",
+                Some(json!({"persistent": {"compatibility.override_main_response_version": v}})),
+            )
+            .await
+        }
+    };
+    let major = c.major().await;
+    let (status, body) = set(json!(true)).await;
+    if status != 200 {
+        // removed in OpenSearch 3.0
+        assert!(
+            major >= 3
+                && status == 400
+                && body.to_string().contains("override_main_response_version"),
+            "OpenSearch {real}: {status} {body}"
+        );
+        return;
+    }
+    let index = unique("api_l654");
+    seed_index(&c, &index, 5).await;
+    let out = tmp_path("api_l654", "json");
+    let root = c.ok("GET", "", None).await;
+    let o = run_loud(io(
+        &c,
+        &c.index_url(&index),
+        out.to_str().unwrap(),
+        &["--type", "data", "--searchType", "pit", "--debug"],
+    ))
+    .await;
+    // Reset before asserting, so a failure leaves a normal cluster behind.
+    let (reset, _) = set(Value::Null).await;
+    let docs = c.count(&index).await;
+    c.delete_index(&index).await;
+    assert_eq!(reset, 200);
+    assert_eq!(root["version"]["number"], "7.10.2", "{root}");
+    assert!(root["version"].get("distribution").is_none(), "{root}");
+    assert_success(&o);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains(&format!("Detected OpenSearch {real}"))
+            && err.contains(&format!("using {real} from GET _nodes")),
+        "{err}"
+    );
+    assert!(
+        !err.contains("/_pit") && (major >= 2) == err.contains("point_in_time"),
+        "{err}"
+    );
+    assert_eq!(lines(&out).len() as u64, docs);
+    assert_eq!(c.version().await, real);
+}

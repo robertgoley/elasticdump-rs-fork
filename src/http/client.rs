@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use super::gate::RequestGate;
-use super::info::ClusterInfo;
+use super::info::{ClusterInfo, Detection, NODES_FILTER};
 use super::retry::{RetryMode, RetryPolicy, send_with_retry};
 use super::tls::{TlsOptions, build_client_config};
 
@@ -477,12 +477,39 @@ impl EsClient {
                         crate::endpoint::redacted_url(&self.0.base)
                     )
                 })?;
-                let info = ClusterInfo::parse(&body).with_context(|| {
+                let detect_context = || {
                     format!(
                         "Failed to detect the engine at {}",
                         crate::endpoint::redacted_url(&self.0.base)
                     )
-                })?;
+                };
+                let info = match ClusterInfo::detect(&body).with_context(detect_context)? {
+                    Detection::Known(info) => info,
+                    // L-654: `GET /` is ambiguous (OpenSearch with
+                    // `compatibility.override_main_response_version`); the nodes tell.
+                    Detection::Probe(probe) => {
+                        let nodes = send_with_retry(
+                            retry,
+                            cancel,
+                            RetryMode::Idempotent,
+                            "version check (GET _nodes)",
+                            move || {
+                                self.send(
+                                    Method::GET,
+                                    &["_nodes"],
+                                    &[("filter_path", NODES_FILTER)],
+                                    false,
+                                    Body::Empty,
+                                )
+                            },
+                        )
+                        .await
+                        .map_err(|e| format!("{e:#}"));
+                        probe
+                            .resolve(Some(nodes.as_deref().map_err(String::clone)))
+                            .with_context(detect_context)?
+                    }
+                };
                 log::debug!(
                     "Detected {} {} at {}",
                     info.flavor_name(),

@@ -282,6 +282,16 @@ the shrink. Live, OpenSearch 1.3.20, 2.19.7 and 3.9.0 accept the 7.17.29, 8.19.2
 before any write, with or without `--convertIlmToIsm`, `--lenientPolicyConversion` or `--ignore-errors`; the
 error names the refused policies (the first 10, then "and N more") and says nothing was written.
 
+OpenSearch reporting Elasticsearch 7.10.2 (L-654): with `compatibility.override_main_response_version: true`
+(dynamic on OpenSearch 1.x and 2.x, rejected by 3.x), `GET /` reports `7.10.2` with no `version.distribution` and no
+`build_flavor` (the tagline stays OpenSearch's). That `GET /`, or a `7.10.2` with neither field that a proxy
+rewrote, is followed by `GET _nodes?filter_path=nodes.*.version,nodes.*.build_flavor`: OpenSearch nodes give the
+real version (the oldest node counts) and the run continues as that OpenSearch with a warning; nodes with a
+`build_flavor` are Elasticsearch. If `_nodes` does not answer, the OpenSearch tagline still means the OpenSearch 1.x
+feature set (warned); with no tagline either the run fails before any dump request, naming the setting, instead of
+guessing Elasticsearch. Live on OpenSearch 1.3.20 and 2.19.7 with the setting on, a `--searchType pit` dump detects the real
+version and never uses the Elasticsearch PIT (1.3.20 falls back to scroll; 2.19.7 uses the OpenSearch PIT).
+
 ## Renaming indices
 
 `--renamePrefix old:new` (repeatable) and `--renameIndex '<regex>:<replacement>'` (repeatable, Rust `regex`

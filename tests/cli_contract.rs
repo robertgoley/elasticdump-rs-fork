@@ -1398,6 +1398,90 @@ async fn cluster_info_variants_never_fall_back_silently() {
     assert!(!m.requests().iter().any(|r| r.path.starts_with("/_ilm")));
 }
 
+// L-654 (BRK-XV-001): OpenSearch with `compatibility.override_main_response_version: true`
+// answers `GET /` as Elasticsearch 7.10.2 (the live 1.3.20 body: no distribution, no
+// build_flavor). The real version comes from `GET _nodes`; when a proxy also rewrote the
+// tagline and `_nodes` is refused, the run fails clearly instead of guessing Elasticsearch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn override_main_response_version_is_detected_through_the_nodes() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    const ROOT: &str = r#"{"name":"n","cluster_name":"c","version":{"number":"7.10.2","build_type":"tar","build_hash":"31afd17a1b5a22338307e1f4a78092887c1490e3","lucene_version":"8.10.1","minimum_wire_compatibility_version":"6.8.0"},"tagline":"The OpenSearch Project: https://opensearch.org/"}"#;
+    let args = |url: String, out: &std::path::Path| {
+        vec![
+            "--input".into(),
+            url,
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--type".into(),
+            "policy".into(),
+        ]
+    };
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(ROOT)))
+        .route(Route::exact("GET", "/_nodes").reply(Reply::ok(
+            r#"{"nodes":{"kOmQoGFZTIWNKMcDlyF5wg":{"version":"1.3.20"}}}"#,
+        )))
+        .route(
+            Route::exact("GET", "/_plugins/_ism/policies")
+                .reply(Reply::ok(r#"{"policies":[],"total_policies":0}"#)),
+        )
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("p.json");
+    let o = run_async(args(m.url(), &out), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("OpenSearch 1.3.20 reports version 7.10.2 on GET /")
+            && err.contains("using 1.3.20 from GET _nodes"),
+        "{err}"
+    );
+    let reqs = m.requests();
+    assert!(
+        reqs.iter()
+            .any(|r| r.path == "/_nodes" && r.query.iter().any(|(k, _)| k == "filter_path")),
+        "{reqs:?}"
+    );
+    assert!(
+        reqs.iter()
+            .any(|r| r.path.starts_with("/_plugins/_ism/policies"))
+    );
+    assert!(
+        !reqs.iter().any(|r| r.path.starts_with("/_ilm")),
+        "{reqs:?}"
+    );
+
+    // A proxy rewrote the tagline too and `_nodes` is refused: nothing says which engine.
+    let rewritten = ROOT.replace(
+        "The OpenSearch Project: https://opensearch.org/",
+        "You Know, for Search",
+    );
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(rewritten)))
+        .route(Route::exact("GET", "/_nodes").reply(Reply::json(403, r#"{"error":"forbidden"}"#)))
+        .start()
+        .await;
+    let out = dir.path().join("q.json");
+    let o = run_async(args(m.url(), &out), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("Failed to detect the engine")
+            && err.contains("compatibility.override_main_response_version")
+            && err.contains("403"),
+        "{err}"
+    );
+    assert!(!out.exists());
+    assert!(
+        !m.requests()
+            .iter()
+            .any(|r| r.path.starts_with("/_ilm") || r.path.starts_with("/_plugins")),
+        "{:?}",
+        m.requests()
+    );
+}
+
 // L-425 (TST-API-041): `X-Elastic-Product` missing or unexpected is tolerated (the tool does not
 // enforce the official client's product check); a `Warning` on `GET /` is logged once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
