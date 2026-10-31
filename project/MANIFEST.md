@@ -6,3 +6,4 @@
 - SHA256SUMS: checksums for every file except itself.
 - Contains no credentials.
 - 2026-10-31: project/plan/PROGRESS.md and project/handoff/plan/PROGRESS.md updated through L-646 + L-644a (handoff/SHA256SUMS line for plan/PROGRESS.md updated; its bundle line is still stale, as noted above). RESUME-FOR-GROK-BOT.md now says to work on `main` and push to this fork.
+- 2026-10-31: L-648 (BRK-SIG-003, D-5 leftover warning) committed and pushed to `main`; plan/PROGRESS.md copies updated (handoff/SHA256SUMS line for plan/PROGRESS.md updated). RESUME-FOR-GROK-BOT.md: next task L-649; Node elasticdump now lives at /workspace/tools/node-ed with /tmp/ed linked to it.

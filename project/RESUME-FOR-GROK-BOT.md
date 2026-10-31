@@ -12,7 +12,7 @@ The ignored junk files `oom` and `test_query_elasticdump_rs_test_857109_16.json`
 Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/elasticdump-rs-plan when you commit (the OpenCode run-card.sh claim check reads handoff/plan/PROGRESS.md; update its line in handoff/SHA256SUMS).
 
 ## Status
-- Tasks are done through **L-647** (on `main`; L-643 c38c46d, L-644 4f9115c, L-644a a3b00c5, L-645 + D-4 48ca62e, L-646 7802d7e, L-647 = `git log -1 --grep '^L-647'`). **L-648 is next** (BRK-SIG-003: `kill -9` at random points in dump, split and restore x50 runs; the final path is absent or complete, staging leftovers are detectable and cleaned up or warned about).
+- Tasks are done through **L-648** (on `main`; L-643 c38c46d, L-644 4f9115c, L-644a a3b00c5, L-645 + D-4 48ca62e, L-646 7802d7e, L-647 4ccb2fb, L-648 = `git log -1 --grep '^L-648'`). **L-649 is next** (BRK-SIG-004: a second SIGINT during cleanup takes the forced-exit path; SIGINT while --closeIndex has the index closed; no committed partial output, the index is reopened or the message says it is closed). D-5 (leave a killed run's hidden `.part` files in place and warn about them on the next run) is implemented in L-648.
 - Pending with the user: the L-645 behavior choices (credential precedence, auth-file values literal, world-readable warning) are being checked; keep them as they are unless told otherwise.
 - The full queue is in plan/TASKS-LOCAL.md and handoff/HANDOFF-GROK-OPENCODE.md §8.
 - plan/PROGRESS.md has one row per task and ends with a resume note. plan/progress-add.sh appends a row.
@@ -21,7 +21,7 @@ Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/
 - Rust: Cargo.toml sets `rust-version = "1.85"` and there is no rust-toolchain file. The box used rustc 1.85.1. Use nightly for cargo-fuzz, with `--target x86_64-unknown-linux-gnu` (musl fails) and a C++ compiler (g++) installed. The Dockerfile builder is dhi.io/rust 1.99.0-alpine3.23-dev.
 - Cargo tools: cargo-nextest (config in .config/nextest.toml), cargo-fuzz (nightly, fuzz/ and scripts/fuzz/smoke.sh), cargo-vet (supply-chain/), cargo-deny (deny.toml), cargo-geiger (scripts/sup/geiger-gate.sh), cargo-machete, cargo-udeps (nightly), cargo-llvm-cov (scripts/sup/coverage.sh).
 - Other tools: gitleaks (scripts/sup/secret-scan.sh); grype and trivy for CVE scans (SECURITY-CVE.md); podman (+ docker-compose.yaml); Python 3 (scripts/it/*.py).
-- Node elasticdump for interop tests. It used to be installed at `/tmp/ed` (for example `npm i --prefix /tmp/ed elasticdump`; see scripts/node).
+- Node elasticdump 6.125.1 for interop tests (scripts/node/bulk-diff.py defaults to `/tmp/ed/node_modules/elasticdump/bin/elasticdump`, or set `NODE_ELASTICDUMP`). It is installed at `/workspace/tools/node-ed` (kept across box restores) and `/tmp/ed` is a symlink to it. If either is missing: `npm i --prefix /workspace/tools/node-ed --ignore-scripts --no-audit --no-fund elasticdump@6.125.1 && ln -sfn /workspace/tools/node-ed /tmp/ed` (upstream code is untrusted: `--ignore-scripts`, and run it only in tests).
 - With sudo approval: strace, perf, valgrind. On the last box apt's own downloads broke at the proxy; a helper that downloads .debs with curl and then runs apt install was used instead.
 
 ## Container images (scripts/it/images.lock, pinned by digest; up.sh adds @digest unless IT_UNPINNED=1)

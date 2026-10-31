@@ -180,6 +180,113 @@ fn existing_parts(root: &Path) -> Vec<PathBuf> {
     v
 }
 
+/// D-5 (TST-BRK-SIG-003): files a killed run (`kill -9`, the OOM killer, a power cut) left
+/// next to this output, for the output itself and for any of its split parts: staged files
+/// that were never committed (`.name.part-PID-NANOS`) and originals an `--overwrite` commit
+/// had moved aside (`.name.edrs-replaced-PID`). Found before this run stages anything.
+fn leftovers_of(root: &Path) -> Vec<PathBuf> {
+    let Some(name) = root.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return vec![];
+    };
+    let (base, ext) = stem_ext(root);
+    let dir = match root.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return vec![];
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let split_prefix = format!("{base}.split-");
+    let suffixes = [ext.clone(), format!("{ext}.gz"), format!("{ext}.zst")];
+    let ours = |committed: &str| {
+        committed == name
+            || committed.strip_prefix(&split_prefix).is_some_and(|r| {
+                let d = r.bytes().take_while(u8::is_ascii_digit).count();
+                d > 0 && suffixes.iter().any(|x| x == &r[d..])
+            })
+    };
+    let mut v: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let Some(hidden) = n.strip_prefix('.') else {
+                return false;
+            };
+            if let Some(i) = hidden.rfind(".part-") {
+                hidden[i + 6..]
+                    .split_once('-')
+                    .is_some_and(|(pid, ts)| digits(pid) && digits(ts))
+                    && ours(&hidden[..i])
+            } else if let Some(i) = hidden.rfind(".edrs-replaced-") {
+                digits(&hidden[i + 15..]) && ours(&hidden[..i])
+            } else {
+                false
+            }
+        })
+        .map(|e| e.path())
+        .collect();
+    v.sort();
+    v
+}
+
+/// The PID a staging or moved-aside file name carries.
+fn leftover_pid(name: &str) -> Option<u32> {
+    if let Some(i) = name.rfind(".part-") {
+        name[i + 6..].split('-').next()?.parse().ok()
+    } else {
+        let i = name.rfind(".edrs-replaced-")?;
+        name[i + 15..].parse().ok()
+    }
+}
+
+/// D-5: name every leftover of an earlier killed run at the start of the next run to the
+/// same output. They are never deleted or overwritten here: a staged file may hold the only
+/// copy of data, and a moved-aside file is the previous contents of an `--overwrite` target.
+fn warn_about_leftovers(root: &Path) {
+    let found = leftovers_of(root);
+    if found.is_empty() {
+        return;
+    }
+    let mut list = String::new();
+    for p in &found {
+        let n = p
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        let what = if n.contains(".edrs-replaced-") {
+            "the previous contents an --overwrite run had moved aside; rename it back if its file is missing"
+        } else {
+            "staged output that was never committed; it may be incomplete"
+        };
+        let running = leftover_pid(&n)
+            .filter(|pid| *pid != std::process::id())
+            .filter(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            .map(|pid| {
+                format!(
+                    "; process {pid} is still running, so another run may be writing this output"
+                )
+            })
+            .unwrap_or_default();
+        if !list.is_empty() {
+            list.push_str("; ");
+        }
+        list.push_str(&p.display().to_string());
+        list.push_str(" (");
+        list.push_str(&size.to_string());
+        list.push_str(" bytes, ");
+        list.push_str(what);
+        list.push_str(&running);
+        list.push(')');
+    }
+    log::warn!(
+        "{} file(s) next to --output '{}' were left by an earlier run that was killed before it finished (kill -9, out of memory, power loss); they are left in place, not deleted: {list}. Remove them once you have checked them",
+        found.len(),
+        root.display()
+    );
+}
+
 /// Pretty-print each line; numbers keep their exact text.
 fn humanize(buf: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(buf.len() * 2);
@@ -255,6 +362,9 @@ impl FileSink {
             scratch: Vec::new(),
             written: 0,
         };
+        if let Some(root) = &sink.opts.path {
+            warn_about_leftovers(root);
+        }
         match (&sink.opts.path, sink.opts.split) {
             (Some(root), Some(_)) => {
                 if !sink.opts.overwrite {
@@ -763,6 +873,47 @@ mod tests {
         let fake = d.join("plain.zst");
         std::fs::write(&fake, "{}\n").unwrap();
         assert!(crate::pipeline::file_source::open_reader(Some(&fake)).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// D-5: only this output's staging and moved-aside leftovers (itself and its split
+    /// parts, any codec) are found; look-alikes and other outputs' leftovers are not.
+    #[test]
+    fn leftovers_of_finds_only_this_outputs_staging_and_moved_aside_files() {
+        let d = tmpdir("leftovers");
+        let ours = [
+            ".d.json.part-123-456",
+            ".d.split-0.json.part-7-8",
+            ".d.split-12.json.gz.part-7-9",
+            ".d.split-3.json.zst.part-1-2",
+            ".d.json.edrs-replaced-77",
+            ".d.split-1.json.edrs-replaced-77",
+        ];
+        let others = [
+            "d.json",
+            "d.split-0.json",
+            ".e.json.part-1-2",
+            ".d.json.part-x-2",
+            ".d.json.part-12",
+            ".d.split-.json.part-1-2",
+            ".d.split-1.ndjson.part-1-2",
+            "d.json.part-1-2",
+            ".d.json.edrs-replaced-",
+            ".d.json.bak",
+        ];
+        for n in ours.iter().chain(others.iter()) {
+            std::fs::write(d.join(n), "x").unwrap();
+        }
+        let mut want: Vec<PathBuf> = ours.iter().map(|n| d.join(n)).collect();
+        want.sort();
+        assert_eq!(leftovers_of(&d.join("d.json")), want);
+        assert_eq!(leftover_pid(".d.json.part-123-456"), Some(123));
+        assert_eq!(leftover_pid(".d.json.edrs-replaced-77"), Some(77));
+        assert!(leftovers_of(&d.join("none.json")).is_empty());
+        warn_about_leftovers(&d.join("d.json"));
+        for n in ours.iter().chain(others.iter()) {
+            assert!(d.join(n).exists(), "{n} must never be deleted");
+        }
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

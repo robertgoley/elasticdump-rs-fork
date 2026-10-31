@@ -4080,3 +4080,336 @@ async fn l647_sigint_during_cluster_copy_reports_the_resume_offset() {
         "scroll cleared"
     );
 }
+
+/// L-648: a scroll source of `n` documents, `limit` per page, each page answered after
+/// `delay`. Stateless (the page number is in the scroll id), so one mock serves every run.
+async fn l648_source(n: usize, limit: usize, delay: std::time::Duration) -> RouterMock {
+    let page_at = move |k: usize| {
+        let hits: Vec<String> = (k * limit + 1..=((k + 1) * limit).min(n))
+            .map(|i| {
+                hit(
+                    &i.to_string(),
+                    &format!("{{\"n\":{i},\"pad\":\"{i:0>40}\"}}"),
+                )
+            })
+            .collect();
+        Reply::ok(page(&format!("p{}", k + 1), &hits, n))
+    };
+    RouterMock::builder()
+        .handler(move |req| async move {
+            match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/") => Reply::ok(INFO),
+                ("POST", p) if p.starts_with("/idx/_search") => {
+                    tokio::time::sleep(delay).await;
+                    page_at(0)
+                }
+                ("POST", "/_search/scroll") => {
+                    let v: serde_json::Value =
+                        serde_json::from_slice(&req.body).unwrap_or_default();
+                    let k = v["scroll_id"]
+                        .as_str()
+                        .and_then(|s| s.strip_prefix('p'))
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(usize::MAX / 2);
+                    tokio::time::sleep(delay).await;
+                    page_at(k)
+                }
+                _ => Reply::ok(CLEARED),
+            }
+        })
+        .start()
+        .await
+}
+
+/// Regular files in `d`, by name.
+fn l648_files(d: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    std::fs::read_dir(d)
+        .unwrap()
+        .flatten()
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read(e.path()).unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+/// Spawns the binary and SIGKILLs it after `after`, or, with `chase`, as soon as a
+/// committed (non-hidden) file that was not there before shows up in `dir` (the commit
+/// window). Returns false if the run finished before it could be killed.
+fn l648_kill_9(
+    args: &[String],
+    after: std::time::Duration,
+    chase: Option<(
+        &std::path::Path,
+        &std::collections::BTreeMap<String, Vec<u8>>,
+    )>,
+) -> bool {
+    use std::time::{Duration, Instant};
+    let mut child = bin()
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return false;
+        }
+        let fire = match chase {
+            None => start.elapsed() >= after,
+            Some((dir, before)) => l648_files(dir)
+                .iter()
+                .any(|(n, b)| !n.starts_with('.') && before.get(n) != Some(b)),
+        };
+        if fire {
+            child.kill().unwrap();
+            let status = child.wait().unwrap();
+            return status.code().is_none();
+        }
+        assert!(start.elapsed() < Duration::from_secs(60), "run never ended");
+        if chase.is_none() {
+            std::thread::sleep(Duration::from_micros(200));
+        }
+    }
+}
+
+/// The L-648 crash-consistency check of one output directory after a `kill -9`:
+/// * every committed file holds exactly its old or its new contents (never partial);
+/// * the committed set is the old set, the new set, or (torn) recoverable: every file
+///   missing or still old has its new contents staged (`.name.part-*`), every old file
+///   missing was moved aside whole (`.name.edrs-replaced-*`);
+/// * nothing else is left. Returns the state and the leftovers (hidden files).
+fn l648_check(
+    dir: &std::path::Path,
+    old: &std::collections::BTreeMap<String, Vec<u8>>,
+    new: &std::collections::BTreeMap<String, Vec<u8>>,
+    ctx: &str,
+) -> (&'static str, std::collections::BTreeMap<String, Vec<u8>>) {
+    let all = l648_files(dir);
+    let (hidden, committed): (
+        std::collections::BTreeMap<_, _>,
+        std::collections::BTreeMap<_, _>,
+    ) = all.into_iter().partition(|(n, _)| n.starts_with('.'));
+    let leftover_of = |n: &str| -> Option<String> {
+        let h = n.strip_prefix('.')?;
+        let i = h.rfind(".part-").or_else(|| h.rfind(".edrs-replaced-"))?;
+        Some(h[..i].to_string())
+    };
+    for (n, b) in &committed {
+        assert!(
+            new.get(n) == Some(b) || old.get(n) == Some(b),
+            "{ctx}: committed '{n}' is neither its old nor its complete new contents ({} bytes)",
+            b.len()
+        );
+    }
+    for n in hidden.keys() {
+        let of = leftover_of(n).unwrap_or_default();
+        assert!(
+            new.contains_key(&of) || old.contains_key(&of),
+            "{ctx}: unexpected file '{n}'"
+        );
+    }
+    let state = if &committed == new {
+        "complete"
+    } else if &committed == old {
+        if old.is_empty() {
+            "absent"
+        } else {
+            "untouched"
+        }
+    } else {
+        for (n, b) in new {
+            if committed.get(n) != Some(b) {
+                assert!(
+                    hidden
+                        .iter()
+                        .any(|(h, hb)| h.starts_with(&format!(".{n}.part-")) && hb == b),
+                    "{ctx}: torn set, '{n}' is neither committed nor staged whole"
+                );
+            }
+        }
+        for (n, b) in old {
+            if !committed.contains_key(n) {
+                assert!(
+                    hidden
+                        .iter()
+                        .any(|(h, hb)| h.starts_with(&format!(".{n}.edrs-replaced-")) && hb == b),
+                    "{ctx}: old '{n}' vanished without a moved-aside copy"
+                );
+            }
+        }
+        "torn"
+    };
+    (state, hidden)
+}
+
+// L-648 (TST-BRK-SIG-003): `kill -9` at random points of a dump to one file, a split dump
+// (`--maxRows`, 200 parts) and a file restore, 50 runs each, half of the dumps replacing an
+// existing output with --overwrite, and every fourth split run killed the moment the first
+// part is committed. After every kill the output is absent, the old one, or complete (a torn
+// split set is recoverable: the rest is staged whole and replaced files were moved aside
+// whole), and nothing but staging / moved-aside files is left. D-5: the next run to the same
+// output warns naming each leftover and leaves it in place. A killed restore leaves its input
+// unchanged and the destination got a gap-free prefix of the documents.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l648_kill_9_at_random_points_is_crash_consistent() {
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+    const N: usize = 600;
+    const RUNS: usize = 50;
+    let seed = support::chaos::seed("l648_kill_9_at_random_points_is_crash_consistent");
+    let mut rng = support::chaos::Rng::new(seed);
+    let src = l648_source(N, 50, Duration::from_millis(4)).await;
+    let input = format!("{}/idx", src.url());
+    let args = |out: &std::path::Path, split: bool, overwrite: bool| {
+        let mut a = s(&[
+            "--input",
+            &input,
+            "--output",
+            out.to_str().unwrap(),
+            "--limit",
+            "50",
+        ]);
+        if split {
+            a.extend(s(&["--maxRows", "3"]));
+        }
+        if overwrite {
+            a.push("--overwrite".into());
+        }
+        a
+    };
+    // calibration: the complete outputs and how long a run takes
+    let mut expected = Vec::new();
+    for split in [false, true] {
+        let d = tempfile::tempdir().unwrap();
+        let t = Instant::now();
+        let o = run_async(args(&d.path().join("d.json"), split, false), vec![]).await;
+        assert!(o.status.success(), "{}", stderr(&o));
+        let files = l648_files(d.path());
+        assert_eq!(files.len(), if split { N / 3 } else { 1 }, "{files:?}");
+        expected.push((split, files, t.elapsed()));
+    }
+    let mut tally: BTreeMap<String, usize> = BTreeMap::new();
+    for (split, new, took) in &expected {
+        let mode = if *split { "split" } else { "dump" };
+        for run in 0..RUNS {
+            let d = tempfile::tempdir().unwrap();
+            let out = d.path().join("d.json");
+            let overwrite = run % 2 == 1;
+            let old: BTreeMap<String, Vec<u8>> = if overwrite {
+                new.keys()
+                    .map(|n| (n.clone(), format!("old {n}\n").into_bytes()))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
+            for (n, b) in &old {
+                std::fs::write(d.path().join(n), b).unwrap();
+            }
+            let chase = *split && run % 4 == 3;
+            let after = Duration::from_micros(rng.below(took.as_micros() as u64 * 6 / 5 + 1));
+            let a = args(&out, *split, overwrite);
+            let dir = d.path().to_path_buf();
+            let before = old.clone();
+            let killed = tokio::task::block_in_place(|| {
+                l648_kill_9(&a, after, chase.then_some((dir.as_path(), &before)))
+            });
+            let ctx = format!(
+                "{mode} run {run} (overwrite {overwrite}, chase {chase}, kill at {after:?}, killed {killed}, seed {seed})"
+            );
+            let (state, leftovers) = l648_check(d.path(), &old, new, &ctx);
+            *tally
+                .entry(format!(
+                    "{mode}/{state}/{}",
+                    if leftovers.is_empty() {
+                        "clean"
+                    } else {
+                        "leftovers"
+                    }
+                ))
+                .or_default() += 1;
+            if leftovers.is_empty() {
+                continue;
+            }
+            // D-5: the next run to the same output names every leftover and keeps it
+            let o = run_async(args(&out, *split, true), vec![]).await;
+            let err = stderr(&o);
+            assert!(o.status.success(), "{ctx}: rerun: {err}");
+            assert!(
+                err.contains("left by an earlier run that was killed")
+                    && err.contains("left in place, not deleted"),
+                "{ctx}: no leftover warning: {err}"
+            );
+            for n in leftovers.keys() {
+                assert!(err.contains(n.as_str()), "{ctx}: '{n}' not named: {err}");
+            }
+            let after_rerun = l648_files(d.path());
+            for (n, b) in &leftovers {
+                assert_eq!(after_rerun.get(n), Some(b), "{ctx}: leftover '{n}' touched");
+            }
+            let committed: BTreeMap<_, _> = after_rerun
+                .into_iter()
+                .filter(|(n, _)| !n.starts_with('.'))
+                .collect();
+            assert!(&committed == new, "{ctx}: rerun output differs");
+        }
+    }
+
+    // restore: kill -9 while a file is restored into a cluster
+    let d = tempfile::tempdir().unwrap();
+    let file = d.path().join("d.json");
+    std::fs::write(&file, &expected[0].1["d.json"]).unwrap();
+    let digest = std::fs::read(&file).unwrap();
+    let mut took = Duration::ZERO;
+    for run in 0..=RUNS {
+        let (m, _) = l647_slow_destination(Duration::from_millis(3)).await;
+        let a = s(&[
+            "--input",
+            file.to_str().unwrap(),
+            "--output",
+            &format!("{}/dst", m.url()),
+            "--limit",
+            "20",
+        ]);
+        let t = Instant::now();
+        let after = Duration::from_micros(rng.below(took.as_micros() as u64 * 6 / 5 + 1));
+        let killed = if run == 0 {
+            let o = run_async(a, vec![]).await;
+            assert!(o.status.success(), "{}", stderr(&o));
+            took = t.elapsed();
+            false
+        } else {
+            tokio::task::block_in_place(|| l648_kill_9(&a, after, None))
+        };
+        let ctx = format!("restore run {run} (kill at {after:?}, killed {killed}, seed {seed})");
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            digest,
+            "{ctx}: input changed"
+        );
+        assert_eq!(dir_names(d.path()), vec!["d.json".to_string()], "{ctx}");
+        let ids: Vec<u64> = m
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/dst/_bulk")
+            .flat_map(|r| l647_bulk_ids(&r.body))
+            .collect();
+        let want: Vec<u64> = (1..=ids.len() as u64).collect();
+        assert_eq!(ids, want, "{ctx}: not a gap-free prefix");
+        if run == 0 {
+            assert_eq!(ids.len(), N, "{ctx}");
+        } else {
+            *tally
+                .entry(format!(
+                    "restore/{}",
+                    if ids.len() == N { "complete" } else { "prefix" }
+                ))
+                .or_default() += 1;
+        }
+    }
+    eprintln!("L-648 outcomes over {RUNS} runs per mode: {tally:?}");
+}

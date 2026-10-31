@@ -335,6 +335,14 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   Symlinked directories in the parent path are followed (`linkdir/out.json` with `linkdir -> /real/dir` writes
   `/real/dir/out.json`); only the final file itself may not be a link. A dangling parent link is a usage error
   that names the link and its missing target (L-644a).
+* A run that is killed outright (`kill -9`, the OOM killer, a power cut) cannot clean up, but it never leaves a
+  partial file at the output path: the output (each split part) is absent, the old file, or complete. A split set
+  killed mid-commit can be torn, but the parts not yet moved into place are still staged whole
+  (`.d.split-N.json.part-PID-TS`) and files being replaced with `--overwrite` were moved aside whole
+  (`.d.split-N.json.edrs-replaced-PID`). These hidden files are **left in place, never deleted**: the next run to
+  the same output prints a warning naming each one with its size (D-5); check and remove them yourself. A killed
+  restore never changes its input file; the cluster got the first documents of the file, without gaps (with the
+  default `--concurrency`). Checked by `kill -9` at random points, 50 runs each for dump, split and restore (L-648).
 * Ctrl+C clears the scroll / closes the PIT (ES input pipelines).
 * Ctrl+C (or SIGTERM) during a restore into a cluster (file -> cluster or cluster -> cluster) stops reading,
   lets the bulk requests already sent finish (none is cut off), prints `Total Writes` and exits 130 / 143 with
