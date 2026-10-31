@@ -28,11 +28,13 @@ pub async fn file_to_sink(
     cancel: CancellationToken,
 ) -> Result<WriteReport> {
     let mut rx = file_source::spawn_file_source(input, limit, max_doc, 4, cancel.clone());
-    let result: Result<()> = async {
+    // input documents handed to the sink so far, counting those --offset skipped
+    let mut seen = 0u64;
+    // Ok(true): stopped by a signal before the input ended
+    let result: Result<bool> = async {
         if window.is_exhausted() {
-            return Ok(());
+            return Ok(false);
         }
-        let mut seen = 0u64;
         loop {
             let batch = tokio::select! {
                 b = rx.recv() => b,
@@ -48,24 +50,40 @@ pub async fn file_to_sink(
                 if let Err(e) = sink.write_all(slice).await {
                     if sink.is_stdout() && crate::output::is_broken_pipe(&e) {
                         log::info!("stdout closed by reader; stopping early");
-                        return Ok(());
+                        return Ok(false);
                     }
                     return Err(e);
                 }
             }
             if window.is_exhausted() {
-                break;
+                return Ok(false);
             }
         }
-        if cancel.is_cancelled() && crate::signals::received().is_some() {
-            return Err(crate::signals::interrupted_error());
-        }
-        Ok(())
+        Ok(cancel.is_cancelled() && crate::signals::received().is_some())
     }
     .await;
     cancel.cancel(); // stop the reader thread if we ended early
     match result {
-        Ok(()) => {
+        // L-647 (TST-BRK-SIG-002): a restore into a cluster finishes its in-flight bulk
+        // requests, then reports where to resume. A file output is removed as before.
+        Ok(true) if sink.is_bulk() => match sink.finalize().await {
+            Ok(r) => Err(crate::signals::stopped_error(
+                r.written,
+                r.failed,
+                r.overwritten,
+                crate::signals::Resume::Offset {
+                    offset: seen,
+                    size: window.remaining(),
+                    exact: true,
+                },
+            )),
+            Err(e) => Err(e.context(crate::signals::interrupted_error().to_string())),
+        },
+        Ok(true) => {
+            sink.abort().await;
+            Err(crate::signals::interrupted_error())
+        }
+        Ok(false) => {
             if let Err(e) = sink.flush().await {
                 if !(sink.is_stdout() && crate::output::is_broken_pipe(&e)) {
                     sink.abort().await;

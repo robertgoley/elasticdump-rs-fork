@@ -12,7 +12,7 @@ The ignored junk files `oom` and `test_query_elasticdump_rs_test_857109_16.json`
 Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/elasticdump-rs-plan when you commit (the OpenCode run-card.sh claim check reads handoff/plan/PROGRESS.md; update its line in handoff/SHA256SUMS).
 
 ## Status
-- Tasks are done through **L-646**, plus the follow-up **L-644a** (code HEAD a3b00c5 "L-644a: follow symlinked parent dirs for --output", merged into `main`; L-643 c38c46d, L-644 4f9115c, L-645 + D-4 48ca62e, L-646 7802d7e). **L-647 is next** (BRK-SIG-002: SIGINT during file->cluster and cluster->cluster restores; stop after in-flight bulks, print `Total Writes` and the `--offset` to resume, exit 130).
+- Tasks are done through **L-647** (on `main`; L-643 c38c46d, L-644 4f9115c, L-644a a3b00c5, L-645 + D-4 48ca62e, L-646 7802d7e, L-647 = `git log -1 --grep '^L-647'`). **L-648 is next** (BRK-SIG-003: `kill -9` at random points in dump, split and restore x50 runs; the final path is absent or complete, staging leftovers are detectable and cleaned up or warned about).
 - Pending with the user: the L-645 behavior choices (credential precedence, auth-file values literal, world-readable warning) are being checked; keep them as they are unless told otherwise.
 - The full queue is in plan/TASKS-LOCAL.md and handoff/HANDOFF-GROK-OPENCODE.md §8.
 - plan/PROGRESS.md has one row per task and ends with a resume note. plan/progress-add.sh appends a row.

@@ -336,6 +336,13 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   `/real/dir/out.json`); only the final file itself may not be a link. A dangling parent link is a usage error
   that names the link and its missing target (L-644a).
 * Ctrl+C clears the scroll / closes the PIT (ES input pipelines).
+* Ctrl+C (or SIGTERM) during a restore into a cluster (file -> cluster or cluster -> cluster) stops reading,
+  lets the bulk requests already sent finish (none is cut off), prints `Total Writes` and exits 130 / 143 with
+  the `--offset` to resume from, e.g. `rerun the same command with --offset 1230` (plus `--size N` when the run
+  had a `--size`). Every input document before that offset was sent (failed ones are counted in `Failed Writes`
+  and not retried). The offset is exact for a file input; for a cluster input only while the source index is
+  unchanged and its search order is stable (a sort in `--searchBody`). A sliced dump (`--slices` > 1) has no
+  single order: it says so and is simply rerun. File output still removes its staged files (L-647).
 
 ## Security notes
 

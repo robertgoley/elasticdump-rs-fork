@@ -53,6 +53,87 @@ pub fn interrupted_error() -> anyhow::Error {
     anyhow::Error::new(Interrupted(received().unwrap_or(SIGINT)))
 }
 
+/// How an interrupted restore can be picked up again (L-647, TST-BRK-SIG-002).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    /// Rerun with `--offset offset` (and `--size size` when the run had one).
+    /// `exact` is false for a cluster input, whose order is only stable while
+    /// the index does not change.
+    Offset {
+        offset: u64,
+        size: Option<u64>,
+        exact: bool,
+    },
+    /// `--offset` cannot resume this run; the reason says what to do instead.
+    NotByOffset(&'static str),
+}
+
+/// A restore into a cluster stopped by a signal AFTER its in-flight bulk
+/// requests finished, so everything before the resume point is written (or
+/// counted as failed). Exit status 128 + the signal, like [`Interrupted`].
+#[derive(Debug)]
+pub struct Stopped {
+    pub sig: i32,
+    pub written: u64,
+    pub failed: u64,
+    pub overwritten: u64,
+    pub resume: Resume,
+}
+
+impl std::fmt::Display for Stopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "dump interrupted by user ({}) after the in-flight bulk requests finished; {} document(s) written",
+            name(self.sig),
+            self.written
+        )?;
+        match &self.resume {
+            Resume::Offset {
+                offset,
+                size,
+                exact,
+            } => {
+                write!(
+                    f,
+                    "; to resume, rerun the same command with --offset {offset}"
+                )?;
+                if let Some(size) = size {
+                    write!(f, " --size {size}")?;
+                }
+                if !exact {
+                    write!(
+                        f,
+                        " (exact only while the source index is unchanged and its search order is stable, e.g. a sort in --searchBody)"
+                    )?;
+                }
+            }
+            Resume::NotByOffset(why) => write!(f, "; {why}")?,
+        }
+        if self.failed > 0 {
+            write!(
+                f,
+                "; {} document(s) before that point failed and are not retried by a resumed run (see the errors above)",
+                self.failed
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Stopped {}
+
+/// The [`Stopped`] error for the signal received.
+pub fn stopped_error(written: u64, failed: u64, overwritten: u64, resume: Resume) -> anyhow::Error {
+    anyhow::Error::new(Stopped {
+        sig: received().unwrap_or(SIGINT),
+        written,
+        failed,
+        overwritten,
+        resume,
+    })
+}
+
 /// While the guard lives, a first signal cancels [`token`] instead of exiting.
 pub struct Graceful(());
 
@@ -111,4 +192,57 @@ pub fn install() {
         let again = next_signal().await;
         std::process::exit(128 + again);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stopped_messages_name_the_resume_offset() {
+        let m = Stopped {
+            sig: SIGINT,
+            written: 40,
+            failed: 0,
+            overwritten: 0,
+            resume: Resume::Offset {
+                offset: 50,
+                size: None,
+                exact: true,
+            },
+        }
+        .to_string();
+        assert_eq!(
+            m,
+            "dump interrupted by user (SIGINT) after the in-flight bulk requests finished; 40 document(s) written; to resume, rerun the same command with --offset 50"
+        );
+        let m = Stopped {
+            sig: SIGTERM,
+            written: 7,
+            failed: 2,
+            overwritten: 0,
+            resume: Resume::Offset {
+                offset: 9,
+                size: Some(91),
+                exact: false,
+            },
+        }
+        .to_string();
+        assert!(m.contains("(SIGTERM)"), "{m}");
+        assert!(m.contains("--offset 9 --size 91 (exact only while"), "{m}");
+        assert!(m.contains("2 document(s) before that point failed"), "{m}");
+        let m = Stopped {
+            sig: SIGINT,
+            written: 3,
+            failed: 0,
+            overwritten: 0,
+            resume: Resume::NotByOffset("a sliced dump cannot resume with --offset"),
+        }
+        .to_string();
+        assert!(
+            m.ends_with("; a sliced dump cannot resume with --offset"),
+            "{m}"
+        );
+        assert!(!m.contains("rerun the same command"), "{m}");
+    }
 }

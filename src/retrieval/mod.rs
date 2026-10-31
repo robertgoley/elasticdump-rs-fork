@@ -379,6 +379,8 @@ pub async fn dump_data(
             let mut output_target = output_target;
             let mut window = window;
             let mut written = 0u64;
+            // L-647: hits handed to the output, counting those --offset skipped
+            let mut consumed = 0u64;
             if window.is_exhausted() {
                 let _ = cancel_reason.set(CancelReason::OutputClosed);
                 cancel.cancel();
@@ -387,7 +389,13 @@ pub async fn dump_data(
 
             // Process output as it comes in
             while let Some(processed) = processed_rx.recv().await {
+                if matches!(cancel_reason.get(), Some(CancelReason::Interrupt)) {
+                    // L-647: nothing new after a signal; the resume offset stays exact
+                    while processed_rx.recv().await.is_some() {}
+                    break;
+                }
                 let docs = memchr::memchr_iter(b'\n', &processed.buffer).count() as u64;
+                consumed += docs;
                 let (slice, docs) = window.apply(&processed.buffer, docs);
                 written += docs;
                 if let Err(e) = output_target.write_all(slice).await {
@@ -395,7 +403,7 @@ pub async fn dump_data(
                         let _ = cancel_reason.set(CancelReason::OutputClosed);
                         cancel.cancel();
                         while processed_rx.recv().await.is_some() {}
-                        return Ok((output_target, written));
+                        return Ok((output_target, written, consumed, window));
                     }
                     cancel.cancel();
                     output_target.abort().await;
@@ -414,13 +422,13 @@ pub async fn dump_data(
                 if output_target.is_stdout() && crate::output::is_broken_pipe(&e) {
                     let _ = cancel_reason.set(CancelReason::OutputClosed);
                     cancel.cancel();
-                    return Ok((output_target, written));
+                    return Ok((output_target, written, consumed, window));
                 }
                 cancel.cancel();
                 output_target.abort().await;
                 return Err(anyhow::anyhow!("Failed to flush writer: {}", e));
             }
-            Ok((output_target, written))
+            Ok((output_target, written, consumed, window))
         }
     });
 
@@ -570,10 +578,12 @@ pub async fn dump_data(
     // Wait for output to finish
     let mut completed_output_target = None;
     let mut written_docs = 0u64;
+    let mut resume_at = (0u64, None);
     let output_error = match output_task.await {
-        Ok(Ok((output_target, written))) => {
+        Ok(Ok((output_target, written, consumed, window))) => {
             completed_output_target = Some(output_target);
             written_docs = written;
+            resume_at = (consumed, window.remaining());
             None
         }
         Ok(Err(e)) => Some(anyhow::anyhow!("Output task failed: {}", e)),
@@ -606,9 +616,35 @@ pub async fn dump_data(
             }
             None => crate::signals::interrupted_error(),
         };
-        if let Some(output_target) = completed_output_target {
-            output_target.abort().await;
-        }
+        let plain_interrupt = error
+            .downcast_ref::<crate::signals::Interrupted>()
+            .is_some();
+        let error = match completed_output_target {
+            // L-647 (TST-BRK-SIG-002): a copy into a cluster finishes its in-flight bulk
+            // requests and says where to resume; a file output is removed as before.
+            Some(target) if plain_interrupt && target.is_bulk() => match target.finalize().await {
+                Ok(r) => {
+                    let resume = if num_slices > 1 {
+                        crate::signals::Resume::NotByOffset(
+                            "a sliced dump has no single order, so --offset cannot resume it; rerun it (documents keep their _id, so the ones already written are overwritten, not duplicated, with --bulkAction index)",
+                        )
+                    } else {
+                        crate::signals::Resume::Offset {
+                            offset: resume_at.0,
+                            size: resume_at.1,
+                            exact: false,
+                        }
+                    };
+                    crate::signals::stopped_error(r.written, r.failed, r.overwritten, resume)
+                }
+                Err(e) => e.context(error.to_string()),
+            },
+            Some(target) => {
+                target.abort().await;
+                error
+            }
+            None => error,
+        };
         close_pit_best_effort(client, pit_api, &shared_pit).await;
         return Err(error);
     }

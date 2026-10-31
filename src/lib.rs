@@ -119,6 +119,8 @@ pub fn exit_code(error: &anyhow::Error) -> i32 {
         3
     } else if let Some(signals::Interrupted(sig)) = error.downcast_ref::<signals::Interrupted>() {
         128 + sig
+    } else if let Some(stopped) = error.downcast_ref::<signals::Stopped>() {
+        128 + stopped.sig
     } else {
         1
     }
@@ -790,6 +792,48 @@ fn open_file_limit() -> Option<u64> {
     })
 }
 
+/// The transfer itself (`--type data` or a meta type); the summary is printed by [`run`].
+async fn transfer(
+    cli: &Cli,
+    input: &Endpoint,
+    output: &Endpoint,
+    retry: crate::http::RetryPolicy,
+    gate: crate::http::gate::RequestGate,
+    window: DocWindow,
+) -> Result<pipeline::WriteReport> {
+    let report = match cli.r#type {
+        DumpType::Data => {
+            let sink = build_sink(cli, output, retry, gate.clone()).await?;
+            match input {
+                Endpoint::Es(ep) => {
+                    let opts = es_source_options(cli, ep, retry, gate.clone()).await?;
+                    check_rename_merges(cli, &opts.client, ep.index.as_deref(), retry).await?;
+                    // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
+                    // stop the dump unless the search body filters _source itself (anything but `true`).
+                    let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
+                        .is_some_and(|v| sonic_rs::JsonValueTrait::as_bool(v) != Some(true));
+                    retrieval::set_require_source(!cli.allow_missing_source && !own_choice);
+                    retrieval::dump_data(opts, sink, window).await?
+                }
+                inp => {
+                    let _graceful = signals::graceful();
+                    pipeline::file_to_sink(
+                        file_path(inp),
+                        cli.limit,
+                        (cli.max_doc_mb > 0).then_some(cli.max_doc_mb << 20),
+                        window,
+                        sink,
+                        signals::token().child_token(),
+                    )
+                    .await?
+                }
+            }
+        }
+        DumpType::Meta(kind) => run_meta(cli, kind, input, output, retry, gate).await?,
+    };
+    Ok(report)
+}
+
 /// Smallest accepted `--fileSize` (TST-BRK-RES-006).
 const MIN_FILE_SIZE: u64 = 256;
 
@@ -860,35 +904,28 @@ pub async fn run() -> Result<()> {
     let gate = config::request_gate(&cli);
     let window = DocWindow::new(cli.offset, cli.size);
 
-    let report = match cli.r#type {
-        DumpType::Data => {
-            let sink = build_sink(&cli, &output, retry, gate.clone()).await?;
-            match &input {
-                Endpoint::Es(ep) => {
-                    let opts = es_source_options(&cli, ep, retry, gate.clone()).await?;
-                    check_rename_merges(&cli, &opts.client, ep.index.as_deref(), retry).await?;
-                    // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
-                    // stop the dump unless the search body filters _source itself (anything but `true`).
-                    let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
-                        .is_some_and(|v| sonic_rs::JsonValueTrait::as_bool(v) != Some(true));
-                    retrieval::set_require_source(!cli.allow_missing_source && !own_choice);
-                    retrieval::dump_data(opts, sink, window).await?
-                }
-                inp => {
-                    let _graceful = signals::graceful();
-                    pipeline::file_to_sink(
-                        file_path(inp),
-                        cli.limit,
-                        (cli.max_doc_mb > 0).then_some(cli.max_doc_mb << 20),
-                        window,
-                        sink,
-                        signals::token().child_token(),
-                    )
-                    .await?
+    let report = match transfer(&cli, &input, &output, retry, gate, window).await {
+        Ok(report) => report,
+        Err(e) => {
+            // L-647: a restore stopped by a signal still reports what it wrote
+            if let Some(stopped) = e.downcast_ref::<signals::Stopped>() {
+                if !cli.quiet() {
+                    let mut err = std::io::stderr().lock();
+                    let _ = writeln!(err, "Total Writes: {}", stopped.written);
+                    if stopped.overwritten > 0 {
+                        let _ = writeln!(
+                            err,
+                            "Overwritten: {} (documents that replaced one with the same _id; included in Total Writes)",
+                            stopped.overwritten
+                        );
+                    }
+                    if stopped.failed > 0 {
+                        let _ = writeln!(err, "Failed Writes: {}", stopped.failed);
+                    }
                 }
             }
+            return Err(e);
         }
-        DumpType::Meta(kind) => run_meta(&cli, kind, &input, &output, retry, gate.clone()).await?,
     };
 
     if !cli.quiet() {

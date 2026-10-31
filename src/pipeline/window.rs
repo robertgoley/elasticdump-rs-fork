@@ -28,6 +28,11 @@ impl DocWindow {
         self.skip
     }
 
+    /// Documents `--size` still lets through (`None`: no `--size`).
+    pub fn remaining(&self) -> Option<u64> {
+        self.remaining
+    }
+
     /// `true` once `--size` documents have been passed.
     pub fn is_exhausted(&self) -> bool {
         self.remaining == Some(0)

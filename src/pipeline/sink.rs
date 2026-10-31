@@ -73,6 +73,11 @@ impl Sink {
         }
     }
 
+    /// Writes into a cluster (bulk requests).
+    pub fn is_bulk(&self) -> bool {
+        matches!(self, Sink::Bulk(_))
+    }
+
     pub fn is_stdout(&self) -> bool {
         match self {
             Sink::File(f) => f.is_stdout(),

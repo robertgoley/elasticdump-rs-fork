@@ -3801,3 +3801,282 @@ fn l644a_symlinked_parent_dirs_are_followed() {
         stderr(&o)
     );
 }
+
+/// L-647 helpers: the `_id`s of the documents in a `_bulk` body (action lines), in order.
+fn l647_bulk_ids(body: &[u8]) -> Vec<u64> {
+    String::from_utf8_lossy(body)
+        .lines()
+        .step_by(2)
+        .filter_map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            let meta = v.as_object()?.values().next()?.clone();
+            meta.get("_id")?.as_str()?.parse().ok()
+        })
+        .collect()
+}
+
+/// A destination cluster whose `_bulk` answers after `delay`; counts documents answered.
+async fn l647_slow_destination(
+    delay: std::time::Duration,
+) -> (RouterMock, std::sync::Arc<std::sync::atomic::AtomicU64>) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let answered = std::sync::Arc::new(AtomicU64::new(0));
+    let a = answered.clone();
+    let m = RouterMock::builder()
+        .handler(move |req| {
+            let a = a.clone();
+            async move {
+                if req.method == "GET" {
+                    return Reply::ok(INFO);
+                }
+                if !req.path.ends_with("/_bulk") {
+                    return Reply::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#);
+                }
+                tokio::time::sleep(delay).await;
+                let n = String::from_utf8_lossy(&req.body).lines().count() / 2;
+                let items = vec![r#"{"index":{"status":201}}"#; n].join(",");
+                a.fetch_add(n as u64, Ordering::SeqCst);
+                Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+            }
+        })
+        .start()
+        .await;
+    (m, answered)
+}
+
+/// SIGINT once `bulks` `_bulk` requests reached `m`; returns (exit code, stderr, documents
+/// answered by the destination at the moment the process exited).
+async fn l647_interrupt_after(
+    mut cmd: Command,
+    m: &RouterMock,
+    bulks: usize,
+    answered: &std::sync::atomic::AtomicU64,
+) -> (Option<i32>, String, u64) {
+    use std::time::{Duration, Instant};
+    let mut child = cmd
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while count(&m.requests(), "POST", "/dst/_bulk") < bulks {
+        assert!(Instant::now() < deadline, "the restore never got going");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let status = tokio::task::block_in_place(|| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(s) = child.try_wait().unwrap() {
+                return s;
+            }
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("no exit within 30 s of SIGINT");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    let at_exit = answered.load(std::sync::atomic::Ordering::SeqCst);
+    let mut err = String::new();
+    std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut err).unwrap();
+    (status.code(), err, at_exit)
+}
+
+fn l647_number_after(err: &str, label: &str) -> u64 {
+    let at = err
+        .find(label)
+        .unwrap_or_else(|| panic!("no '{label}' in: {err}"));
+    err[at + label.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or_else(|_| panic!("no number after '{label}' in: {err}"))
+}
+
+// L-647 (TST-BRK-SIG-002): SIGINT during a file -> cluster restore stops after the in-flight
+// bulk requests (none is cut off), prints `Total Writes` and the `--offset` to resume, and
+// exits 130. The written documents are exactly the first ones of the file (no gap even with
+// --concurrency 4), and rerunning with the printed --offset writes exactly the rest.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l647_sigint_during_file_restore_reports_the_resume_offset() {
+    use std::collections::BTreeSet;
+    use std::time::Duration;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let total = 3000u64;
+    let mut body = String::new();
+    for i in 1..=total {
+        body.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{{\"n\":{i}}}}}\n"
+        ));
+    }
+    std::fs::write(&input, body).unwrap();
+    for (concurrency, offset) in [("1", 0u64), ("4", 0), ("4", 25)] {
+        let tag = format!("--concurrency {concurrency} --offset {offset}");
+        let (m, answered) = l647_slow_destination(Duration::from_millis(40)).await;
+        let mut cmd = bin();
+        cmd.args(["--input", input.to_str().unwrap(), "--output"])
+            .arg(format!("{}/dst", m.url()))
+            .args(["--limit", "10", "--noRefresh", "--concurrency", concurrency])
+            .args(["--offset", &offset.to_string()]);
+        let (code, err, at_exit) = l647_interrupt_after(cmd, &m, 8, &answered).await;
+        assert_eq!(code, Some(130), "{tag}: {err}");
+        assert!(err.contains("interrupted by user (SIGINT)"), "{tag}: {err}");
+        assert!(
+            err.contains("in-flight bulk requests finished"),
+            "{tag}: {err}"
+        );
+        assert!(!err.contains("exact only while"), "{tag}: {err}");
+        let written = l647_number_after(&err, "Total Writes: ");
+        let resume = l647_number_after(&err, "rerun the same command with --offset ");
+        // every bulk request sent was answered before the process exited
+        let sent: Vec<u64> = m
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/dst/_bulk")
+            .flat_map(|r| l647_bulk_ids(&r.body))
+            .collect();
+        assert_eq!(
+            at_exit,
+            sent.len() as u64,
+            "{tag}: in-flight bulks were cut off"
+        );
+        assert_eq!(written, sent.len() as u64, "{tag}: {err}");
+        assert!(
+            written >= 80 && written < total - offset,
+            "{tag}: {written}"
+        );
+        // exactly the documents offset+1 ..= resume, once each
+        let got: BTreeSet<u64> = sent.iter().copied().collect();
+        assert_eq!(got.len(), sent.len(), "{tag}: duplicates");
+        assert_eq!(
+            got,
+            (offset + 1..=resume).collect::<BTreeSet<u64>>(),
+            "{tag}: gap before the resume offset"
+        );
+        assert_eq!(resume, offset + written, "{tag}");
+        // the resumed run writes exactly the rest
+        let (m2, _) = l647_slow_destination(Duration::ZERO).await;
+        let o = run_async(
+            s(&[
+                "--input",
+                input.to_str().unwrap(),
+                "--output",
+                &format!("{}/dst", m2.url()),
+                "--limit",
+                "100",
+                "--noRefresh",
+                "--offset",
+                &resume.to_string(),
+            ]),
+            vec![],
+        )
+        .await;
+        assert!(o.status.success(), "{tag}: {}", stderr(&o));
+        let rest: Vec<u64> = m2
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/dst/_bulk")
+            .flat_map(|r| l647_bulk_ids(&r.body))
+            .collect();
+        assert_eq!(rest, (resume + 1..=total).collect::<Vec<u64>>(), "{tag}");
+        assert!(
+            stderr(&o).contains(&format!("Total Writes: {}", total - resume)),
+            "{tag}: {}",
+            stderr(&o)
+        );
+    }
+    // with --size, the hint carries the --size still to go
+    let (m, answered) = l647_slow_destination(Duration::from_millis(40)).await;
+    let mut cmd = bin();
+    cmd.args(["--input", input.to_str().unwrap(), "--output"])
+        .arg(format!("{}/dst", m.url()))
+        .args(["--limit", "10", "--noRefresh", "--size", "2000"]);
+    let (code, err, _) = l647_interrupt_after(cmd, &m, 5, &answered).await;
+    assert_eq!(code, Some(130), "{err}");
+    let written = l647_number_after(&err, "Total Writes: ");
+    assert!(
+        err.contains(&format!("--offset {written} --size {}", 2000 - written)),
+        "{err}"
+    );
+}
+
+// L-647 (TST-BRK-SIG-002): SIGINT during a cluster -> cluster copy: the in-flight bulks
+// finish, the scroll is cleared, `Total Writes` and the resume --offset (with the note that a
+// cluster's order is only stable while it is unchanged) are printed, exit 130; the documents
+// written are exactly the first ones read.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l647_sigint_during_cluster_copy_reports_the_resume_offset() {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+    let page_no = Arc::new(AtomicU64::new(0));
+    let p = page_no.clone();
+    let src = RouterMock::builder()
+        .handler(move |req| {
+            let p = p.clone();
+            async move {
+                if req.method == "GET" {
+                    return Reply::ok(INFO);
+                }
+                if req.method == "DELETE" {
+                    return Reply::ok(CLEARED);
+                }
+                let n = p.fetch_add(1, Ordering::SeqCst);
+                let hits: Vec<String> = (n * 10 + 1..=n * 10 + 10)
+                    .map(|i| format!(r#"{{"_index":"i","_id":"{i}","_source":{{"n":{i}}}}}"#))
+                    .collect();
+                Reply::ok(format!(
+                    r#"{{"_scroll_id":"s1","hits":{{"total":{{"value":1000000,"relation":"eq"}},"hits":[{}]}}}}"#,
+                    hits.join(",")
+                ))
+            }
+        })
+        .start()
+        .await;
+    let (dst, answered) = l647_slow_destination(Duration::from_millis(40)).await;
+    let mut cmd = bin();
+    cmd.args(["--input", &format!("{}/i", src.url()), "--output"])
+        .arg(format!("{}/dst", dst.url()))
+        .args(["--limit", "10", "--noRefresh", "--concurrency", "3"]);
+    let (code, err, at_exit) = l647_interrupt_after(cmd, &dst, 6, &answered).await;
+    assert_eq!(code, Some(130), "{err}");
+    assert!(err.contains("in-flight bulk requests finished"), "{err}");
+    assert!(
+        err.contains("exact only while the source index is unchanged"),
+        "{err}"
+    );
+    let written = l647_number_after(&err, "Total Writes: ");
+    let resume = l647_number_after(&err, "rerun the same command with --offset ");
+    let sent: Vec<u64> = dst
+        .requests()
+        .iter()
+        .filter(|r| r.path == "/dst/_bulk")
+        .flat_map(|r| l647_bulk_ids(&r.body))
+        .collect();
+    assert_eq!(at_exit, sent.len() as u64, "in-flight bulks were cut off");
+    assert_eq!(written, sent.len() as u64, "{err}");
+    assert_eq!(resume, written, "{err}");
+    assert_eq!(
+        sent.iter().copied().collect::<BTreeSet<u64>>(),
+        (1..=resume).collect::<BTreeSet<u64>>(),
+        "gap before the resume offset"
+    );
+    assert!(
+        src.requests()
+            .iter()
+            .any(|r| r.method == "DELETE" && r.path.starts_with("/_search/scroll")),
+        "scroll cleared"
+    );
+}
