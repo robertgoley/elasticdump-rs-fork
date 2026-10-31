@@ -7,6 +7,7 @@
 
 pub mod alias;
 pub mod codec;
+pub mod field_types;
 pub(crate) mod http;
 pub mod index_scoped;
 pub mod policy;

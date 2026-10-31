@@ -2749,3 +2749,135 @@ async fn l654_override_main_response_version_is_still_opensearch() {
     assert_eq!(lines(&out).len() as u64, docs);
     assert_eq!(c.version().await, real);
 }
+
+// L-655 (BRK-XV-004): field types without an equivalent on the other engine (or this
+// version). For each type the tool knows, restoring a one-field mapping file is refused
+// before any write exactly when this cluster really has no such type (a direct PUT of the
+// same mapping fails with "No handler for type" / "mapper type [..] does not exist" or,
+// for an Elasticsearch `sparse_vector` on OpenSearch 3.x, "requires [method]"; on
+// Elasticsearch 8.0-8.10, "no longer supported"), so the
+// table never refuses what the cluster takes. A typical other-engine mapping is refused
+// naming each field, and the index is not created.
+#[tokio::test]
+async fn l655_fields_without_an_equivalent_are_refused_exactly_when_missing() {
+    use serde_json::json;
+    let c = Cluster::from_env();
+    let es = matches!(c.engine, Engine::Elasticsearch);
+    let version = c.version().await;
+    let defs = [
+        json!({"type": "flattened"}),
+        json!({"type": "flat_object"}),
+        json!({"type": "dense_vector", "dims": 3}),
+        json!({"type": "knn_vector", "dimension": 3}),
+        json!({"type": "semantic_text"}),
+        json!({"type": "semantic", "model_id": "m"}),
+        json!({"type": "match_only_text"}),
+        json!({"type": "wildcard"}),
+        json!({"type": "constant_keyword", "value": "x"}),
+        json!({"type": "unsigned_long"}),
+        json!({"type": "version"}),
+        json!({"type": "aggregate_metric_double", "metrics": ["min", "max"], "default_metric": "max"}),
+        json!({"type": "histogram"}),
+        json!({"type": "counted_keyword"}),
+        json!({"type": "rank_vectors", "dims": 3}),
+        json!({"type": "shape"}),
+        json!({"type": "point"}),
+        json!({"type": "xy_shape"}),
+        json!({"type": "xy_point"}),
+        json!({"type": "passthrough", "priority": 1}),
+        json!({"type": "sparse_vector"}),
+    ];
+    let missing_on_server = |body: &Value| {
+        let s = body.to_string();
+        s.contains("No handler for type")
+            || s.contains("does not exist. It might have been created")
+            || s.contains("requires [method]")
+            || s.contains("no handler for type")
+            || s.contains("field type is no longer supported")
+    };
+    let mut refused = vec![];
+    for def in &defs {
+        let ty = def["type"].as_str().unwrap();
+        let mapping = json!({"properties": {"k": {"type": "keyword"}, "f": def}});
+        let direct = unique("api_l655_direct");
+        let (st, body) = c
+            .call(
+                "PUT",
+                &direct,
+                Some(json!({"settings": {"number_of_replicas": 0}, "mappings": mapping})),
+            )
+            .await;
+        c.delete_index(&direct).await;
+        let dst = unique("api_l655");
+        let file = tmp_path("api_l655", "json");
+        std::fs::write(
+            &file,
+            json!({ &dst: {"mappings": mapping} }).to_string() + "\n",
+        )
+        .unwrap();
+        let o = run_loud(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&dst),
+            &["--type", "mapping"],
+        ))
+        .await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let tool_refused = err.contains(&format!("`f` ({ty}:"));
+        let (exists, _) = c.call("HEAD", &dst, None).await;
+        c.delete_index(&dst).await;
+        if tool_refused {
+            assert_eq!(o.status.code(), Some(1), "{ty}: {err}");
+            assert!(err.contains("nothing was written"), "{ty}: {err}");
+            assert_eq!(exists, 404, "{ty}: refused, but the index was created");
+            assert!(
+                st != 200 && missing_on_server(&body),
+                "{version}: the tool refuses {ty}, but the cluster has it: {st} {body}"
+            );
+            refused.push(ty);
+        } else {
+            assert!(
+                st == 200 || !missing_on_server(&body),
+                "{version}: the cluster has no {ty} ({body}) but the tool did not refuse it: {err}"
+            );
+            if st == 200 {
+                assert_success(&o);
+            }
+        }
+    }
+    println!("L-655 {version}: refused {refused:?}");
+    // a typical mapping from the other engine
+    let other = if es {
+        json!({"properties": {"msg": {"type": "text"}, "attrs": {"type": "flat_object"}, "emb": {"type": "knn_vector", "dimension": 3}}})
+    } else {
+        json!({"properties": {"msg": {"type": "text"}, "labels": {"type": "flattened"}, "obj": {"properties": {"emb": {"type": "dense_vector", "dims": 3}}}}})
+    };
+    let dst = unique("api_l655_other");
+    let file = tmp_path("api_l655_other", "json");
+    std::fs::write(
+        &file,
+        json!({ &dst: {"mappings": other} }).to_string() + "\n",
+    )
+    .unwrap();
+    for ty in ["mapping", "index"] {
+        let o = run_loud(io(
+            &c,
+            file.to_str().unwrap(),
+            &c.url_with_auth(&dst),
+            &["--type", ty],
+        ))
+        .await;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(1), "{ty}: {err}");
+        let named = if es {
+            ["`attrs` (flat_object", "`emb` (knn_vector"]
+        } else {
+            ["`labels` (flattened", "`obj.emb` (dense_vector"]
+        };
+        assert!(
+            named.iter().all(|n| err.contains(n)) && err.contains("2 field type(s)"),
+            "{ty}: {err}"
+        );
+        assert_eq!(c.call("HEAD", &dst, None).await.0, 404, "{ty}");
+    }
+}

@@ -415,6 +415,18 @@ impl BulkSink {
         }
     }
 
+    /// The target cluster.
+    pub fn target_info(&self) -> &ClusterInfo {
+        &self.opts.info
+    }
+
+    /// The single target index (see [`Self::single_target`]) when it does not exist yet,
+    /// so the first bulk request would create it with dynamic mappings (L-655).
+    pub async fn missing_target(&self) -> Option<String> {
+        let name = self.single_target()?;
+        self.target_uuid(&name).await.is_err().then_some(name)
+    }
+
     /// The one concrete index every document goes to, when the output names one (no
     /// rename, no wildcard or list); `None` otherwise.
     fn single_target(&self) -> Option<String> {

@@ -254,6 +254,8 @@ pub async fn write(
         );
     }
     let mut report = WriteReport::default();
+    let mut indices = indices;
+    refuse_unportable_fields(&mut indices, info, dst, opts, &mut report)?;
     for (src_index, mut def) in indices {
         let target = dst.target_index(&src_index)?;
         let result = match opts.kind {
@@ -279,6 +281,50 @@ pub async fn write(
         }
     }
     Ok(report)
+}
+
+/// L-655 (BRK-XV-004): before anything is written, refuse every index whose mapping has a
+/// field type the target has no type for, naming each field (see [`super::field_types`]).
+/// With `--ignore-errors` those indices are skipped as failures and the rest is restored.
+fn refuse_unportable_fields(
+    indices: &mut Map<String, Value>,
+    info: &ClusterInfo,
+    dst: &MetaTarget,
+    opts: &MetaOptions,
+    report: &mut WriteReport,
+) -> Result<()> {
+    if !matches!(opts.kind, MetaKind::Mapping | MetaKind::Index) {
+        return Ok(());
+    }
+    let mut refused = Vec::new();
+    for (src_index, def) in indices.iter() {
+        let mappings = match (opts.kind, def.get("mappings")) {
+            (_, Some(m)) => m,
+            (MetaKind::Mapping, None) => def,
+            _ => continue,
+        };
+        let found = super::field_types::unportable(mappings, info);
+        if !found.is_empty() {
+            let target = dst.target_index(src_index)?;
+            refused.push((
+                src_index.clone(),
+                super::field_types::refusal_message(&target, &found, info),
+            ));
+        }
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    if !opts.ignore_errors {
+        let all: Vec<&str> = refused.iter().map(|(_, m)| m.as_str()).collect();
+        bail!("--type {}: {}", opts.kind.type_name(), all.join("; "));
+    }
+    for (src_index, msg) in refused {
+        log::error!("--type {} (--ignore-errors): {msg}", opts.kind.type_name());
+        indices.shift_remove(&src_index);
+        report.failed += 1;
+    }
+    Ok(())
 }
 
 /// Strip generated, excluded and (for known sources) foreign-engine keys from

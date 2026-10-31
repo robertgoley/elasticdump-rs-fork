@@ -90,7 +90,14 @@ fn ndjson(body: &str) -> Vec<serde_json::Value> {
 }
 
 async fn copy(extra: &[&str], input_index: &str, action: &str, crlf: bool) -> (Output, String) {
-    let input = MockEs::serve(scroll(&[poc_hit(crlf)])).await;
+    // a copy from a named index first asks the source for its engine (`GET /`, L-655)
+    let mut canned = if input_index.is_empty() {
+        vec![]
+    } else {
+        vec![CannedResponse::ok(ES7)]
+    };
+    canned.extend(scroll(&[poc_hit(crlf)]));
+    let input = MockEs::serve(canned).await;
     let output = MockEs::serve(vec![
         CannedResponse::ok(ES7),
         bulk_ok(action, 1),

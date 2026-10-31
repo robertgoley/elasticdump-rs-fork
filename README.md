@@ -292,6 +292,22 @@ feature set (warned); with no tagline either the run fails before any dump reque
 guessing Elasticsearch. Live on OpenSearch 1.3.20 and 2.19.7 with the setting on, a `--searchType pit` dump detects the real
 version and never uses the Elasticsearch PIT (1.3.20 falls back to scroll; 2.19.7 uses the OpenSearch PIT).
 
+Field types without an equivalent (L-655): restoring a mapping or index (`--type mapping`/`index`) checks every
+field (`properties`, nested objects, multi-fields, `runtime` and `dynamic_templates`) against the target's engine
+and version before any write. Types the target has no handler for, for example `flattened`, `dense_vector`,
+`semantic_text` or `histogram` on OpenSearch and `flat_object`, `knn_vector`, `semantic` or `xy_shape` on
+Elasticsearch, X-Pack types on the Elasticsearch OSS build, or a type newer than the target, are refused with one
+error that lists each field as `path` (type, why, closest type) and says nothing was written; the mapping is not
+converted. With `--ignore-errors` only the indices with such fields are skipped (counted as failed). A
+`sparse_vector` is told apart by its definition (OpenSearch's has `method`). A cluster-to-cluster data copy between
+engines whose target index does not exist is refused the same way before any read or write, because the target
+would create it with dynamic mappings and guess other types; create the index from a converted mapping first.
+That copy asks the source for its engine (`GET /`) before searching; a source that does not answer skips the check.
+Plugin and unknown types are left to the server. Not checked: data restored from a file (its types are unknown),
+an existing target index, and index templates. The API-071 expectation table is unchanged (its fixture has none of
+these types). Live, the refusals match what the server rejects on OpenSearch 1.3.20, 2.19.7, 3.9.0 and
+Elasticsearch 7.10.2 (OSS and default), 7.17.29, 8.6.1, 8.19.23 and 9.1.2.
+
 ## Renaming indices
 
 `--renamePrefix old:new` (repeatable) and `--renameIndex '<regex>:<replacement>'` (repeatable, Rust `regex`

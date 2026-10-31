@@ -1482,6 +1482,123 @@ async fn override_main_response_version_is_detected_through_the_nodes() {
     );
 }
 
+// L-655 (BRK-XV-004): a mapping with field types the target has no type for is refused
+// before anything is written, naming every field, its type and the closest type; with
+// --ignore-errors only that index is skipped. A cross-engine cluster-to-cluster data copy
+// into a missing index (dynamic mappings would guess the types) is refused the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fields_without_an_equivalent_are_refused_before_any_write() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    const OS2: &str = r#"{"version":{"distribution":"opensearch","number":"2.19.7"},"tagline":"The OpenSearch Project: https://opensearch.org/"}"#;
+    const ES8: &str = r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("m.json");
+    std::fs::write(
+        &file,
+        r#"{"bad":{"mappings":{"properties":{"k":{"type":"keyword"},"labels":{"type":"flattened"},"obj":{"properties":{"emb":{"type":"dense_vector","dims":3}}}}}},"good":{"mappings":{"properties":{"k":{"type":"keyword"}}}}}"#,
+    )
+    .unwrap();
+    let os_mock = || {
+        RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(OS2)))
+            .route(Route::prefix("PUT", "/").reply(Reply::ok(r#"{"acknowledged":true}"#)))
+            .start()
+    };
+    let restore = |url: String, ty: &str, extra: &[&str]| {
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            file.to_str().unwrap().into(),
+            "--output".into(),
+            url,
+            "--type".into(),
+            ty.into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    };
+    for ty in ["mapping", "index"] {
+        let m = os_mock().await;
+        let o = run_async(restore(m.url(), ty, &[]), vec![]).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains(
+                "the mapping of 'bad' has 2 field type(s) that OpenSearch 2.19.7 has no type for"
+            ) && err.contains("`labels` (flattened: an Elasticsearch-only type")
+                && err.contains("flat_object")
+                && err.contains("`obj.emb` (dense_vector")
+                && err.contains("knn_vector")
+                && err.contains("nothing was written"),
+            "{ty}: {err}"
+        );
+        assert!(
+            !m.requests().iter().any(|r| r.method == "PUT"),
+            "{ty}: {:?}",
+            m.requests()
+        );
+        // --ignore-errors: the other index is still restored
+        let m = os_mock().await;
+        let o = run_async(restore(m.url(), ty, &["--ignore-errors"]), vec![]).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(0), "{ty}: {err}");
+        assert!(err.contains("`labels` (flattened"), "{err}");
+        let puts: Vec<String> = m
+            .requests()
+            .iter()
+            .filter(|r| r.method == "PUT")
+            .map(|r| r.path.clone())
+            .collect();
+        assert!(
+            puts.iter().all(|p| p.starts_with("/good")),
+            "{ty}: {puts:?}"
+        );
+        assert!(!puts.is_empty(), "{ty}");
+    }
+
+    // cluster to cluster, Elasticsearch -> OpenSearch, target index missing
+    let src = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(ES8)))
+        .route(Route::exact("GET", "/logs/_mapping").reply(Reply::ok(
+            r#"{"logs":{"mappings":{"properties":{"msg":{"type":"text"},"labels":{"type":"flattened"}}}}}"#,
+        )))
+        .route(Route::any().reply(Reply::json(500, r#"{"error":"no search in this test"}"#)))
+        .start()
+        .await;
+    let dst = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(OS2)))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            format!("{}/logs", src.url()),
+            "--output".into(),
+            format!("{}/logs", dst.url()),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("the target index 'logs' does not exist")
+            && err.contains("dynamic mappings")
+            && err.contains("`labels` (flattened")
+            && err.contains("nothing was written"),
+        "{err}"
+    );
+    assert!(
+        !dst.requests().iter().any(|r| r.path.contains("_bulk")),
+        "{:?}",
+        dst.requests()
+    );
+    assert!(
+        !src.requests().iter().any(|r| r.path.contains("_search")),
+        "{:?}",
+        src.requests()
+    );
+}
+
 // L-425 (TST-API-041): `X-Elastic-Product` missing or unexpected is tolerated (the tool does not
 // enforce the official client's product check); a `Warning` on `GET /` is logged once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

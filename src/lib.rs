@@ -831,6 +831,10 @@ async fn transfer(
                             return Err(e);
                         }
                     };
+                    if let Err(e) = check_cross_engine_target(&sink, &opts, ep, retry).await {
+                        sink.abort().await;
+                        return Err(e);
+                    }
                     // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
                     // stop the dump unless the search body filters _source itself (anything but `true`).
                     let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
@@ -854,6 +858,80 @@ async fn transfer(
         DumpType::Meta(kind) => run_meta(cli, kind, input, output, retry, gate).await?,
     };
     Ok(report)
+}
+
+/// L-655 (BRK-XV-004): a cluster-to-cluster data copy across engines into a target index
+/// that does not exist would create it with dynamic mappings, which silently guess other
+/// types for fields the target engine has no type for (`flattened`, `dense_vector`,
+/// `flat_object`, `knn_vector`, ...). Refuse that before any document is written, naming
+/// the fields; the mapping has to be created on the target first.
+async fn check_cross_engine_target(
+    sink: &pipeline::Sink,
+    src: &retrieval::EsSourceOptions,
+    ep: &endpoint::EsEndpoint,
+    retry: crate::http::RetryPolicy,
+) -> Result<()> {
+    let pipeline::Sink::Bulk(bulk) = sink else {
+        return Ok(());
+    };
+    let Some(index) = ep.index.as_deref() else {
+        return Ok(());
+    };
+    // the only source request a scroll copy makes before searching, and only when
+    // the copy names an index; a source that hides `GET /` skips the check
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let src_info = match src.client.info(retry, &cancel).await {
+        Ok(i) => i,
+        Err(e) => {
+            log::debug!("the source engine is unknown ({e:#}); no cross-engine field type check");
+            return Ok(());
+        }
+    };
+    let target = bulk.target_info();
+    if src_info.flavor == target.flavor {
+        return Ok(());
+    }
+    let Some(missing) = bulk.missing_target().await else {
+        return Ok(());
+    };
+    let what = format!("GET {index}/_mapping (L-655 cross-engine check)");
+    let mappings = match meta::http::get_json(&src.client, retry, &[index, "_mapping"], &what).await
+    {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!(
+                "the target index '{missing}' does not exist and the source mapping could not be read to check it ({e:#}); it will be created with dynamic mappings"
+            );
+            return Ok(());
+        }
+    };
+    let mut found = Vec::new();
+    if let Some(o) = mappings.as_object() {
+        for (src_index, def) in o {
+            let m = def.get("mappings").unwrap_or(def);
+            found.extend(
+                meta::field_types::unportable(m, target)
+                    .into_iter()
+                    .map(|mut u| {
+                        if o.len() > 1 {
+                            u.path = format!("{src_index}:{}", u.path);
+                        }
+                        u
+                    }),
+            );
+        }
+    }
+    if found.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = found.iter().map(ToString::to_string).collect();
+    anyhow::bail!(
+        "the target index '{missing}' does not exist, so {} {} would create it with dynamic mappings and guess other types for {} source field(s) it has no type for: {}; nothing was written. Create the index with a converted mapping first (dump --type mapping to a file, change those fields, restore it), then copy the data",
+        target.flavor_name(),
+        target.version,
+        found.len(),
+        list.join(", ")
+    )
 }
 
 /// `fut`, or the interrupted error as soon as a first Ctrl+C / SIGTERM cancels
