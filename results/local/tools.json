@@ -10,6 +10,7 @@
  "cargo-geiger": "cargo-geiger 0.14.0",
  "actionlint": "1.7.12",
  "zizmor": "zizmor 1.31.1",
+ "actionlint_zizmor_reinstall": "2026-10-31 (L-702a): both were missing from ~/.cargo/bin; reinstalled the pinned releases there. actionlint 1.7.12 linux_amd64 tarball verified against actionlint_1.7.12_checksums.txt (itself matched to the GitHub release asset digest sha256:433028cf...a4f5) and the asset digest sha256:8aca8db9...a3d8; zizmor 1.31.1 x86_64-unknown-linux-gnu tarball verified against the GitHub release asset digest sha256:d185f726...8c99",
  "podman": "podman version 5.4.2",
  "strace_image": "localhost/edl-strace:latest (alpine 3.24.3 + strace 6.19; run with --cap-add SYS_PTRACE)",
  "toxiproxy_image": "ghcr.io/shopify/toxiproxy:2.12.0",

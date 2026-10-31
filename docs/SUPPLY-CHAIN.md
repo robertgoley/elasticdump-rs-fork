@@ -150,7 +150,9 @@ The plant: `EDRS_EGRESS_PLANT=dns` makes `tests/egress_plant.rs` resolve `exampl
 `EDRS_EGRESS_PLANT=tcp` makes it connect to 192.0.2.1. The test itself passes; the job must
 fail. `scripts/sup/egress.sh --selftest` runs both plants and a clean control and passes only
 when both plants are caught and the control is clean. Nightly (`nightly.yml`, job `egress`)
-runs the self-test, then `--tiers T1,T7,T2`.
+runs the self-test, then `--tiers T1,T7,T2`. The job reads the pull-only `DHI_USERNAME`/`DHI_TOKEN` secrets
+through the `dhi-pull` environment (zizmor `secrets-outside-env`). Repository-level secrets
+stay visible to it until they are moved into that environment.
 
 Not covered: the `--features chaos` toxiproxy tests and cross-engine runs need a second
 container or proxy reachable from the namespace; they stay in their own nightly jobs.

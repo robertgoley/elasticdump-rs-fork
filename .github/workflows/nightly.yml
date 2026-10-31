@@ -141,15 +141,18 @@ jobs:
   # any connection attempt or DNS query beyond loopback / reserved names fails the job.
   # --selftest first proves a planted example.com lookup and a planted connect are caught.
   egress:
+    name: egress-denied runs (SUP-001)
     runs-on: ubuntu-24.04
+    # pull-only DHI secrets are read through a dedicated environment (zizmor secrets-outside-env);
+    # repository-level secrets stay visible to it, so the job works before they are moved there
+    environment: dhi-pull
     env:
       IT_DIR: /tmp/edrs-it
       EGRESS_LOG_DIR: /tmp/edrs-it/egress
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       - run: cargo fetch --locked
@@ -175,6 +178,7 @@ jobs:
   # command matrix; any syscall entry outside scripts/sup/trace-allow.txt fails the job.
   # --selftest first proves a planted execve, a planted connect and a missing rule are caught.
   trace:
+    name: syscall tracing (SUP-002)
     runs-on: ubuntu-24.04
     env:
       IT_DIR: /tmp/edrs-it
@@ -182,8 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
       - run: TRACE_LOG_DIR=/tmp/edrs-it/trace-selftest scripts/sup/trace.sh --selftest
