@@ -366,7 +366,9 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   * **Dump to a file (or split set):** rerun the same command with `--overwrite`. Without it the rerun refuses
     (`already exists, quitting`). A stopped run leaves the earlier output and no staging files; a killed one
     may leave hidden files, which the rerun names. A Ctrl+C during the setup, before any document is read, now
-    also removes the staged output (before L-650 it force-quit and left the `.part` file behind).
+    also removes the staged output (before L-650 it force-quit and left the `.part` file behind); the same holds
+    for a metadata dump (`--type mapping`, `settings`, ...) to a file (L-650a). A signal that comes after the
+    commit, while the process is still exiting, still exits 130 / 143, with the complete new output.
   * **`--scrollId`** continues the scroll *from where the cluster's cursor is*: pages already fetched, by an
     earlier request or a killed run, are not returned again. It is meant for a scroll you opened yourself (keep
     the first page from your own `_search?scroll=` request, then pass its `_scroll_id`); this tool never prints

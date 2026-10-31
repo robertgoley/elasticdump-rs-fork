@@ -398,8 +398,19 @@ pub async fn write(doc: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<W
         let mut fopts = dst.file.clone();
         fopts.split = None;
         fopts.source_only = false;
+        // L-650a: from before the output is staged until it is committed, a first
+        // Ctrl+C / SIGTERM removes the staged file instead of force-quitting past it.
+        let _graceful = crate::signals::graceful();
+        let interrupt = crate::signals::token();
         let mut sink = FileSink::create(fopts).await?;
-        sink.write_lines(format!("{line}\n").as_bytes()).await?;
+        if let Err(e) = sink.write_lines(format!("{line}\n").as_bytes()).await {
+            sink.abort().await;
+            return Err(e);
+        }
+        if interrupt.is_cancelled() {
+            sink.abort().await;
+            return Err(crate::signals::interrupted_error());
+        }
         sink.finalize().await?;
         return Ok(WriteReport {
             written: 1,

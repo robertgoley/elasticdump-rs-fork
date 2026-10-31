@@ -5190,8 +5190,9 @@ async fn l650_dump_rerun_with_overwrite_is_digest_equal() {
             } else if sig == "KILL" {
                 // a kill -9 in the commit window of a split set may tear it (L-648)
                 l648_check(&d, &old, &reference, &tag);
-            } else {
-                assert_eq!(now, old, "{tag}: {code:?} changed the earlier output");
+            } else if now != old {
+                // INT / TERM after the commit, before the process exited: complete
+                assert_eq!(now, reference, "{tag}: {code:?} left a partial output");
             }
             // no --overwrite: refused, nothing changes
             let o = run_async(args(&d), vec![]).await;
@@ -5477,4 +5478,155 @@ async fn l650_scroll_id_resumes_exactly_where_the_cursor_is() {
         "{err}"
     );
     assert!(!out.exists(), "a failed resume committed output");
+}
+
+// L-650a (TST-BRK-SIG-005): a metadata dump to a file (here a large mapping) stopped by
+// SIGINT / SIGTERM while its output is staged leaves no staging file and the earlier output
+// untouched (exit 130 / 143), or, if the signal came after the commit (also when it still
+// exits 130 / 143, as the process had not exited yet), the complete new output. Before L-650a the metadata write held no graceful guard, so the signal
+// force-quit past the staged `.m.json.part-*` file. Half the rounds signal the moment the
+// staging file appears, the rest at a random point of the run.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l650a_signal_during_a_metadata_dump_to_a_file_leaves_no_staging() {
+    use std::time::{Duration, Instant};
+    let seed =
+        support::chaos::seed("l650a_signal_during_a_metadata_dump_to_a_file_leaves_no_staging");
+    let mut rng = support::chaos::Rng::new(seed);
+    // ~16 MiB of mapping: writing and syncing it takes long enough to be caught staged
+    let props: serde_json::Map<String, serde_json::Value> = (0..150_000)
+        .map(|i| {
+            (
+                format!("field_{i:06}_{}", "x".repeat(60)),
+                serde_json::json!({"type": "keyword"}),
+            )
+        })
+        .collect();
+    let mapping = serde_json::json!({"idx": {"mappings": {"properties": props}}}).to_string();
+    let mapping = std::sync::Arc::new(mapping);
+    let src = RouterMock::builder()
+        .handler(move |req| {
+            let mapping = mapping.clone();
+            async move {
+                match (req.method.as_str(), req.path.as_str()) {
+                    ("GET", "/") => Reply::ok(INFO),
+                    ("GET", p) if p.starts_with("/idx/_mapping") => Reply::ok(mapping.as_str()),
+                    _ => Reply::ok("{}"),
+                }
+            }
+        })
+        .start()
+        .await;
+    let root = tempfile::tempdir().unwrap();
+    let args = |d: &std::path::Path| {
+        s(&[
+            "--input",
+            &format!("{}/idx", src.url()),
+            "--output",
+            d.join("m.json").to_str().unwrap(),
+            "--type",
+            "mapping",
+            "--overwrite",
+        ])
+    };
+    let refdir = root.path().join("ref");
+    std::fs::create_dir(&refdir).unwrap();
+    let t0 = Instant::now();
+    let o = run_async(args(&refdir), vec![]).await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let took = t0.elapsed();
+    let reference = l650_committed(&refdir);
+    assert_eq!(reference.len(), 1);
+    let mut caught_staged = 0;
+    for round in 0..24 {
+        let sig = ["INT", "TERM"][round % 2];
+        let chase = round % 4 < 2;
+        let tag = format!("seed {seed}: round {round} SIG{sig} chase {chase}");
+        let d = root.path().join(format!("run-{round}"));
+        std::fs::create_dir(&d).unwrap();
+        let old: std::collections::BTreeMap<String, Vec<u8>> =
+            [("m.json".to_string(), b"old m.json\n".to_vec())].into();
+        std::fs::write(d.join("m.json"), &old["m.json"]).unwrap();
+        let after = Duration::from_micros(rng.below(took.as_micros() as u64 + 1));
+        let a = args(&d);
+        let (code, err, staged) = tokio::task::block_in_place(|| {
+            let mut child = bin()
+                .args(&a)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let start = Instant::now();
+            let mut staged = false;
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                let fire = if chase {
+                    staged = l648_files(&d)
+                        .keys()
+                        .any(|n| n.starts_with(".m.json.part-"));
+                    staged
+                } else {
+                    start.elapsed() >= after
+                };
+                if fire {
+                    let _ = Command::new("kill")
+                        .args([&format!("-{sig}"), &child.id().to_string()])
+                        .status();
+                    break;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(60),
+                    "{tag}: run never ended"
+                );
+            }
+            let o = child.wait_with_output().unwrap();
+            (
+                o.status,
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                staged,
+            )
+        });
+        let now = l650_committed(&d);
+        if code.success() {
+            assert_eq!(now, reference, "{tag}: finished, but not complete");
+        } else {
+            use std::os::unix::process::ExitStatusExt;
+            let (want, signo) = if sig == "INT" { (130, 2) } else { (143, 15) };
+            // killed by the signal itself: it came before the handler was installed
+            // (process start-up, nothing staged yet)
+            let at_start = code.code().is_none() && code.signal() == Some(signo);
+            assert!(
+                code.code() == Some(want) || at_start,
+                "{tag}: {code:?} {err}"
+            );
+            if now == old {
+                if staged {
+                    caught_staged += 1;
+                }
+            } else {
+                // the signal came after the commit, before the process exited
+                assert_eq!(now, reference, "{tag}: {code:?} left a partial output");
+                assert!(!err.contains("was not committed"), "{tag}: {err}");
+            }
+        }
+        let hidden: Vec<String> = l648_files(&d)
+            .into_keys()
+            .filter(|n| n.starts_with('.'))
+            .collect();
+        assert!(hidden.is_empty(), "{tag}: SIG{sig} left {hidden:?}: {err}");
+        // the recipe: rerun with --overwrite
+        let o = run_async(args(&d), vec![]).await;
+        assert!(o.status.success(), "{tag}: {}", stderr(&o));
+        assert_eq!(
+            l650_committed(&d),
+            reference,
+            "{tag}: rerun is not digest equal"
+        );
+    }
+    assert!(
+        caught_staged > 0,
+        "seed {seed}: no round stopped the run while it was staged"
+    );
 }
