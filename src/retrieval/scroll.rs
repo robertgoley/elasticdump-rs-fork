@@ -40,6 +40,17 @@ fn continuation_failure(error: anyhow::Error, slice_id: usize) -> anyhow::Error 
     ))
 }
 
+/// `--scrollId` named a scroll the cluster no longer has (L-650): rerunning
+/// with the same id cannot help, so say what can.
+fn resume_failure(error: anyhow::Error) -> anyhow::Error {
+    if crate::http::is_cancelled(&error) || !super::retrieval_task::search_context_lost(&error) {
+        return error;
+    }
+    error.context(
+        "--scrollId: the cluster no longer has this scroll (it expired after the --scrollTime of the request that opened or last continued it, it was cleared, e.g. by Ctrl+C, or the node holding it restarted), so it cannot be resumed; nothing was committed. Rerun the dump without --scrollId (add --overwrite to replace an earlier output file)",
+    )
+}
+
 pub(crate) fn build_scroll_request_body(scroll_ttl: &str, scroll_id: &str) -> Value {
     json!({
         "scroll": scroll_ttl,
@@ -79,7 +90,12 @@ pub(crate) async fn run_scroll_slice(
     let slice_id = state.slice_id;
     let response_bytes = if let Some(resume_id) = ctx.resume_scroll_id.as_deref() {
         // `--scrollId`: continue an existing scroll. This advances a cursor,
-        // so it gets the scroll-continuation retry rules.
+        // so it gets the scroll-continuation retry rules. The cursor is the
+        // server's: pages an earlier (killed) run fetched are not returned
+        // again, whether or not that run wrote them (L-650).
+        info!(
+            "--scrollId: continuing the scroll from where its cursor is; pages already fetched by an earlier request or run are not returned again"
+        );
         state.current_id = Some(resume_id.to_string());
         let resume_body = Body::sonic(&build_scroll_request_body(scroll_ttl, resume_id));
         let resume_body = &resume_body;
@@ -91,7 +107,8 @@ pub(crate) async fn run_scroll_slice(
             "scroll resume",
             move || ctx.scroll_continue(resume_body.clone()),
         )
-        .await?
+        .await
+        .map_err(resume_failure)?
     } else {
         send_checked_with_retry(
             ctx.retry,

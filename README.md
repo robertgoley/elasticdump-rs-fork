@@ -148,6 +148,8 @@ for every place the tool changes what is loaded, and for the tested versions, se
 * **PIT is engine-aware**: Elasticsearch 7.10+ uses `POST /{index}/_pit` and the `_shard_doc` tiebreaker;
   OpenSearch uses `/_search/point_in_time` and `_doc` + `_id` (a `_doc`-only sort was verified to lose documents).
 * **Scroll + `--offset`** skips client-side; Node sends `from=`, which ES 7+/OpenSearch reject.
+* **`--scrollId` ids are never printed** (Node's `--debug` shows them, which its resume recipe relies on); resume
+  a stopped file dump by rerunning it with `--overwrite`, or pass the id of a scroll you opened yourself (L-650).
 * **`--throttleInterval`** only applies when given (Node's 1 ms default would add ~10 s per million docs).
 * **`--intervalCap`/`--concurrencyInterval`/`--carryoverConcurrencyCount`** work (p-queue semantics) when set;
   they have been no-ops in Node since 6.119.
@@ -355,6 +357,22 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   and not retried). The offset is exact for a file input; for a cluster input only while the source index is
   unchanged and its search order is stable (a sort in `--searchBody`). A sliced dump (`--slices` > 1) has no
   single order: it says so and is simply rerun. File output still removes its staged files (L-647).
+* Resuming a stopped run (L-650, checked end to end with random INT / TERM / `kill -9` and digest-equal results):
+  * **Restore into a cluster:** rerun with the printed `--offset` (and `--size`). Chained over several stops it
+    is exact, with any `--concurrency` (bulk requests finishing out of order included): every document is
+    written once, none is skipped, and the result equals an uninterrupted run (by `_id`, so a rerun after
+    `kill -9` overwrites rather than duplicates; with `--offset` picked by hand after `kill -9`, count from what
+    the cluster has).
+  * **Dump to a file (or split set):** rerun the same command with `--overwrite`. Without it the rerun refuses
+    (`already exists, quitting`). A stopped run leaves the earlier output and no staging files; a killed one
+    may leave hidden files, which the rerun names. A Ctrl+C during the setup, before any document is read, now
+    also removes the staged output (before L-650 it force-quit and left the `.part` file behind).
+  * **`--scrollId`** continues the scroll *from where the cluster's cursor is*: pages already fetched, by an
+    earlier request or a killed run, are not returned again. It is meant for a scroll you opened yourself (keep
+    the first page from your own `_search?scroll=` request, then pass its `_scroll_id`); this tool never prints
+    scroll ids (redaction). A scroll cleared by Ctrl+C, expired after `--scrollTime`, or lost with its node
+    cannot be resumed: the run exits 1 with `--scrollId: the cluster no longer has this scroll ...`, commits
+    nothing, and says to rerun without `--scrollId`.
 
 ## Security notes
 

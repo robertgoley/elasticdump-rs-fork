@@ -803,11 +803,34 @@ async fn transfer(
 ) -> Result<pipeline::WriteReport> {
     let report = match cli.r#type {
         DumpType::Data => {
-            let sink = build_sink(cli, output, retry, gate.clone()).await?;
+            // L-650: the guard is held from before the output is staged. Without it, a
+            // first Ctrl+C / SIGTERM between staging the output file and the transfer
+            // (the input's setup requests) force-quit and left the hidden staging file
+            // behind; now it removes it. Setup that waits on a cluster still ends at once.
+            let _graceful = signals::graceful();
+            let interrupt = signals::token();
+            let sink = match output {
+                Endpoint::Es(_) => {
+                    until_interrupted(&interrupt, build_sink(cli, output, retry, gate.clone()))
+                        .await?
+                }
+                // local only: never cut off half-way through staging its file
+                _ => build_sink(cli, output, retry, gate.clone()).await?,
+            };
             match input {
                 Endpoint::Es(ep) => {
-                    let opts = es_source_options(cli, ep, retry, gate.clone()).await?;
-                    check_rename_merges(cli, &opts.client, ep.index.as_deref(), retry).await?;
+                    let setup = async {
+                        let opts = es_source_options(cli, ep, retry, gate.clone()).await?;
+                        check_rename_merges(cli, &opts.client, ep.index.as_deref(), retry).await?;
+                        Ok(opts)
+                    };
+                    let opts = match until_interrupted(&interrupt, setup).await {
+                        Ok(opts) => opts,
+                        Err(e) => {
+                            sink.abort().await;
+                            return Err(e);
+                        }
+                    };
                     // TST-BRK-XV-002: hits without _source (mapping _source.enabled: false)
                     // stop the dump unless the search body filters _source itself (anything but `true`).
                     let own_choice = sonic_rs::JsonValueTrait::get(&opts.search_body, "_source")
@@ -816,7 +839,6 @@ async fn transfer(
                     retrieval::dump_data(opts, sink, window).await?
                 }
                 inp => {
-                    let _graceful = signals::graceful();
                     pipeline::file_to_sink(
                         file_path(inp),
                         cli.limit,
@@ -832,6 +854,18 @@ async fn transfer(
         DumpType::Meta(kind) => run_meta(cli, kind, input, output, retry, gate).await?,
     };
     Ok(report)
+}
+
+/// `fut`, or the interrupted error as soon as a first Ctrl+C / SIGTERM cancels
+/// `interrupt` (while a [`signals::graceful`] guard is held).
+async fn until_interrupted<T>(
+    interrupt: &tokio_util::sync::CancellationToken,
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::select! {
+        r = fut => r,
+        _ = interrupt.cancelled() => Err(signals::interrupted_error()),
+    }
 }
 
 /// Smallest accepted `--fileSize` (TST-BRK-RES-006).

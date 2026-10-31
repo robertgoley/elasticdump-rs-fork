@@ -4717,3 +4717,764 @@ async fn l649_second_sigint_during_dump_cleanup_commits_nothing() {
         }
     }
 }
+
+/// L-650: what a destination cluster indexed: `_id` -> (last `_source`, times written).
+type L650Store =
+    std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<u64, (serde_json::Value, u32)>>>;
+
+/// L-650: a destination cluster that keeps what `_bulk` indexed and counts `_bulk` requests
+/// answered. Each `_bulk` answers after a random 0..=`max_ms` delay, so with --concurrency > 1
+/// the requests complete out of order. A document is stored before its `_bulk` is answered.
+async fn l650_destination(
+    seed: u64,
+    max_ms: u64,
+) -> (
+    RouterMock,
+    L650Store,
+    std::sync::Arc<std::sync::atomic::AtomicU64>,
+) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+    let store: L650Store = Arc::default();
+    let bulks = Arc::new(AtomicU64::new(0));
+    let rng = Arc::new(Mutex::new(support::chaos::Rng::new(seed)));
+    let (st, b) = (store.clone(), bulks.clone());
+    let m = RouterMock::builder()
+        .handler(move |req| {
+            let (st, b, rng) = (st.clone(), b.clone(), rng.clone());
+            async move {
+                if req.method == "GET" {
+                    return Reply::ok(INFO);
+                }
+                if !req.path.ends_with("/_bulk") {
+                    return Reply::ok(r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#);
+                }
+                let delay = rng.lock().unwrap().below(max_ms + 1);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                let text = String::from_utf8_lossy(&req.body).into_owned();
+                let lines: Vec<&str> = text.lines().collect();
+                {
+                    let mut st = st.lock().unwrap();
+                    for pair in lines.chunks(2) {
+                        let action: serde_json::Value = serde_json::from_str(pair[0]).unwrap();
+                        let id: u64 = action
+                            .as_object()
+                            .and_then(|o| o.values().next())
+                            .and_then(|m| m["_id"].as_str())
+                            .and_then(|i| i.parse().ok())
+                            .unwrap_or_else(|| panic!("no numeric _id in {}", pair[0]));
+                        let source: serde_json::Value = pair
+                            .get(1)
+                            .map(|l| serde_json::from_str(l).unwrap())
+                            .unwrap_or_default();
+                        let e = st.entry(id).or_insert((serde_json::Value::Null, 0));
+                        e.0 = source;
+                        e.1 += 1;
+                    }
+                }
+                b.fetch_add(1, Ordering::SeqCst);
+                let items = vec![r#"{"index":{"status":201}}"#; lines.len() / 2].join(",");
+                Reply::ok(format!(r#"{{"errors":false,"items":[{items}]}}"#))
+            }
+        })
+        .start()
+        .await;
+    (m, store, bulks)
+}
+
+/// L-650: the source document `n` (its `_source`).
+fn l650_source_of(n: u64) -> serde_json::Value {
+    serde_json::json!({"n": n, "pad": format!("{n:0>40}")})
+}
+
+/// L-650: runs the binary; with `signal = Some((sig, k))` sends `kill -sig` once `k` more
+/// `_bulk` requests than at the start were answered. Returns (exit code, stderr).
+fn l650_run(
+    args: &[String],
+    bulks: &std::sync::atomic::AtomicU64,
+    signal: Option<(&str, u64)>,
+) -> (Option<i32>, String) {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    let base = bulks.load(Ordering::SeqCst);
+    let mut child = bin()
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut errpipe = child.stderr.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = std::io::Read::read_to_string(&mut errpipe, &mut s);
+        s
+    });
+    let start = Instant::now();
+    let mut sent = signal.is_none();
+    let status = loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            break st;
+        }
+        if let (false, Some((sig, k))) = (sent, signal) {
+            if bulks.load(Ordering::SeqCst) >= base + k {
+                assert!(
+                    Command::new("kill")
+                        .args([&format!("-{sig}"), &child.id().to_string()])
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                sent = true;
+            }
+        }
+        if start.elapsed() > Duration::from_secs(90) {
+            let _ = child.kill();
+            panic!("run did not end within 90 s: {args:?}");
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    (status.code(), reader.join().unwrap())
+}
+
+/// L-650: the number after `label` in `err`, if any.
+fn l650_number_after(err: &str, label: &str) -> Option<u64> {
+    let at = err.rfind(label)?;
+    err[at + label.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+/// L-650: how a chain of resumed runs starts: the first run's --offset / --size, how many
+/// runs are stopped, and whether the resume offset is exact (file input) or not (cluster).
+#[derive(Clone, Copy)]
+struct L650Plan {
+    exact: bool,
+    first_offset: u64,
+    first_size: Option<u64>,
+    kills: usize,
+}
+
+/// L-650: follows the documented restore recipe until a run completes: each run is stopped
+/// by SIGINT or SIGTERM after a random number of `_bulk` answers (up to `kills` times), and the
+/// next one reruns the same command with the `--offset` (and `--size`) it printed. Checks per
+/// stopped run: exit 130 / 143, the offset advanced by exactly that run's `Total Writes`, and
+/// `--size` shrank by the same amount. Returns (runs, sum of `Total Writes`).
+fn l650_resume_until_done(
+    tag: &str,
+    rng: &mut support::chaos::Rng,
+    base_args: &[String],
+    plan: L650Plan,
+    bulks: &std::sync::atomic::AtomicU64,
+) -> (usize, u64) {
+    let L650Plan {
+        exact,
+        first_offset,
+        first_size,
+        kills,
+    } = plan;
+    let (mut offset, mut size) = (first_offset, first_size);
+    let (mut runs, mut writes) = (0usize, 0u64);
+    loop {
+        runs += 1;
+        let mut args = base_args.to_vec();
+        args.extend(["--offset".to_string(), offset.to_string()]);
+        if let Some(sz) = size {
+            args.extend(["--size".to_string(), sz.to_string()]);
+        }
+        let sig = if rng.chance(0.5) { "INT" } else { "TERM" };
+        let signal = (runs <= kills).then(|| (sig, 1 + rng.below(6)));
+        let (code, err) = l650_run(&args, bulks, signal);
+        let tag = format!("{tag} run {runs} (--offset {offset} --size {size:?}, {signal:?})");
+        let this = l650_number_after(&err, "Total Writes: ")
+            .unwrap_or_else(|| panic!("{tag}: no Total Writes: {err}"));
+        writes += this;
+        match code {
+            Some(0) => return (runs, writes),
+            Some(c @ (130 | 143)) => {
+                assert_eq!(c, if sig == "INT" { 130 } else { 143 }, "{tag}: {err}");
+                assert!(
+                    err.contains("in-flight bulk requests finished"),
+                    "{tag}: {err}"
+                );
+                assert_eq!(err.contains("exact only while"), !exact, "{tag}: {err}");
+                let next = l650_number_after(&err, "rerun the same command with --offset ")
+                    .unwrap_or_else(|| panic!("{tag}: no resume offset: {err}"));
+                // the hypothesis to rule out: an off-by-one between the printed offset and
+                // Total Writes when bulk requests complete out of order
+                assert_eq!(next, offset + this, "{tag}: offset vs Total Writes: {err}");
+                match size {
+                    Some(sz) => {
+                        let rest = l650_number_after(&err, " --size ")
+                            .unwrap_or_else(|| panic!("{tag}: no --size: {err}"));
+                        assert_eq!(rest, sz - this, "{tag}: {err}");
+                        size = Some(rest);
+                    }
+                    None => assert!(!err.contains(" --size "), "{tag}: {err}"),
+                }
+                offset = next;
+            }
+            other => panic!("{tag}: exit {other:?}: {err}"),
+        }
+        assert!(runs < 40, "{tag}: no end in sight");
+    }
+}
+
+/// L-650: the destination holds exactly `want` (each `_id` written once) with its source.
+fn l650_check_store(tag: &str, store: &L650Store, want: std::ops::RangeInclusive<u64>) {
+    let st = store.lock().unwrap();
+    let ids: Vec<u64> = st.keys().copied().collect();
+    assert_eq!(
+        ids,
+        want.clone().collect::<Vec<u64>>(),
+        "{tag}: the documents written are not exactly {want:?} (gap or extra)"
+    );
+    for (id, (source, times)) in st.iter() {
+        assert_eq!(*times, 1, "{tag}: _id {id} written {times} times");
+        assert_eq!(source, &l650_source_of(*id), "{tag}: _id {id}");
+    }
+}
+
+// L-650 (TST-BRK-SIG-005): the documented restore recipe end to end. A file -> cluster
+// restore is stopped by SIGINT / SIGTERM at random points, again and again, each time
+// rerun with the `--offset` (and `--size`) it printed, until a run completes. With
+// --concurrency 1, 4 and 8 (bulk requests complete out of order) and a first run that
+// already had --offset / --size, the destination ends up with exactly the input documents
+// (digest equal), each written once, and every printed offset is the previous one plus
+// that run's Total Writes.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l650_restore_resumed_with_the_printed_offset_is_digest_equal() {
+    let seed = support::chaos::seed("l650_restore_resumed_with_the_printed_offset_is_digest_equal");
+    let mut rng = support::chaos::Rng::new(seed);
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let total = 3000u64;
+    let mut body = String::new();
+    for i in 1..=total {
+        body.push_str(&format!(
+            "{{\"_index\":\"x\",\"_id\":\"{i}\",\"_source\":{}}}\n",
+            l650_source_of(i)
+        ));
+    }
+    std::fs::write(&input, body).unwrap();
+    for (concurrency, first_offset, first_size) in [
+        (1u64, 0u64, None),
+        (4, 0, None),
+        (8, 0, None),
+        (4, 137, Some(2500u64)),
+    ] {
+        let tag = format!(
+            "seed {seed}: --concurrency {concurrency} --offset {first_offset} --size {first_size:?}"
+        );
+        let (m, store, bulks) = l650_destination(rng.next_u64(), 25).await;
+        let limit = 5 + rng.below(30);
+        let base = s(&[
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            &format!("{}/dst", m.url()),
+            "--limit",
+            &limit.to_string(),
+            "--noRefresh",
+            "--concurrency",
+            &concurrency.to_string(),
+        ]);
+        let mut r = support::chaos::Rng::new(rng.next_u64());
+        let (runs, writes) = tokio::task::block_in_place(|| {
+            l650_resume_until_done(
+                &tag,
+                &mut r,
+                &base,
+                L650Plan {
+                    exact: true,
+                    first_offset,
+                    first_size,
+                    kills: 5,
+                },
+                &bulks,
+            )
+        });
+        let last = first_size.map_or(total, |sz| (first_offset + sz).min(total));
+        assert!(runs >= 2, "{tag}: never stopped");
+        assert_eq!(writes, last - first_offset, "{tag}: sum of Total Writes");
+        l650_check_store(&tag, &store, first_offset + 1..=last);
+    }
+}
+
+/// L-650: a scroll source of `n` documents (`l650_source_of`), `limit` per page, each page
+/// answered after a random 0..=`max_ms` delay. Stateless (the page is in the scroll id), so its
+/// order is stable across runs.
+async fn l650_stable_source(n: u64, limit: u64, seed: u64, max_ms: u64) -> RouterMock {
+    use std::sync::{Arc, Mutex};
+    let rng = Arc::new(Mutex::new(support::chaos::Rng::new(seed)));
+    let page_at = move |k: u64| {
+        let hits: Vec<String> = (k * limit + 1..=((k + 1) * limit).min(n))
+            .map(|i| hit(&i.to_string(), &l650_source_of(i).to_string()))
+            .collect();
+        Reply::ok(page(&format!("p{}", k + 1), &hits, n as usize))
+    };
+    RouterMock::builder()
+        .handler(move |req| {
+            let rng = rng.clone();
+            async move {
+                let delay = rng.lock().unwrap().below(max_ms + 1);
+                match (req.method.as_str(), req.path.as_str()) {
+                    ("GET", "/") => Reply::ok(INFO),
+                    ("POST", p) if p.starts_with("/idx/_search") => {
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        page_at(0)
+                    }
+                    ("POST", "/_search/scroll") => {
+                        let v: serde_json::Value =
+                            serde_json::from_slice(&req.body).unwrap_or_default();
+                        let k = v["scroll_id"]
+                            .as_str()
+                            .and_then(|s| s.strip_prefix('p'))
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(u64::MAX / 2);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        page_at(k)
+                    }
+                    _ => Reply::ok(CLEARED),
+                }
+            }
+        })
+        .start()
+        .await
+}
+
+// L-650 (TST-BRK-SIG-005): the same recipe for a cluster -> cluster copy with --concurrency 3
+// (a source whose order is stable): stopped again and again, each time resumed with the
+// printed --offset (with its "exact only while the source index is unchanged" note), the
+// destination ends up with exactly the source documents, each written once.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l650_cluster_copy_resumed_with_the_printed_offset_is_digest_equal() {
+    let seed =
+        support::chaos::seed("l650_cluster_copy_resumed_with_the_printed_offset_is_digest_equal");
+    let mut rng = support::chaos::Rng::new(seed);
+    let total = 1500u64;
+    for round in 0..2 {
+        let tag = format!("seed {seed} round {round}");
+        let limit = 10 + rng.below(20);
+        let src = l650_stable_source(total, limit, rng.next_u64(), 10).await;
+        let (dst, store, bulks) = l650_destination(rng.next_u64(), 25).await;
+        let base = s(&[
+            "--input",
+            &format!("{}/idx", src.url()),
+            "--output",
+            &format!("{}/dst", dst.url()),
+            "--limit",
+            &limit.to_string(),
+            "--noRefresh",
+            "--concurrency",
+            "3",
+        ]);
+        let mut r = support::chaos::Rng::new(rng.next_u64());
+        let (runs, writes) = tokio::task::block_in_place(|| {
+            l650_resume_until_done(
+                &tag,
+                &mut r,
+                &base,
+                L650Plan {
+                    exact: false,
+                    first_offset: 0,
+                    first_size: None,
+                    kills: 4,
+                },
+                &bulks,
+            )
+        });
+        assert!(runs >= 2, "{tag}: never stopped");
+        assert_eq!(writes, total, "{tag}: sum of Total Writes");
+        l650_check_store(&tag, &store, 1..=total);
+    }
+}
+
+/// L-650: the committed (non-hidden) files in `d`, by name.
+fn l650_committed(d: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    l648_files(d)
+        .into_iter()
+        .filter(|(n, _)| !n.starts_with('.'))
+        .collect()
+}
+
+// L-650 (TST-BRK-SIG-005): rerunning a stopped or killed dump with --overwrite is the
+// documented recipe for a file output. A dump to one file and a split dump (--maxRows),
+// each replacing an earlier output, is stopped by SIGINT, SIGTERM or kill -9 at a random
+// point (often during the setup before the transfer). After SIGINT / SIGTERM the earlier
+// output is still there and no staging file is left (before L-650 a signal during the setup
+// force-quit past the staged file); after kill -9 the state is one L-648 allows (a split set
+// may be torn but recoverable); a run that won the race is complete. A rerun without
+// --overwrite refuses to touch it; the rerun with --overwrite commits exactly what an
+// uninterrupted run commits (digest equal), even with a killed run's hidden files next to it.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l650_dump_rerun_with_overwrite_is_digest_equal() {
+    use std::time::{Duration, Instant};
+    let seed = support::chaos::seed("l650_dump_rerun_with_overwrite_is_digest_equal");
+    let mut rng = support::chaos::Rng::new(seed);
+    let n = 400u64;
+    let src = l650_stable_source(n, 10, rng.next_u64(), 6).await;
+    let root = tempfile::tempdir().unwrap();
+    for split in [false, true] {
+        // the reference: an uninterrupted run into an empty directory
+        let refdir = root.path().join(format!("ref-{split}"));
+        std::fs::create_dir(&refdir).unwrap();
+        let args = |d: &std::path::Path| {
+            let mut a = s(&[
+                "--input",
+                &format!("{}/idx", src.url()),
+                "--output",
+                d.join("d.json").to_str().unwrap(),
+                "--limit",
+                "10",
+            ]);
+            if split {
+                a.extend(s(&["--maxRows", "40"]));
+            }
+            a
+        };
+        let t0 = Instant::now();
+        let o = run_async(args(&refdir), vec![]).await;
+        assert!(o.status.success(), "{}", stderr(&o));
+        let took = t0.elapsed();
+        let reference = l650_committed(&refdir);
+        assert_eq!(reference.len(), if split { 10 } else { 1 });
+        let docs: usize = reference
+            .values()
+            .map(|b| b.iter().filter(|&&c| c == b'\n').count())
+            .sum();
+        assert_eq!(docs as u64, n);
+        for round in 0..12 {
+            let sig = ["INT", "TERM", "KILL"][round % 3];
+            let tag = format!("seed {seed}: split {split} round {round} SIG{sig}");
+            let d = root.path().join(format!("run-{split}-{round}"));
+            std::fs::create_dir(&d).unwrap();
+            let old: std::collections::BTreeMap<String, Vec<u8>> = reference
+                .keys()
+                .map(|k| (k.clone(), format!("old {k}\n").into_bytes()))
+                .collect();
+            for (k, v) in &old {
+                std::fs::write(d.join(k), v).unwrap();
+            }
+            let mut a = args(&d);
+            a.push("--overwrite".into());
+            // often early: the setup before the transfer (L-650 found a first signal there
+            // force-quitting past the staged file)
+            let window = if rng.chance(0.4) {
+                Duration::from_millis(25)
+            } else {
+                took
+            };
+            let after = Duration::from_micros(rng.below(window.as_micros() as u64 + 1));
+            let code = tokio::task::block_in_place(|| {
+                let mut child = bin()
+                    .args(&a)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                std::thread::sleep(after);
+                let _ = Command::new("kill")
+                    .args([&format!("-{sig}"), &child.id().to_string()])
+                    .status();
+                child.wait().unwrap()
+            });
+            let now = l650_committed(&d);
+            if code.success() {
+                assert_eq!(now, reference, "{tag}: finished, but not complete");
+            } else if sig == "KILL" {
+                // a kill -9 in the commit window of a split set may tear it (L-648)
+                l648_check(&d, &old, &reference, &tag);
+            } else {
+                assert_eq!(now, old, "{tag}: {code:?} changed the earlier output");
+            }
+            // no --overwrite: refused, nothing changes
+            let o = run_async(args(&d), vec![]).await;
+            assert!(!o.status.success(), "{tag}");
+            assert!(
+                stderr(&o).contains("already exists, quitting (use --overwrite"),
+                "{tag}: {}",
+                stderr(&o)
+            );
+            assert_eq!(l650_committed(&d), now, "{tag}");
+            // the recipe: rerun with --overwrite
+            let o = run_async(a.clone(), vec![]).await;
+            assert!(o.status.success(), "{tag}: {}", stderr(&o));
+            assert_eq!(
+                l650_committed(&d),
+                reference,
+                "{tag}: rerun is not digest equal"
+            );
+            let hidden = l648_files(&d).len() - reference.len();
+            if hidden > 0 {
+                assert_eq!(sig, "KILL", "{tag}: SIG{sig} left {hidden} hidden file(s)");
+                assert!(stderr(&o).contains("left by an earlier run"), "{tag}");
+            }
+        }
+    }
+}
+
+/// L-650: a scroll source with real server-side cursors: the initial search opens context
+/// `ctx-K` and returns page 0; each continuation returns the context's next page and
+/// advances it; DELETE clears it; an unknown context is a 404 `search_context_missing`.
+/// Every document served is recorded, in order.
+struct L650Cursors {
+    open: std::sync::Mutex<std::collections::BTreeMap<String, u64>>,
+    served: std::sync::Mutex<Vec<u64>>,
+    opened: std::sync::atomic::AtomicU64,
+}
+
+async fn l650_cursor_source(
+    n: u64,
+    limit: u64,
+    delay: std::time::Duration,
+) -> (RouterMock, std::sync::Arc<L650Cursors>) {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+    let c = Arc::new(L650Cursors {
+        open: Default::default(),
+        served: Default::default(),
+        opened: Default::default(),
+    });
+    let cc = c.clone();
+    let m = RouterMock::builder()
+        .handler(move |req| {
+            let c = cc.clone();
+            async move {
+                let serve = |id: &str, k: u64| {
+                    let ids: Vec<u64> = (k * limit + 1..=((k + 1) * limit).min(n)).collect();
+                    c.served.lock().unwrap().extend(&ids);
+                    let hits: Vec<String> = ids
+                        .iter()
+                        .map(|i| hit(&i.to_string(), &l650_source_of(*i).to_string()))
+                        .collect();
+                    Reply::ok(page(id, &hits, n as usize))
+                };
+                match (req.method.as_str(), req.path.as_str()) {
+                    ("GET", "/") => Reply::ok(INFO),
+                    ("POST", p) if p.starts_with("/idx/_search") => {
+                        tokio::time::sleep(delay).await;
+                        let id = format!("ctx-{}", c.opened.fetch_add(1, Ordering::SeqCst) + 1);
+                        c.open.lock().unwrap().insert(id.clone(), 1);
+                        serve(&id, 0)
+                    }
+                    ("POST", "/_search/scroll") => {
+                        tokio::time::sleep(delay).await;
+                        let v: serde_json::Value =
+                            serde_json::from_slice(&req.body).unwrap_or_default();
+                        let id = v["scroll_id"].as_str().unwrap_or_default().to_string();
+                        let k = {
+                            let mut open = c.open.lock().unwrap();
+                            match open.get_mut(&id) {
+                                Some(k) => {
+                                    *k += 1;
+                                    Some(*k - 1)
+                                }
+                                None => None,
+                            }
+                        };
+                        match k {
+                            Some(k) => serve(&id, k),
+                            None => Reply::json(
+                                404,
+                                r#"{"error":{"root_cause":[{"type":"search_context_missing_exception","reason":"No search context found for id [1]"}],"type":"search_phase_execution_exception","reason":"all shards failed"},"status":404}"#,
+                            ),
+                        }
+                    }
+                    ("DELETE", "/_search/scroll") => {
+                        let v: serde_json::Value =
+                            serde_json::from_slice(&req.body).unwrap_or_default();
+                        let mut open = c.open.lock().unwrap();
+                        for id in v["scroll_id"].as_array().into_iter().flatten() {
+                            open.remove(id.as_str().unwrap_or_default());
+                        }
+                        Reply::ok(CLEARED)
+                    }
+                    _ => Reply::ok(CLEARED),
+                }
+            }
+        })
+        .start()
+        .await;
+    (m, c)
+}
+
+/// L-650: `_id` -> `_source` of the documents in an NDJSON dump file.
+fn l650_dumped(path: &std::path::Path) -> Vec<(u64, serde_json::Value)> {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).unwrap();
+            (
+                v["_id"].as_str().unwrap().parse().unwrap(),
+                v["_source"].clone(),
+            )
+        })
+        .collect()
+}
+
+// L-650 (TST-BRK-SIG-005): `--scrollId` against server-side scroll cursors.
+// * The documented recipe (a scroll you opened yourself): the first page you got plus a
+//   `--scrollId` dump of the rest is the full digest.
+// * After a `kill -9` (the context stays alive), `--scrollId` returns exactly the pages the
+//   cursor had not served yet, in order, once each: together with what the killed run
+//   fetched, the full digest; the pages it fetched are not returned again, so a
+//   killed file dump (which committed nothing) is resumed by rerunning it instead.
+// * A scroll that Ctrl+C cleared cannot be resumed: exit 1, nothing committed, a message
+//   that says to rerun without --scrollId.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn l650_scroll_id_resumes_exactly_where_the_cursor_is() {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    let seed = support::chaos::seed("l650_scroll_id_resumes_exactly_where_the_cursor_is");
+    let mut rng = support::chaos::Rng::new(seed);
+    let n = 300u64;
+    let full: Vec<(u64, serde_json::Value)> = (1..=n).map(|i| (i, l650_source_of(i))).collect();
+    let dir = tempfile::tempdir().unwrap();
+    let dump = |url: &str, out: &std::path::Path, extra: &[&str]| {
+        let mut a = s(&[
+            "--input",
+            &format!("{url}/idx"),
+            "--output",
+            out.to_str().unwrap(),
+            "--limit",
+            "10",
+        ]);
+        a.extend(s(extra));
+        a
+    };
+
+    // the documented recipe: open the scroll yourself, keep its first page, --scrollId the rest
+    let (src, cur) = l650_cursor_source(n, 10, Duration::from_millis(1)).await;
+    let first: serde_json::Value = reqwest::Client::new()
+        .post(format!("{}/idx/_search?scroll=5m", src.url()))
+        .header("content-type", "application/json")
+        .body(r#"{"size":10}"#)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sid = first["_scroll_id"].as_str().unwrap().to_string();
+    let mut got: Vec<(u64, serde_json::Value)> = first["hits"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| {
+            (
+                h["_id"].as_str().unwrap().parse().unwrap(),
+                h["_source"].clone(),
+            )
+        })
+        .collect();
+    let out = dir.path().join("rest.json");
+    let o = run_async(dump(&src.url(), &out, &["--scrollId", &sid]), vec![]).await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    got.extend(l650_dumped(&out));
+    assert_eq!(got, full, "first page + --scrollId is not the full digest");
+    assert!(
+        cur.open.lock().unwrap().is_empty(),
+        "the scroll was not cleared"
+    );
+
+    // kill -9 at random points, then --scrollId the context the killed run left open
+    for round in 0..6 {
+        let tag = format!("seed {seed} round {round}");
+        let (src, cur) = l650_cursor_source(n, 10, Duration::from_millis(3)).await;
+        let killed_out = dir.path().join(format!("killed-{round}.json"));
+        let pages = 2 + rng.below(20) as usize;
+        tokio::task::block_in_place(|| {
+            let mut child = bin()
+                .args(dump(&src.url(), &killed_out, &[]))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let t0 = Instant::now();
+            while cur.served.lock().unwrap().len() < pages * 10 {
+                assert!(t0.elapsed() < Duration::from_secs(30), "{tag}: no progress");
+                assert!(child.try_wait().unwrap().is_none(), "{tag}: finished early");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            child.kill().unwrap();
+            child.wait().unwrap();
+            // a continuation the killed run had sent is still served (and advances the
+            // cursor), as on a real cluster
+            std::thread::sleep(Duration::from_millis(100));
+        });
+        assert!(
+            !killed_out.exists(),
+            "{tag}: a killed dump committed its output"
+        );
+        let open = cur.open.lock().unwrap().clone();
+        assert_eq!(
+            open.len(),
+            1,
+            "{tag}: the killed run's scroll should still be open"
+        );
+        let (sid, cursor) = open.into_iter().next().unwrap();
+        let fetched: Vec<u64> = cur.served.lock().unwrap().clone();
+        assert_eq!(fetched, (1..=cursor * 10).collect::<Vec<u64>>(), "{tag}");
+        let out = dir.path().join(format!("resumed-{round}.json"));
+        let o = run_async(dump(&src.url(), &out, &["--scrollId", &sid]), vec![]).await;
+        assert!(o.status.success(), "{tag}: {}", stderr(&o));
+        let resumed = l650_dumped(&out);
+        assert_eq!(
+            resumed,
+            full[(cursor * 10) as usize..].to_vec(),
+            "{tag}: --scrollId did not continue exactly at the cursor ({cursor} pages served)"
+        );
+        assert!(cur.open.lock().unwrap().is_empty(), "{tag}: not cleared");
+        // what the server served, across both runs: every document once
+        let served = cur.served.lock().unwrap().clone();
+        assert_eq!(served, (1..=n).collect::<Vec<u64>>(), "{tag}");
+        assert_eq!(
+            cur.opened.load(Ordering::SeqCst),
+            1,
+            "{tag}: a new scroll was opened"
+        );
+    }
+
+    // Ctrl+C clears the scroll: --scrollId cannot resume it
+    let (src, cur) = l650_cursor_source(n, 10, Duration::from_millis(5)).await;
+    let out = dir.path().join("int.json");
+    let code = tokio::task::block_in_place(|| {
+        let mut child = bin()
+            .args(dump(&src.url(), &out, &[]))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let t0 = Instant::now();
+        while cur.served.lock().unwrap().len() < 50 {
+            assert!(t0.elapsed() < Duration::from_secs(30), "no progress");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let _ = Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status();
+        child.wait().unwrap()
+    });
+    assert_eq!(code.code(), Some(130));
+    assert!(
+        cur.open.lock().unwrap().is_empty(),
+        "Ctrl+C did not clear the scroll"
+    );
+    let o = run_async(dump(&src.url(), &out, &["--scrollId", "ctx-1"]), vec![]).await;
+    let err = stderr(&o);
+    assert_eq!(o.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("--scrollId: the cluster no longer has this scroll")
+            && err.contains("Rerun the dump without --scrollId"),
+        "{err}"
+    );
+    assert!(!out.exists(), "a failed resume committed output");
+}
