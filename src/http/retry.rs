@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
-use log::warn;
+use log::{debug, warn};
 use tokio_util::sync::CancellationToken;
 
 use super::client::SendError;
@@ -582,6 +582,24 @@ fn timeout_hint(error: &reqwest::Error) -> &'static str {
     }
 }
 
+/// Reconnects allowed per request when a new connection closes before the
+/// request is written on it (see [`never_sent`]).
+const MAX_REDIALS: usize = 3;
+
+/// hyper's "connection was not ready": a *new* connection died before the
+/// request was written on it (hyper re-sends on reused pooled connections
+/// itself), so nothing was sent and the cause is not in this error. The usual
+/// cause is TLS 1.3 client-certificate rejection: the handshake completes on
+/// the client side, then the server's `CertificateRequired` / `BadCertificate`
+/// alert closes the connection before the request is queued. Classifying that
+/// as a transport failure retried it with a "retrying" warning (L-431a), and
+/// the message never named the TLS cause. Reconnecting once (silently, without
+/// using a retry attempt or the retry delay) gets the alert on the request
+/// itself, which [`tls_hint`] then classifies as permanent.
+fn never_sent(chain: &str) -> bool {
+    chain.contains("connection was not ready")
+}
+
 fn classify(error: &reqwest::Error) -> RetryOutcome {
     if error.is_connect() {
         RetryOutcome::ConnectError
@@ -670,6 +688,7 @@ where
 {
     let prefix = prefix_for(slice_id);
     let mut attempt: usize = 0;
+    let mut redials: usize = 0;
     loop {
         if cancel.is_cancelled() {
             return Err(anyhow::Error::new(DumpCancelled));
@@ -751,6 +770,15 @@ where
             }
             Err(SendError::Http(e)) => {
                 let chain = error_chain(&e);
+                if never_sent(&chain) && redials < MAX_REDIALS {
+                    // Not a failed attempt: the request never left, and the
+                    // next connection surfaces the real cause (L-431a).
+                    redials += 1;
+                    debug!(
+                        "{prefix}{operation}: a new connection closed before the request was sent ({chain}); reconnecting ({redials} of {MAX_REDIALS})"
+                    );
+                    continue;
+                }
                 if let Some((permanent, msg)) = dns_failure(&e, &chain) {
                     let error = anyhow!("{prefix}Elasticsearch {operation} request failed: {msg}");
                     if permanent {
@@ -841,6 +869,23 @@ pub fn validate_response_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // L-431a: only hyper's "request never left" cancel is redialled; a request that failed
+    // on the wire (sent or partly sent) is never re-sent silently.
+    #[test]
+    fn only_never_sent_requests_are_redialled() {
+        assert!(never_sent(
+            "error sending request for url (https://h/): client error (Canceled): operation was canceled: connection was not ready"
+        ));
+        for chain in [
+            "error sending request for url (https://h/): client error (SendRequest): connection error: received fatal alert: CertificateRequired",
+            "error sending request for url (http://h/): client error (SendRequest): connection closed before message completed",
+            "error sending request for url (http://h/): client error (Connect): tcp connect error: Connection refused (os error 111)",
+            "error sending request for url (http://h/): operation timed out",
+        ] {
+            assert!(!never_sent(chain), "{chain}");
+        }
+    }
 
     fn policy() -> RetryPolicy {
         RetryPolicy {

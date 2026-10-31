@@ -1919,6 +1919,82 @@ async fn tls_failures_have_one_clear_message() {
     drop(servers);
 }
 
+// L-431a: with TLS 1.3 a server that requires a client certificate completes the handshake,
+// then its alert can close the new connection before the request is queued on it; hyper
+// reports that as "connection was not ready" (Canceled), without the TLS cause. That was
+// classified as a transport failure and retried with a "retrying" warning in about 2% of
+// runs (the flake in `tls_failures_have_one_clear_message`). Many runs make the race show:
+// every one must name the missing client certificate and never retry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tls_client_cert_rejection_is_never_retried() {
+    struct Srv(std::process::Child);
+    impl Drop for Srv {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let certs = dir.path().join("certs");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/tls/certs.sh");
+    let ok = std::process::Command::new("bash")
+        .arg(script)
+        .arg(&certs)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !ok {
+        println!("SKIP: openssl cert factory unavailable");
+        return;
+    }
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let _srv = Srv(std::process::Command::new("openssl")
+        .current_dir(&certs)
+        .args(["s_server", "-quiet", "-www", "-accept", &port.to_string()])
+        .args([
+            "-cert", "ok.pem", "-key", "ok.key", "-Verify", "1", "-CAfile", "ca.pem",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap());
+    for _ in 0..100 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let ca = certs.join("ca.pem").to_str().unwrap().to_string();
+    let out = dir.path().join("o.json").to_str().unwrap().to_string();
+    for run in 0..300 {
+        let args: Vec<String> = vec![
+            "--input".into(),
+            format!("https://localhost:{port}/idx"),
+            "--output".into(),
+            out.clone(),
+            "--type".into(),
+            "mapping".into(),
+            "--retryAttempts".into(),
+            "2".into(),
+            "--retryDelay".into(),
+            "1".into(),
+            "--input-ca".into(),
+            ca.clone(),
+        ];
+        let o = run_async(args, vec![]).await;
+        let err = stderr(&o);
+        assert_eq!(o.status.code(), Some(1), "run {run}: {err}");
+        assert!(
+            err.contains("requires a client certificate"),
+            "run {run}: {err}"
+        );
+        assert!(!err.contains("retrying"), "run {run}: retried: {err}");
+        assert!(!err.contains("not ready"), "run {run}: cause lost: {err}");
+    }
+}
+
 // L-441 (TST-BRK-NET-003): the connection is reset after the cluster read (and applied) a
 // `_bulk` request. Explicit ids: re-sent, harmless. Auto-id documents: never re-sent, the run
 // fails and says why (a re-send would duplicate them). `create`: the re-sent request's 409s are
