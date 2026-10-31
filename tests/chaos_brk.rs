@@ -2969,9 +2969,20 @@ async fn l638_extreme_numeric_flags_never_panic() {
                 &format!("{}/z", m.url()),
             ]);
             a.extend(s(&[f, v]));
-            let o = tokio::time::timeout(std::time::Duration::from_secs(20), run_async(a, vec![]))
-                .await
-                .unwrap_or_else(|_| panic!("{f} {v}: hung"));
+            // L-638a: --intervalCap 0/1 admits one request per 5 s window (default
+            // --concurrencyInterval). This run makes 3 requests (GET /, _bulk, _refresh), so 2
+            // window waits; with carry-over a request still in flight at a boundary uses up the
+            // next window too, so the worst case is 2 × 2 windows = 20 s, plus 20 s margin for a
+            // loaded machine. Other flags keep 20 s.
+            let limit = if f == "--intervalCap" {
+                2 * 2 * 5 + 20
+            } else {
+                20
+            };
+            let o =
+                tokio::time::timeout(std::time::Duration::from_secs(limit), run_async(a, vec![]))
+                    .await
+                    .unwrap_or_else(|_| panic!("{f} {v}: hung (over {limit} s)"));
             let err = stderr(&o);
             let code = o.status.code();
             assert!(matches!(code, Some(0..=2)), "{f} {v}: {code:?} {err}");
