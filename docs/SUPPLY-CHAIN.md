@@ -230,6 +230,48 @@ entry per case), and `<case>/{strace.*,stdout,stderr,check.log}`. The runner nee
 `strace` (6.13 here). Tracing an own child process needs no extra privilege. Nightly
 (`nightly.yml`, job `trace`) runs the self-test, then the full matrix.
 
+## Reproducible builds (SUP-010, L-704)
+
+`scripts/sup/repro.sh [image@sha256:…]` builds the release binary twice from the same commit and
+fails unless both have the same SHA-256. The default image is the Makefile's pinned builder
+(`BUILDER_IMAGE:BUILDER_TAG`, dhi.io Rust on Alpine, by digest); an image given without a digest is
+refused. Like `offline-build.sh`, the sources are vendored on the host (`cargo vendor --locked`) and
+both builds run in `podman run --network none` with `cargo build --offline --locked --release`.
+
+What the two builds share: the image digest, `SOURCE_DATE_EPOCH` (the commit time),
+`CARGO_INCREMENTAL=0`, and `RUSTFLAGS` with `--remap-path-prefix` for the source, vendor and
+`CARGO_HOME` directories (mapped to `/build/src`, `/build/vendor`, `/build/cargo-home`).
+
+What differs between them, and must not reach the binary:
+
+| | build a | build b |
+|---|---|---|
+| user | container root | uid/gid 4242 |
+| sources | `/src` | `/home/builder/work/deeper/elasticdump-rs` |
+| vendor / `CARGO_HOME` / target | `/vendor`, `/cargo-home`, `/target` | `/opt/v2/vendor`, `/var/tmp/ch2`, `/home/builder/tgt` |
+| umask, TZ, hostname | 022, UTC, `repro-a` | 077, Asia/Kolkata, `repro-b` |
+| start time | t | after build a plus `REPRO_PAUSE` (5 s) |
+
+On a mismatch the script prints the first differing byte offsets and the build-path strings that
+differ. `REPRO_OUT=<dir>` keeps both binaries, both build logs and a `SHA256SUMS`; `REPRO_PULL=1`
+pulls the image when it is missing.
+
+Result on this box (2026-10-31, commit 4680a58, dhi.io/rust 1.99.0-alpine3.23-dev@sha256:2d438711…):
+both binaries `0c5775a3…61c61e8`, 8,419,208 bytes, identical. `strings` finds none of build b's
+own paths in its binary, only the remapped `/build/…` prefixes. About 3 minutes per build at
+`CARGO_BUILD_JOBS=2`.
+
+CI: the nightly `repro` job runs it with `REPRO_PULL=1` (dhi.io login through the `dhi-pull`
+environment, as the egress job does) and uploads `/tmp/edrs-repro/`.
+
+Not covered here:
+- **A second machine:** cross-machine bit-for-bit verification is B11.
+- **Image builds with `podman build --timestamp`:** both builds would need the dhi.io base and two
+  more LTO builds. This is left for the image-hardening work and not checked yet.
+- **`cargo auditable`:** the tool is not installed on this box or in the builder image, and
+  installing it in the offline sandbox needs a vendored copy. Until it is added, the embedded
+  dependency list comes from the SBOM job (SUP-011) instead.
+
 ## SBOM diff per PR (SUP-011, L-207)
 
 `scripts/sup/sbom-pr.sh <base-ref>` checks the base out into a temporary worktree and compares it with HEAD. It builds the following for both sides:

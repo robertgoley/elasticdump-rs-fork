@@ -194,3 +194,30 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: trace, path: "/tmp/edrs-it/trace*/" }
+
+  # L-704 / TST-SUP-010: two offline release builds of the same commit in the pinned builder
+  # image (by digest), with different paths, users, umask, TZ and start time, must give a
+  # bit-for-bit identical binary (SOURCE_DATE_EPOCH, --remap-path-prefix, CARGO_INCREMENTAL=0).
+  repro:
+    name: reproducible build (SUP-010)
+    runs-on: ubuntu-24.04
+    # the builder image is on dhi.io; pull-only secrets through the same environment as egress
+    environment: dhi-pull
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
+      - name: Log in to dhi.io (pull only)
+        env:
+          DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
+          DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+        run: |
+          if [ -z "$DHI_USERNAME" ] || [ -z "$DHI_TOKEN" ]; then
+            echo "::error::DHI_USERNAME/DHI_TOKEN secrets are not set; dhi.io pulls need them"
+            exit 1
+          fi
+          printf '%s' "$DHI_TOKEN" | podman login dhi.io -u "$DHI_USERNAME" --password-stdin
+      - run: REPRO_PULL=1 REPRO_OUT=/tmp/edrs-repro scripts/sup/repro.sh
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with: { name: repro, path: /tmp/edrs-repro/ }
