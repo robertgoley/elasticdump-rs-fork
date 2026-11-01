@@ -16,6 +16,7 @@ oom
 *.zst
 *.gz
 *.md
+!THIRD-PARTY-NOTICES.md
 Dockerfile
 Makefile
 .dockerignore

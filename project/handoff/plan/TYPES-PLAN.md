@@ -402,8 +402,8 @@ restores with Node. Cross-engine legs are green on `all`.
   * legacy: `{name:{order,index_patterns,settings,mappings,aliases,version?}}`;
   * composable: `{index_templates:[{name,index_template:{…}}]}` / `{component_templates:[{name,component_template:{…}}]}`.
 * **Filtering** only on GET, when `--filterSystemTemplates` (default **true**):
-  * legacy: `_.omitBy(templates, (v,k) => new RegExp(templateRegex).test(k))`;
-  * composable (`featureFlag`): `_.reject(arr, it => regex.test(it.name))` under the first key.
+  * legacy: drops every template whose name matches the template regex;
+  * composable (`featureFlag`): drops every entry of the array under the first key whose `name` matches the regex.
   * Default regex: `^(metrics|logs|.+_audit_log|.+-index-template|\..+)$`.
   * Written as a string literal, whether filtered or not.
 * **SET:**

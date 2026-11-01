@@ -97,7 +97,7 @@ fn parse_type(value: &str) -> Result<DumpType, String> {
     name = "elasticdump-rs",
     author,
     version,
-    about = "Import and export tools for Elasticsearch and OpenSearch (elasticdump-compatible)",
+    about = "Back up, restore and copy Elasticsearch and OpenSearch indices, mappings and settings (elasticdump-compatible CLI)",
     allow_negative_numbers = true,
     max_term_width = 100
 )]

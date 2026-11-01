@@ -36,6 +36,8 @@ shell=0; has bin/sh && shell=1
 ca_size=$(awk '$6 == "etc/ssl/certs/ca-certificates.crt" {print $3}' "$W/rootfs.lst")
 check "elasticdump symlink -> elasticdump-rs" grep -qE ' usr/local/bin/elasticdump -> (/usr/local/bin/)?elasticdump-rs$' "$W/rootfs.lst"
 check "CA bundle present (${ca_size:-0} bytes)" test "${ca_size:-0}" -gt 0
+check "THIRD-PARTY-NOTICES.md in /usr/share/doc/elasticdump-rs" grep -qE ' usr/share/doc/elasticdump-rs/THIRD-PARTY-NOTICES\.md$' "$W/rootfs.lst"
+check "LICENSE in /usr/share/doc/elasticdump-rs" grep -qE ' usr/share/doc/elasticdump-rs/LICENSE$' "$W/rootfs.lst"
 if [[ $shell == 1 ]]; then
   hasbash() { has bin/bash || has usr/bin/bash; }
   check "bash present (image has a shell)" hasbash

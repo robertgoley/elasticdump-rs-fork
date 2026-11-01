@@ -42,6 +42,8 @@ but not linked in), `--features jemalloc` uses jemalloc on any target, `--featur
 target (also musl). `jemalloc` and `mimalloc` are mutually exclusive, and `system-allocator` excludes both.
 Release builds (`.github/workflows/release.yml`, `cargo zigbuild`): `x86_64`/`aarch64-unknown-linux-gnu` against
 glibc 2.28 (preferred), plus static `x86_64`/`aarch64-unknown-linux-musl`.
+Each archive `elasticdump-rs-<target>.tar.gz` holds a directory of the same name with the binary, `LICENSE` and
+`THIRD-PARTY-NOTICES.md`; the container images carry both files in `/usr/share/doc/elasticdump-rs/`.
 
 ## Migrating from elasticdump
 
@@ -699,6 +701,15 @@ hosts with ~1.5 GB free use `ES_HEAP=320m IT_LEAN_JVM=1` (smaller code cache, di
 node can exhaust memory on small hosts) and always removes its containers and data directories. The Node interop tests
 run when `/tmp/ed/node_modules/.bin/elasticdump` exists.
 
+## Acknowledgements
+
+elasticdump-rs is a compatible re-implementation of
+[elasticsearch-dump](https://github.com/elasticsearch-dump/elasticsearch-dump) (Apache-2.0). Its behaviour and
+defaults were studied from that project's source. Some test fixtures are reused unchanged under Apache-2.0; see
+[`tests/fixtures/node`](tests/fixtures/node/SOURCE.md).
+
 ## License
 
-MIT. See `LICENSE`.
+MIT. See `LICENSE`. Third-party material (the reused test fixtures, the bundled mimalloc and jemalloc C code, the
+Rust crates) and its licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md); regenerate the
+crate list with `scripts/third-party-notices.py` after a dependency change.

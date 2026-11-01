@@ -45,7 +45,10 @@ jobs:
           case "$TARGET" in
             *-gnu) objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 ;;
           esac
-          tar czf "elasticdump-rs-$TARGET.tar.gz" -C "$(dirname "$f")" elasticdump-rs
+          d="elasticdump-rs-$TARGET"
+          mkdir "$d"
+          cp "$f" LICENSE THIRD-PARTY-NOTICES.md "$d/"
+          tar czf "$d.tar.gz" "$d"
           sha256sum "elasticdump-rs-$TARGET.tar.gz" > "elasticdump-rs-$TARGET.tar.gz.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

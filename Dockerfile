@@ -52,6 +52,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=edrs-registry \
  && /out/elasticdump-rs --version
 # CA bundle for runtimes that lack one (runtime-shell copies it only when missing).
 RUN install -D -m 0644 /etc/ssl/certs/ca-certificates.crt /out/ca-certificates.crt
+# License and third-party notices, shipped in every image (L-808c).
+COPY LICENSE THIRD-PARTY-NOTICES.md /out/root/usr/share/doc/elasticdump-rs/
 # Root tree for the COPY-only `runtime` stage (bases without a shell): the binary, the
 # `elasticdump` symlink for scripts written for the Node tool, and an empty /data.
 RUN install -D -m 0755 /out/elasticdump-rs /out/root/usr/local/bin/elasticdump-rs \
@@ -66,7 +68,7 @@ ARG BUILD_DATE=unknown
 ARG BASE_IMAGE
 ARG BASE_TAG
 LABEL org.opencontainers.image.title="elasticdump-rs" \
-      org.opencontainers.image.description="Import and export tools for Elasticsearch and OpenSearch (elasticdump-compatible, in Rust)" \
+      org.opencontainers.image.description="Back up, restore and copy Elasticsearch and OpenSearch data (elasticdump-compatible CLI, written in Rust)" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
@@ -79,6 +81,7 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # Bases with a shell (Alpine, Debian -dev, debian:trixie-slim): `--target runtime-shell`.
 FROM base AS runtime-shell
 COPY --from=builder /out/elasticdump-rs /usr/local/bin/elasticdump-rs
+COPY --from=builder /out/root/usr/share/doc/elasticdump-rs/ /usr/share/doc/elasticdump-rs/
 # - `elasticdump` symlink for scripts written for the Node tool
 # - CA bundle only when the base image has none
 # - /data: writable working directory for dumps (mount a volume here)
@@ -103,6 +106,7 @@ CMD ["--help"]
 # glibc, libgcc_s, the CA bundle and the 65532 nonroot user.
 FROM base AS runtime
 COPY --from=builder /out/root/usr/local/bin/ /usr/local/bin/
+COPY --from=builder /out/root/usr/share/doc/elasticdump-rs/ /usr/share/doc/elasticdump-rs/
 COPY --from=builder --chown=65532:65532 /out/root/data /data
 USER 65532:65532
 WORKDIR /data
