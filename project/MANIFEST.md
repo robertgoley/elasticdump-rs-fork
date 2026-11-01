@@ -51,3 +51,4 @@
 - 2026-11-01: L-811 (out of order) LOAD-017 leak check: scripts/load/run.py `leak_check`, called by every load script; scripts/load/leakcheck_selftest.py; scripts/load/README.md; results/local/L-811.md; D-2 placeholders filled with f96c434; handoff/SHA256SUMS updated.
 - 2026-11-01: L-808f CI notices drift check: .github/workflows/security.yml runs `scripts/third-party-notices.py --check`; L-811 placeholders filled with aaff19a; handoff/SHA256SUMS updated.
 - 2026-11-01: L-808g mimalloc start-up reads confirmed by the owner in scripts/sup/rc-signoff.txt and trace-allow.txt; L-808f placeholders filled with 78a29f6; handoff/SHA256SUMS updated.
+- 2026-11-01: L-805a slow compression level and --overwrite leftover warnings (src/lib.rs, src/pipeline/file_sink.rs, tests/cli_contract.rs, README, results/local/L-805a.md); L-808g placeholders filled with d138b07; handoff/SHA256SUMS updated.

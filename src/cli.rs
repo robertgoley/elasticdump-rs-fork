@@ -362,7 +362,8 @@ pub struct Cli {
     #[arg(long = "compressionType", value_enum)]
     pub compression_type: Option<CompressionType>,
 
-    /// Compression level: gzip 0-9 (-1 = 6), zstd 1-22 (-1 = 3)
+    /// Compression level: gzip 0-9 (-1 = 6), zstd 1-22 (-1 = 3). gzip 9 and zstd
+    /// 19+ print a warning: slow for little or no size gain (README table)
     #[arg(long = "compressionLevel", allow_hyphen_values = true)]
     pub compression_level: Option<i32>,
 

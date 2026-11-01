@@ -243,10 +243,18 @@ fn leftover_pid(name: &str) -> Option<u32> {
 /// D-5: name every leftover of an earlier killed run at the start of the next run to the
 /// same output. They are never deleted or overwritten here: a staged file may hold the only
 /// copy of data, and a moved-aside file is the previous contents of an `--overwrite` target.
-fn warn_about_leftovers(root: &Path) {
+fn warn_about_leftovers(root: &Path, overwrite: bool) {
+    if let Some(msg) = leftover_warning(root, overwrite) {
+        log::warn!("{msg}");
+    }
+}
+
+/// The D-5 warning text, `None` when nothing was left. With `--overwrite` it also says that
+/// the overwrite does not remove them: only the output itself (and its parts) is replaced.
+fn leftover_warning(root: &Path, overwrite: bool) -> Option<String> {
     let found = leftovers_of(root);
     if found.is_empty() {
-        return;
+        return None;
     }
     let mut list = String::new();
     for p in &found {
@@ -280,11 +288,16 @@ fn warn_about_leftovers(root: &Path) {
         list.push_str(&running);
         list.push(')');
     }
-    log::warn!(
-        "{} file(s) next to --output '{}' were left by an earlier run that was killed before it finished (kill -9, out of memory, power loss); they are left in place, not deleted: {list}. Remove them once you have checked them",
+    let overwrite_note = if overwrite {
+        " (--overwrite replaces only the output itself; it does not remove these files)"
+    } else {
+        ""
+    };
+    Some(format!(
+        "{} file(s) next to --output '{}' were left by an earlier run that was killed before it finished (kill -9, out of memory, power loss); they are left in place, not deleted{overwrite_note}: {list}. Remove them once you have checked them",
         found.len(),
         root.display()
-    );
+    ))
 }
 
 /// Pretty-print each line; numbers keep their exact text.
@@ -366,7 +379,7 @@ impl FileSink {
             _uncommitted: None,
         };
         if let Some(root) = &sink.opts.path {
-            warn_about_leftovers(root);
+            warn_about_leftovers(root, sink.opts.overwrite);
             sink._uncommitted = Some(crate::signals::note_on_force_quit(format!(
                 "--output '{}' was not committed (if the force-quit hit its final commit, a split set may be partly committed); its hidden staging files are left next to it and the next run to it names them",
                 root.display()
@@ -917,7 +930,18 @@ mod tests {
         assert_eq!(leftover_pid(".d.json.part-123-456"), Some(123));
         assert_eq!(leftover_pid(".d.json.edrs-replaced-77"), Some(77));
         assert!(leftovers_of(&d.join("none.json")).is_empty());
-        warn_about_leftovers(&d.join("d.json"));
+        warn_about_leftovers(&d.join("d.json"), false);
+        let plain = leftover_warning(&d.join("d.json"), false).unwrap();
+        assert!(plain.contains("left in place, not deleted"), "{plain}");
+        assert!(!plain.contains("--overwrite replaces only"), "{plain}");
+        let ow = leftover_warning(&d.join("d.json"), true).unwrap();
+        assert!(
+            ow.contains(
+                "--overwrite replaces only the output itself; it does not remove these files"
+            ),
+            "{ow}"
+        );
+        assert!(leftover_warning(&d.join("none.json"), true).is_none());
         for n in ours.iter().chain(others.iter()) {
             assert!(d.join(n).exists(), "{n} must never be deleted");
         }

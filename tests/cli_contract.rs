@@ -154,6 +154,100 @@ fn existing_output_without_overwrite_fails() {
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "{\"a\":1}\n");
 }
 
+/// L-805a: gzip 9 and zstd 19+ warn on stderr (still used, exit 0); defaults do not.
+#[test]
+fn slow_compression_levels_warn_but_still_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    std::fs::write(&input, "{\"_id\":\"1\",\"_source\":{\"n\":1}}\n").unwrap();
+    let cases: [(&[&str], Option<&str>); 5] = [
+        (
+            &["--fsCompress", "--compressionLevel", "9"],
+            Some("--compressionLevel 9 with gzip is slow"),
+        ),
+        (
+            &["--compressionType", "zstd", "--compressionLevel", "19"],
+            Some("--compressionLevel 19 with zstd is very slow"),
+        ),
+        (&["--fsCompress"], None),
+        (&["--compressionType", "zstd"], None),
+        (
+            &["--compressionType", "zstd", "--compressionLevel", "9"],
+            None,
+        ),
+    ];
+    for (i, (flags, want)) in cases.iter().enumerate() {
+        let out = dir.path().join(format!("out{i}.json"));
+        let mut args = vec![
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ];
+        args.extend_from_slice(flags);
+        let o = run(&args);
+        let e = stderr(&o);
+        assert!(o.status.success(), "{flags:?}: {e}");
+        assert!(e.contains("Total Writes: 1"), "{flags:?}: {e}");
+        match want {
+            Some(w) => assert!(
+                e.contains(w) && e.contains("README compression table"),
+                "{flags:?}: {e}"
+            ),
+            None => assert!(!e.contains("README compression table"), "{flags:?}: {e}"),
+        }
+    }
+}
+
+/// L-805a / D-5: an `--overwrite` run names a killed run's hidden leftovers, says that the
+/// overwrite does not remove them, and leaves them in place.
+#[test]
+fn overwrite_names_leftovers_and_keeps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let out = dir.path().join("out.json");
+    std::fs::write(&input, "{\"a\":1}\n").unwrap();
+    std::fs::write(&out, "old\n").unwrap();
+    // PID 4000000000 cannot be running, so no "still running" note
+    let left = dir.path().join(".out.json.part-4000000000-1");
+    std::fs::write(&left, "staged\n").unwrap();
+    let args = [
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+        "--overwrite",
+    ];
+    let o = run(&args);
+    let e = stderr(&o);
+    assert!(o.status.success(), "{e}");
+    assert!(
+        e.contains(".out.json.part-4000000000-1") && e.contains("left in place"),
+        "{e}"
+    );
+    assert!(
+        e.contains("--overwrite replaces only the output itself; it does not remove these files"),
+        "{e}"
+    );
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "{\"a\":1}\n");
+    assert_eq!(std::fs::read_to_string(&left).unwrap(), "staged\n");
+    // without --overwrite (new output name) the note is not added
+    let out2 = dir.path().join("out2.json");
+    std::fs::write(dir.path().join(".out2.json.part-4000000000-2"), "x").unwrap();
+    let o = run(&[
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        out2.to_str().unwrap(),
+    ]);
+    let e = stderr(&o);
+    assert!(o.status.success(), "{e}");
+    assert!(
+        e.contains("left in place") && !e.contains("--overwrite replaces only"),
+        "{e}"
+    );
+}
+
 #[test]
 fn file_to_file_normalises_concatenated_and_pretty_json_with_offset_and_size() {
     let dir = tempfile::tempdir().unwrap();

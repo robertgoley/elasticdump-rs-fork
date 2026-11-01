@@ -286,6 +286,22 @@ fn split_requested(cli: &Cli) -> bool {
         || cli.max_rows.is_some_and(|n| n > 0)
 }
 
+/// L-805a: levels that cost far more CPU than they save in size (README "Compression levels"
+/// table, L-805). A warning only: the level is still used.
+fn slow_level_warning(codec: Option<pipeline::file_sink::Codec>) -> Option<String> {
+    use pipeline::file_sink::Codec;
+    match codec {
+        Some(Codec::Gzip(9)) => Some(
+            "--compressionLevel 9 with gzip is slow for no size gain: in the README compression table (L-805) gzip 9 runs at about 120 MB/s per core against about 200 for the default 6, and with the zlib-rs backend writes a 3.5% larger file; the default level (6) is recommended"
+                .to_string(),
+        ),
+        Some(Codec::Zstd(l)) if l >= 19 => Some(format!(
+            "--compressionLevel {l} with zstd is very slow for a small size gain: in the README compression table (L-805) zstd 19 runs at about 1.8 MB/s per core (1M docs took 9.5 minutes) against about 100 for zstd 9, which writes a file about 30% larger; consider zstd 9 or the default 3"
+        )),
+        _ => None,
+    }
+}
+
 /// File/stdout output options: gzip and splitting.
 fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::FileOptions> {
     use crate::cli::CompressionType;
@@ -319,6 +335,9 @@ fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::Fil
             )));
         }
     };
+    if let Some(msg) = slow_level_warning(codec) {
+        log::warn!("{msg}");
+    }
     let human = match cli.format.as_deref().map(str::trim) {
         None | Some("") | Some("json") => false,
         Some("human") if split_requested(cli) => {
@@ -1199,6 +1218,41 @@ mod compression_default_tests {
         assert_eq!(
             codec(&["--fsCompress", "--compressionType", "zstd"]),
             Some(Codec::Zstd(3))
+        );
+    }
+
+    #[test]
+    fn slow_levels_warn_others_do_not() {
+        let w = |c| slow_level_warning(Some(c));
+        assert!(w(Codec::Gzip(9)).unwrap().contains("gzip 9"));
+        assert!(
+            w(Codec::Zstd(19))
+                .unwrap()
+                .contains("--compressionLevel 19 with zstd")
+        );
+        assert!(
+            w(Codec::Zstd(22))
+                .unwrap()
+                .contains("--compressionLevel 22 with zstd")
+        );
+        for c in [
+            Codec::Gzip(1),
+            Codec::Gzip(6),
+            Codec::Zstd(3),
+            Codec::Zstd(9),
+            Codec::Zstd(18),
+        ] {
+            assert!(w(c).is_none(), "{c:?}");
+        }
+        assert!(slow_level_warning(None).is_none());
+        // the levels themselves are unchanged (a warning, not an error)
+        assert_eq!(
+            codec(&["--fsCompress", "--compressionLevel", "9"]),
+            Some(Codec::Gzip(9))
+        );
+        assert_eq!(
+            codec(&["--compressionType", "zstd", "--compressionLevel", "19"]),
+            Some(Codec::Zstd(19))
         );
     }
 

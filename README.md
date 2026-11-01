@@ -457,7 +457,9 @@ Mounted host directories must be writable by uid 65532 (or use `--user`).
   killed mid-commit can be torn, but the parts not yet moved into place are still staged whole
   (`.d.split-N.json.part-PID-TS`) and files being replaced with `--overwrite` were moved aside whole
   (`.d.split-N.json.edrs-replaced-PID`). These hidden files are **left in place, never deleted**: the next run to
-  the same output prints a warning naming each one with its size (D-5); check and remove them yourself. A killed
+  the same output prints a warning naming each one with its size (D-5); check and remove them yourself.
+  `--overwrite` replaces only the output itself (and its split parts), never these files; with `--overwrite` the
+  warning says so (L-805a). A killed
   restore never changes its input file; the cluster got the first documents of the file, without gaps (with the
   default `--concurrency`). Checked by `kill -9` at random points, 50 runs each for dump, split and restore (L-648).
 * A second Ctrl+C (or SIGTERM) while the first one is still being cleaned up force-quits at once (130 / 143). It
@@ -590,7 +592,8 @@ adds over an uncompressed file-to-file run:
 
 A 1M-doc dump (about 7 s, bound by the cluster) took no longer with gzip 1/6 or zstd 1/3; gzip 9 and zstd 9 added
 30–40%, and zstd 19 took 9.5 minutes. With the zlib-rs backend, gzip level 9 writes a slightly *larger* file than level
-6, so it isn't worth using. zstd 9 gives the smallest file at a practical speed.
+6, so it isn't worth using. zstd 9 gives the smallest file at a practical speed. Because of this, `--compressionLevel 9` with gzip and
+levels 19 and up with zstd print a warning on stderr (the level is still used; L-805a).
 
 ### Upstream benchmark (Elasticsearch 7.17, pre-rewrite `b32b6e9`)
 
