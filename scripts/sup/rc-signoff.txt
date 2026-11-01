@@ -3,5 +3,5 @@
 # kind: exec | path | connect | bind | socket | process | syscall | dns | noroute | unexpected
 # (noroute/unexpected take the egress phase name as value). `*` and `?` are the only wildcards.
 # Rules apply to one release step: clear the file once the new baseline profile is committed.
-path	/sys/devices/system/node/node*	L-808b (reviewed by the L-808b agent; lead to confirm): mimalloc, the default allocator on glibc Linux, probes the NUMA node count at init; read-only system info
-path	/sys/kernel/mm/transparent_hugepage/enabled	L-808b (reviewed by the L-808b agent; lead to confirm): mimalloc reads the THP mode at init; read-only system info
+path	/sys/devices/system/node/node*	L-808b, confirmed by the owner (user, 2026-11-01; L-808g): read-only allocator topology probe at startup (mimalloc, the default allocator on glibc Linux, reads the NUMA node count)
+path	/sys/kernel/mm/transparent_hugepage/enabled	L-808b, confirmed by the owner (user, 2026-11-01; L-808g): read-only allocator THP probe at startup (mimalloc reads the transparent-hugepage mode)

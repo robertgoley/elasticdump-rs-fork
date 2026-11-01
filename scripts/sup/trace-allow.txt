@@ -85,8 +85,8 @@ path     /proc/self/*                          # cgroup, limits, maps (stack gua
 path     /proc/meminfo                         # memory guard: available memory
 path     /proc/sys/vm/overcommit_memory        # glibc malloc (arena.c check_may_shrink_heap) when a thread arena shrinks
 path     /sys/devices/system/cpu/online        # std::thread::available_parallelism
-path     /sys/devices/system/node/node*        # mimalloc (default allocator on glibc, L-808b): NUMA node count probe
-path     /sys/kernel/mm/transparent_hugepage/enabled  # mimalloc (L-808b): THP mode check at init
+path     /sys/devices/system/node/node*        # mimalloc (default allocator on glibc, L-808b): NUMA node count probe; read-only allocator topology probe at startup, confirmed by the owner (user, 2026-11-01)
+path     /sys/kernel/mm/transparent_hugepage/enabled  # mimalloc (L-808b): THP mode check at init; read-only allocator THP probe at startup, confirmed by the owner (user, 2026-11-01)
 path     /sys/fs/cgroup/*cpu.max               # cgroup v2 CPU quota (available_parallelism)
 path     /sys/fs/cgroup/*memory.max            # cgroup v2 memory limit (memory guard)
 path     /sys/fs/cgroup/*cgroup.controllers    # cgroup v2 detection

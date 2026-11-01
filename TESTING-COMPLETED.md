@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 202 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808f (`git log -1 --grep '^L-808f'`; the next commit fills in its sha).
+Total: 203 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808g (`git log -1 --grep '^L-808g'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -249,4 +249,5 @@ Total: 202 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808e | 09bdab8 | 2026-11-01 | Handoff state (docs only): usage rule, `wip/L-NNN` branches, queue and skip list, 2026-11-01 user decisions and open items recorded in RESUME-FOR-GROK-BOT.md and the handoff docs. |
 | D-2 | f96c434 | 2026-11-01 | gzip stays the default codec and zstd is opt-in (code, `--help`, README) verified; `compression_default_tests` added (4 unit tests); help and README wording made explicit. |
 | L-811 | aaff19a | 2026-11-01 | LOAD-017: leak check (scroll, PIT or ES open_contexts, `.part` files incl. hidden staging files, stray/hidden indices) asserted in the teardown of every load script; `leakcheck_selftest.py` PASS on es717-plain and opensearch-plain. |
-| L-808f | this commit | 2026-11-01 | CI: `scripts/third-party-notices.py --check` added to security.yml (dependencies job); passes locally, fails (rc 1) on a stale file. |
+| L-808f | 78a29f6 | 2026-11-01 | CI: `scripts/third-party-notices.py --check` added to security.yml (dependencies job); passes locally, fails (rc 1) on a stale file. |
+| L-808g | this commit | 2026-11-01 | rc-signoff/trace-allow: the 2 mimalloc start-up reads confirmed by the owner (read-only allocator topology/THP probes); trace.sh plain passes. |

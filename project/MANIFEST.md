@@ -50,3 +50,4 @@
 - 2026-11-01: D-2 (out of order) gzip default / zstd opt-in verified; src/lib.rs `compression_default_tests`; src/cli.rs help and README wording; RESUME/DECISIONS usage rule corrected; L-808e placeholders filled with 09bdab8; handoff/SHA256SUMS updated.
 - 2026-11-01: L-811 (out of order) LOAD-017 leak check: scripts/load/run.py `leak_check`, called by every load script; scripts/load/leakcheck_selftest.py; scripts/load/README.md; results/local/L-811.md; D-2 placeholders filled with f96c434; handoff/SHA256SUMS updated.
 - 2026-11-01: L-808f CI notices drift check: .github/workflows/security.yml runs `scripts/third-party-notices.py --check`; L-811 placeholders filled with aaff19a; handoff/SHA256SUMS updated.
+- 2026-11-01: L-808g mimalloc start-up reads confirmed by the owner in scripts/sup/rc-signoff.txt and trace-allow.txt; L-808f placeholders filled with 78a29f6; handoff/SHA256SUMS updated.
