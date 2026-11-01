@@ -1,0 +1,363 @@
+{
+ "task": "L-806",
+ "card": "LOAD-009",
+ "date": "2026-11-01",
+ "engine": "es717-plain",
+ "engine_version": "7.17.29",
+ "place": "box",
+ "tier": "L1L",
+ "docs": 1000000,
+ "raw_bytes": 1012231323,
+ "corpus": "edgen logs seed 1",
+ "result": "PASS",
+ "harness": "scripts/load/split.py L1L (limit 1000; work dir outside the repo)",
+ "tool_git": "200908f",
+ "summary": "13 split cases (file and cluster input; --fileSize 256mb and scaled ~25 MB; --maxRows 1000000, 100000, 300000; gzip, zstd; --slices 4): all part counts as expected, no document spans parts, each part <= limit + its last doc, every part but the last reaches the limit, all-parts digest equal to the index, no part visible before every part was staged. Restore of all parts (one invocation per part) is digest-equal for a plain 40-part and a zstd 10-part set. kill -9 leaves no visible part; --overwrite rerun is digest-equal. --overwrite with fewer parts commits the new 10-part set and warns about the 30 older parts left.",
+ "cases": [
+  {
+   "case": "file-256mb",
+   "src": "file",
+   "flags": [
+    "--fileSize=256mb"
+   ],
+   "codec": "none",
+   "limit": 268435456,
+   "parts": 4,
+   "expected_parts": 4,
+   "part_docs_min_max": [
+    203742,
+    265519
+   ],
+   "wall_s": 1.94,
+   "commit_window_s": 0.006,
+   "min_total_when_visible": 4,
+   "max_staged_hidden": 4,
+   "polls": 96,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "file-scaled-bytes",
+   "src": "file",
+   "flags": [
+    "--fileSize=25305783b"
+   ],
+   "codec": "none",
+   "limit": 25305783,
+   "parts": 40,
+   "expected_parts": 40,
+   "part_docs_min_max": [
+    24055,
+    25071
+   ],
+   "wall_s": 2.18,
+   "commit_window_s": 0.002,
+   "min_total_when_visible": 40,
+   "max_staged_hidden": 40,
+   "polls": 108,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "file-1000000rows",
+   "src": "file",
+   "flags": [
+    "--maxRows=1000000"
+   ],
+   "codec": "none",
+   "limit": 1000000,
+   "parts": 1,
+   "expected_parts": 1,
+   "part_docs_min_max": [
+    1000000,
+    1000000
+   ],
+   "wall_s": 2.87,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 1,
+   "polls": 142,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "file-rows10",
+   "src": "file",
+   "flags": [
+    "--maxRows=100000"
+   ],
+   "codec": "none",
+   "limit": 100000,
+   "parts": 10,
+   "expected_parts": 10,
+   "part_docs_min_max": [
+    100000,
+    100000
+   ],
+   "wall_s": 2.1,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 10,
+   "polls": 104,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-256mb",
+   "src": "es",
+   "flags": [
+    "--fileSize=256mb"
+   ],
+   "codec": "none",
+   "limit": 268435456,
+   "parts": 4,
+   "expected_parts": 4,
+   "part_docs_min_max": [
+    203742,
+    265519
+   ],
+   "wall_s": 12.25,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 4,
+   "polls": 607,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-scaled-bytes",
+   "src": "es",
+   "flags": [
+    "--fileSize=25305783b"
+   ],
+   "codec": "none",
+   "limit": 25305783,
+   "parts": 40,
+   "expected_parts": 40,
+   "part_docs_min_max": [
+    24055,
+    25071
+   ],
+   "wall_s": 7.15,
+   "commit_window_s": 0.004,
+   "min_total_when_visible": 40,
+   "max_staged_hidden": 40,
+   "polls": 354,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-1000000rows",
+   "src": "es",
+   "flags": [
+    "--maxRows=1000000"
+   ],
+   "codec": "none",
+   "limit": 1000000,
+   "parts": 1,
+   "expected_parts": 1,
+   "part_docs_min_max": [
+    1000000,
+    1000000
+   ],
+   "wall_s": 11.11,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 1,
+   "polls": 550,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-rows30",
+   "src": "es",
+   "flags": [
+    "--maxRows=300000"
+   ],
+   "codec": "none",
+   "limit": 300000,
+   "parts": 4,
+   "expected_parts": 4,
+   "part_docs_min_max": [
+    100000,
+    300000
+   ],
+   "wall_s": 7.09,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 4,
+   "polls": 351,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-scaled-bytes-gzip",
+   "src": "es",
+   "flags": [
+    "--fileSize=25305783b"
+   ],
+   "codec": "gzip",
+   "limit": 25305783,
+   "parts": 40,
+   "expected_parts": 40,
+   "part_docs_min_max": [
+    24055,
+    25071
+   ],
+   "wall_s": 6.73,
+   "commit_window_s": 0.0,
+   "min_total_when_visible": null,
+   "max_staged_hidden": 40,
+   "polls": 327,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-scaled-bytes-zstd",
+   "src": "es",
+   "flags": [
+    "--fileSize=25305783b"
+   ],
+   "codec": "zstd",
+   "limit": 25305783,
+   "parts": 40,
+   "expected_parts": 40,
+   "part_docs_min_max": [
+    24055,
+    25071
+   ],
+   "wall_s": 6.77,
+   "commit_window_s": 0.015,
+   "min_total_when_visible": 40,
+   "max_staged_hidden": 40,
+   "polls": 335,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-rows10-zstd",
+   "src": "es",
+   "flags": [
+    "--maxRows=100000"
+   ],
+   "codec": "zstd",
+   "limit": 100000,
+   "parts": 10,
+   "expected_parts": 10,
+   "part_docs_min_max": [
+    100000,
+    100000
+   ],
+   "wall_s": 6.68,
+   "commit_window_s": 0.006,
+   "min_total_when_visible": 10,
+   "max_staged_hidden": 10,
+   "polls": 331,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-slices4-scaled-bytes",
+   "src": "es",
+   "flags": [
+    "--fileSize=25305783b",
+    "--slices=4"
+   ],
+   "codec": "none",
+   "limit": 25305783,
+   "parts": 40,
+   "expected_parts": null,
+   "part_docs_min_max": [
+    24049,
+    25087
+   ],
+   "wall_s": 7.33,
+   "commit_window_s": 0.001,
+   "min_total_when_visible": 40,
+   "max_staged_hidden": 40,
+   "polls": 363,
+   "exit": 0,
+   "checks_passed": true
+  },
+  {
+   "case": "dump-slices4-rows10-gzip",
+   "src": "es",
+   "flags": [
+    "--maxRows=100000",
+    "--slices=4"
+   ],
+   "codec": "gzip",
+   "limit": 100000,
+   "parts": 10,
+   "expected_parts": 10,
+   "part_docs_min_max": [
+    100000,
+    100000
+   ],
+   "wall_s": 7.54,
+   "commit_window_s": 0.009,
+   "min_total_when_visible": 10,
+   "max_staged_hidden": 10,
+   "polls": 373,
+   "exit": 0,
+   "checks_passed": true
+  }
+ ],
+ "restore_parts": [
+  {
+   "case": "dump-scaled-bytes",
+   "parts": 40,
+   "exits": [
+    0
+   ],
+   "wall_s": 36.1,
+   "count": 1000000,
+   "digest_equal": true
+  },
+  {
+   "case": "dump-rows10-zstd",
+   "parts": 10,
+   "exits": [
+    0
+   ],
+   "wall_s": 33.0,
+   "count": 1000000,
+   "digest_equal": true
+  }
+ ],
+ "kill": {
+  "staged_at_kill": 15,
+  "visible_after_kill": [],
+  "rerun_exit": 0,
+  "rerun_parts": 40,
+  "rerun_hidden_left": [
+   ".p.split-0.json.part-2600726-1793531671844174136",
+   ".p.split-1.json.part-2600726-1793531672037151612",
+   ".p.split-10.json.part-2600726-1793531673541112656"
+  ],
+  "rerun_hidden_left_count": 15,
+  "rerun_mentions_leftovers": true,
+  "rerun_digest_equal": true
+ },
+ "overwrite_fewer": {
+  "before": 40,
+  "exit": 0,
+  "after_total": 40,
+  "new_set_digest_equal": true,
+  "older_left": 30,
+  "warning": "[2026-11-01T11... (paths elided)"
+ },
+ "leak": {
+  "part_files_outside_kill": [],
+  "scroll_current": 1,
+  "note": "scroll_current 1 is expected from the kill -9'd dump (a killed process cannot clear its scroll; it expires after --scrollTime)"
+ },
+ "findings": [
+  "No tool bug found. Commit is a sequence of renames after every part is sealed; the visible window measured 0-15 ms for 40 parts. The first L0 dev run flagged visible-before-exit; that was the harness counting this commit window, so the assertion now checks that staged + visible equals the final count whenever any part is visible.",
+  "--fileSize counts uncompressed line bytes (newlines excluded), so gzip/zstd parts are much smaller than the limit on disk and the part boundaries are identical across codecs (24,055-25,071 docs per part in all three).",
+  "--maxRows 1000000 at 1M gives one part p.split-0.json (a split set of one), as Node does.",
+  "kill -9 leaves its hidden staged files (.p.split-N.json.part-PID-TS, 15 here) in place, per D-5 (L-648); the rerun logs a leftovers warning.",
+  "--overwrite with fewer parts leaves the older higher-numbered parts in place with a WARN listing them; reading the directory back with a glob would mix sets."
+ ],
+ "phase_b": "10M docs with --fileSize 256mb (~40 parts) and --maxRows 1000000 (10 parts) on the dedicated load host."
+}

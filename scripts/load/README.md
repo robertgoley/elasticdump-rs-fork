@@ -206,3 +206,33 @@ Checks:
 - **Parts:** for `--fileSize` parts, `cat` of the parts decodes, and the tool reads it back.
 
 Output goes to `results/load/<run-id>/compress.json`. Multi-GB single files at 10M are Phase B.
+
+## Splitting at scale (LOAD-009, L-806, `split.py`)
+
+`python3 scripts/load/split.py <tier> [--docs N] [--engine es717-plain] [--run-id ID] [--keep]`
+
+The script seeds `load-logs`, takes a one-file reference dump, and then splits with `--fileSize` and `--maxRows`, from
+the reference file (`file-*`) and from the cluster (`dump-*`). The cases are:
+
+- The spec's literal values (`--fileSize 256mb`, `--maxRows 1000000`).
+- Scaled values that give about 40 byte parts and 10 or 4 row parts at any `--docs`.
+- gzip and zstd parts, and `--slices 4`.
+
+Checks for each case:
+
+- **Names and files:** part names are contiguous `p.split-0…N`, and there are no extra files.
+- **No document spans parts:** every part ends with a newline, and every line is a whole JSON document with an `_id`.
+- **Limit:** no part goes past the limit by more than its last line, and every part but the last reaches the limit.
+- **Part count:** the expected count is `ceil(docs / maxRows)`, or a replay of the byte rule over the reference order.
+  `--slices 4` is only bounded.
+- **Digest:** an edverify diff of the index against all parts.
+- **Staging (BRK-RES-002):** the output directory is polled every 20 ms. A visible part may appear only in the commit
+  window, when staged + visible parts equal the final count.
+
+Extras:
+
+- Restore every part, one invocation per part, for a plain set and a zstd set, and diff the result with the source.
+- `kill -9` mid-split leaves no visible part, and an `--overwrite` rerun is digest-equal.
+- `--overwrite` with fewer parts replaces the set, leaves the older higher-numbered parts, and logs a warning.
+
+Output goes to `results/load/<run-id>/split.json`. 10M docs with 256 MB parts is Phase B.
