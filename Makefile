@@ -110,5 +110,5 @@ sbom: save
 	syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
 
 scan: save
-	grype docker-archive:image.tar --fail-on high
+	grype -c docker/grype-ignore.yaml docker-archive:image.tar --fail-on high
 	trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1

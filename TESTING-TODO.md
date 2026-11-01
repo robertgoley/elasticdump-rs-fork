@@ -12,6 +12,8 @@ Every test idea that is **not** part of the other agent's task plan. The delegat
 | Soak with resource tracking | 12 to 24 h runs logging RSS, open file descriptors and sockets over time, plus heaptrack or valgrind massif profiles; B5 only checks pass or fail. |
 | Squeezed resources | cgroup CPU throttling (`cpu.max`), a very low open-file limit during a large parallel copy, IPv6-only clusters, DNS failure or change mid-run, TLS certificate rotation mid-run. |
 | Slow servers | Responses trickled one byte at a time and stalls mid-headers, checking `--timeout` and `--idleTimeout` under high concurrency. |
+| l638 `--intervalCap` timing on a stable machine | Re-run `chaos_brk::l638_extreme_numeric_flags_never_panic` (the `--intervalCap 1` case, 40 s limit) many times on a more stable or dedicated machine, alone and in the full chaos profile, to settle the timing flake seen once under load in L-808b (the loaded egress run of `rc-diff.sh`; it passes alone in 22.9 s and passed in every gate run). Do not widen the limit before that (user decision 2026-11-01, L-808d). |
+| Full arm64 image build (**low priority**) | Build and run both images for `linux/arm64` (`scripts/build-image.sh --platform linux/arm64`, then `make test-image`) on an arm64 host or with qemu/binfmt; so far only the arm64 base images were resolved (L-808b). Deprioritized by the user on 2026-11-01 (L-808d). |
 
 ### Performance
 | Test | What it checks |

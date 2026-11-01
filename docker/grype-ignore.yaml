@@ -1,0 +1,48 @@
+# L-808d: grype ignore rules for `make scan` (user decision 2026-11-01, see SECURITY-CVE.md).
+# The default image (dhi.io/static:*-glibc-debian13) carries 5 High CVEs in libc6 / libgcc-s1
+# for which Debian/DHI publish no fix. They are accepted as known and open until a fix exists.
+# Each rule matches one CVE id in one package and only while grype reports the fix state as
+# not-fixed or wont-fix: once a fixed version is published the state becomes `fixed`, no rule
+# matches, and `make scan` fails again until the base is updated. Do not add rules without a
+# SECURITY-CVE.md entry.
+ignore:
+  - vulnerability: CVE-2026-19499
+    fix-state: not-fixed
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-19499
+    fix-state: wont-fix
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-5435
+    fix-state: not-fixed
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-5435
+    fix-state: wont-fix
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-84243
+    fix-state: not-fixed
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-84243
+    fix-state: wont-fix
+    package:
+      name: libc6
+  - vulnerability: CVE-2026-102010
+    fix-state: not-fixed
+    package:
+      name: libgcc-s1
+  - vulnerability: CVE-2026-102010
+    fix-state: wont-fix
+    package:
+      name: libgcc-s1
+  - vulnerability: CVE-2026-95619
+    fix-state: not-fixed
+    package:
+      name: libgcc-s1
+  - vulnerability: CVE-2026-95619
+    fix-state: wont-fix
+    package:
+      name: libgcc-s1
