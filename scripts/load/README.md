@@ -160,3 +160,26 @@ Kill points are driven by the staged file size or `_count`, the `KILL_AT_DOCS` r
 `allocbench.py --variant NAME=BIN[,ENV=VAL...] ... [--docs 100000,1000000] [--reps 3] [--run-id ID]` starts one engine (`es717-plain`, 2 GB heap), seeds a source index per size and runs restore, copy, dump and sliced dump (`--concurrency=8 --limit=5000`, `--slices=4`) for every variant, interleaved within each repetition. `BIN` may be `ldso:LIBDIR:BIN` to run a dynamically linked musl binary from the Alpine builder through `LIBDIR/ld-musl-*.so.1`. Per run it records docs/s, peak RSS and the memcheck plateau check (second-half peak at most 10% above the first-half peak). Build the variants with `cargo build --release` and `--features jemalloc` / `--features mimalloc`; environment variants such as `MALLOC_ARENA_MAX=2` or `MALLOC_MMAP_THRESHOLD_=131072` go after the binary. Results go to `results/load/<run-id>/allocbench.json`; the L-802a summary is `results/local/L-802a.md`.
 
 Peak RSS is the child's own `VmHWM`, sampled every 0.1 s. It does not use `getrusage`/`wait4` `ru_maxrss`: Python starts children with vfork, so Linux counts the driver's own resident set in the child's maxrss (a `/bin/true` child of a 200 MB Python reports about 210 MB). `measure.py` (used by `run.py`/`matrix.sh`) and `memcheck.py` still use `ru_maxrss`, so a cell whose real peak is below the driver's own RSS reads as the driver's RSS (follow-up; not changed in L-802a).
+
+## Fault injection under load (LOAD-007, L-804, `faults.py`)
+
+`python3 scripts/load/faults.py <tier> [--docs N] [--only cut,storm,flood,restart] [--seed 1] [--run-id ID] [--keep]`
+seeds `load-logs` on a fresh es717-plain node (data dir bind-mounted, so the node survives a restart), takes a
+reference dump, then runs restore / copy / dump under each fault and verifies every exit-0 run with `edverify diff`
+against the source. Pass rule (TASKS-LOCAL L-804): each run either completes with equal digests or exits non-zero
+with a clear message; exit 0 with a digest mismatch (`SILENT_LOSS`), a panic or an empty stderr (`UNCLEAR_FAILURE`),
+or a failed dump that leaves its final file is a failure. Non-zero exits are recorded for the lead to classify.
+
+- `cut`: an in-script TCP proxy (counted and seeded, so no toxiproxy image is needed). `conn/50` resets every 50th
+  connection at a random byte of its response (the literal spec; a run opens only ~1-15 pooled connections, so it
+  rarely fires); `conn/4` makes it fire; `req/50` cuts every 50th request either before forwarding or after the
+  server processed it (response dropped, RST). Scroll and PIT variants for copy and dump.
+- `storm`: a second node started with `IT_ES_EXTRA_SETTINGS="thread_pool.write.size=1 thread_pool.write.queue_size=1"`
+  (static settings, passed through `scripts/it/up.sh`); records the write-pool rejections.
+- `flood`: at 20-40 % progress the watermarks go to 1 % and `index.blocks.read_only_allow_delete` is set on the target
+  (what flood stage does, set directly so it lands at the chosen point), held 30 s, then lifted.
+- `restart`: `podman restart -t 10` of the node at 20-60 %. Rootless podman + pasta on the box often fails the start
+  half with "Address already in use"; the script then runs `podman start` until it succeeds (`start_retries`).
+
+Output: `results/load/<run-id>/faults.json` and a `FAULTS-SUMMARY` line; containers and the work dir are removed
+unless `--keep`. 10M with real flood-stage disk watermarks is Phase B (dedicated host).

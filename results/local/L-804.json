@@ -1,0 +1,562 @@
+{
+ "task": "L-804",
+ "card": "TST-LOAD-007",
+ "date": "2026-11-01",
+ "engine": "es717-plain",
+ "engine_version": "7.17.29",
+ "place": "box",
+ "tier": "L1L",
+ "docs": 1000000,
+ "result": "PASS",
+ "rule": "each run completes with equal digests or exits non-zero with a clear message; never exit 0 with loss (BRK-SRV-001)",
+ "harness": "scripts/load/faults.py (limit 1000, concurrency 8, retryDelay default 5000 ms)",
+ "counts": {
+  "runs": 27,
+  "complete": 16,
+  "failed_with_message": 11,
+  "silent_loss": 0,
+  "unclear": 0
+ },
+ "storm_node_write_pool": [
+  {
+   "type": "fixed",
+   "size": 1,
+   "queue_size": 1
+  }
+ ],
+ "storm_rejected_total": 112,
+ "leak": {
+  "scroll_current": 0,
+  "part_files": []
+ },
+ "notes": [
+  "conn/50 (literal spec) never fired: runs open 1-16 pooled keep-alive connections; conn/4 and req/50 cover connection resets",
+  "restart: rootless podman+pasta fails the start half of `podman restart` (port still bound); the script re-runs `podman start` (1 retry each time)",
+  "flood: block set directly on dst (index.blocks.read_only_allow_delete, as flood stage does) with watermarks at 1%, held 30 s; real watermark-driven flood stage at 10M is Phase B",
+  "L0 dev run (100k) false SILENT_LOSS on cut-req-restore was a harness bug (verify went through the cutting proxy); fixed to verify against the node directly, rerun clean"
+ ],
+ "runs": [
+  {
+   "case": "cut-conn-restore",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 17.8,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 50,
+    "connections": 9,
+    "requests": 0,
+    "cuts": 0,
+    "cuts_before": 0,
+    "cuts_after": 0
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn-copy",
+   "op": "copy",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 16.5,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 50,
+    "connections": 11,
+    "requests": 0,
+    "cuts": 0,
+    "cuts_before": 0,
+    "cuts_after": 0
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn-dump",
+   "op": "dump",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 8.0,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 50,
+    "connections": 1,
+    "requests": 0,
+    "cuts": 0,
+    "cuts_before": 0,
+    "cuts_after": 0
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn-copy-pit",
+   "op": "copy",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 16.5,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 50,
+    "connections": 11,
+    "requests": 0,
+    "cuts": 0,
+    "cuts_before": 0,
+    "cuts_after": 0
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn-dump-pit",
+   "op": "dump",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 8.2,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 50,
+    "connections": 1,
+    "requests": 0,
+    "cuts": 0,
+    "cuts_before": 0,
+    "cuts_after": 0
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn4-restore",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 16.9,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 4,
+    "connections": 11,
+    "requests": 0,
+    "cuts": 2,
+    "cuts_before": 0,
+    "cuts_after": 2
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn4-copy",
+   "op": "copy",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 16.7,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 4,
+    "connections": 16,
+    "requests": 0,
+    "cuts": 4,
+    "cuts_before": 0,
+    "cuts_after": 4
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn4-dump",
+   "op": "dump",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 0.1,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": null,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 4,
+    "connections": 2,
+    "requests": 0,
+    "cuts": 1,
+    "cuts_before": 0,
+    "cuts_after": 1
+   },
+   "message": "Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resu"
+  },
+  {
+   "case": "cut-conn4-copy-pit",
+   "op": "copy",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 16.3,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 4,
+    "connections": 14,
+    "requests": 0,
+    "cuts": 3,
+    "cuts_before": 0,
+    "cuts_after": 3
+   },
+   "message": null
+  },
+  {
+   "case": "cut-conn4-dump-pit",
+   "op": "dump",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 13.7,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "conn",
+    "every": 4,
+    "connections": 2,
+    "requests": 0,
+    "cuts": 1,
+    "cuts_before": 0,
+    "cuts_after": 1
+   },
+   "message": null
+  },
+  {
+   "case": "cut-req-restore",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 27.3,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "req",
+    "every": 50,
+    "connections": 37,
+    "requests": 1712,
+    "cuts": 34,
+    "cuts_before": 23,
+    "cuts_after": 11
+   },
+   "message": null
+  },
+  {
+   "case": "cut-req-copy",
+   "op": "copy",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 0.5,
+   "failed_writes": null,
+   "target_count": 35925,
+   "digest_equal": null,
+   "fault": null,
+   "proxy": {
+    "mode": "req",
+    "every": 50,
+    "connections": 12,
+    "requests": 91,
+    "cuts": 2,
+    "cuts_before": 2,
+    "cuts_after": 0
+   },
+   "message": "Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resu"
+  },
+  {
+   "case": "cut-req-dump",
+   "op": "dump",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 0.4,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": null,
+   "fault": null,
+   "proxy": {
+    "mode": "req",
+    "every": 50,
+    "connections": 2,
+    "requests": 48,
+    "cuts": 1,
+    "cuts_before": 0,
+    "cuts_after": 1
+   },
+   "message": "Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resu"
+  },
+  {
+   "case": "cut-req-copy-pit",
+   "op": "copy",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 147.5,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "req",
+    "every": 50,
+    "connections": 59,
+    "requests": 2485,
+    "cuts": 49,
+    "cuts_before": 18,
+    "cuts_after": 31
+   },
+   "message": null
+  },
+  {
+   "case": "cut-req-dump-pit",
+   "op": "dump",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 113.5,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": {
+    "mode": "req",
+    "every": 50,
+    "connections": 22,
+    "requests": 1025,
+    "cuts": 21,
+    "cuts_before": 8,
+    "cuts_after": 13
+   },
+   "message": null
+  },
+  {
+   "case": "storm-restore",
+   "op": "restore",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 20.2,
+   "failed_writes": null,
+   "target_count": 468324,
+   "digest_equal": null,
+   "fault": null,
+   "proxy": null,
+   "message": "Error: Elasticsearch bulk failed with HTTP 429: es_rejected_execution_exception: rejected execution of org.elasticsearch.action.bulk.TransportBulkAction$1/org.elasticsearch.action.ActionListener$RunBeforeActionListener/org.elasticsearch.action.support.TransportAction$1@393a3836/org.elasticsearch.act"
+  },
+  {
+   "case": "storm-copy",
+   "op": "copy",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 25.1,
+   "failed_writes": null,
+   "target_count": 665885,
+   "digest_equal": null,
+   "fault": null,
+   "proxy": null,
+   "message": "Error: Output task failed: Failed to write batch buffer: Elasticsearch bulk failed with HTTP 429: es_rejected_execution_exception: rejected execution of org.elasticsearch.action.bulk.TransportBulkAction$1/org.elasticsearch.action.ActionListener$RunBeforeActionListener/org.elasticsearch.action.suppor"
+  },
+  {
+   "case": "storm-restore-retry20",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 50.2,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": null,
+   "proxy": null,
+   "message": null
+  },
+  {
+   "case": "flood-restore",
+   "op": "restore",
+   "exit": 3,
+   "outcome": "failed_with_message",
+   "wall_s": 44.8,
+   "failed_writes": 8000,
+   "target_count": 992000,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 227466,
+    "block_applied_after_s": 0.1,
+    "blocked_s": 30.2
+   },
+   "proxy": null,
+   "message": "Error: 8000 document(s) were not written (see Failed Writes and the item errors above); the run continued past them. Exit status 3 means \"finished with failed writes\": pass --ignore-es-write-errors explicitly to accept them with status 0 (Node elasticdump's default), or --ignore-es-write-errors fals"
+  },
+  {
+   "case": "flood-copy",
+   "op": "copy",
+   "exit": 3,
+   "outcome": "failed_with_message",
+   "wall_s": 45.9,
+   "failed_writes": 8000,
+   "target_count": 992000,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 374139,
+    "block_applied_after_s": 0.1,
+    "blocked_s": 30.1
+   },
+   "proxy": null,
+   "message": "Error: 8000 document(s) were not written (see Failed Writes and the item errors above); the run continued past them. Exit status 3 means \"finished with failed writes\": pass --ignore-es-write-errors explicitly to accept them with status 0 (Node elasticdump's default), or --ignore-es-write-errors fals"
+  },
+  {
+   "case": "flood-restore-retry10",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 45.4,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": {
+    "fired": true,
+    "at_docs": 358146,
+    "block_applied_after_s": 0.1,
+    "blocked_s": 30.1
+   },
+   "proxy": null,
+   "message": null
+  },
+  {
+   "case": "restart-restore",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 30.3,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": {
+    "fired": true,
+    "at_docs": 302359,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 9.2
+   },
+   "proxy": null,
+   "message": null
+  },
+  {
+   "case": "restart-copy",
+   "op": "copy",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 17.6,
+   "failed_writes": null,
+   "target_count": 429409,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 404264,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 9.2
+   },
+   "proxy": null,
+   "message": "Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resu"
+  },
+  {
+   "case": "restart-dump",
+   "op": "dump",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 12.1,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 380096,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 8.9
+   },
+   "proxy": null,
+   "message": "Error: Retrieval task failed: Slice 0: the scroll continuation was not retried, because the server may already have advanced the scroll cursor and a retry could skip a page (a larger --retryAttempts cannot help); nothing was committed. Re-run the dump (the scroll context was cleared; --scrollId resu"
+  },
+  {
+   "case": "restart-copy-pit",
+   "op": "copy",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 38.9,
+   "failed_writes": null,
+   "target_count": 490000,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 463387,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 26.2
+   },
+   "proxy": null,
+   "message": "Error: Retrieval task failed: Slice 0: the point-in-time context no longer exists on the cluster: it expired (raise --pitKeepAlive when pages are slow to write), the index was deleted, or the node holding it restarted; nothing was committed. Re-run the dump: Slice 0: Elasticsearch continuation searc"
+  },
+  {
+   "case": "restart-dump-pit",
+   "op": "dump",
+   "exit": 1,
+   "outcome": "failed_with_message",
+   "wall_s": 14.9,
+   "failed_writes": null,
+   "target_count": null,
+   "digest_equal": null,
+   "fault": {
+    "fired": true,
+    "at_docs": 519352,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 9.3
+   },
+   "proxy": null,
+   "message": "Error: Retrieval task failed: Slice 0: the point-in-time context no longer exists on the cluster: it expired (raise --pitKeepAlive when pages are slow to write), the index was deleted, or the node holding it restarted; nothing was committed. Re-run the dump: Slice 0: Elasticsearch continuation searc"
+  },
+  {
+   "case": "restart-restore-retry20",
+   "op": "restore",
+   "exit": 0,
+   "outcome": "complete",
+   "wall_s": 33.6,
+   "failed_writes": null,
+   "target_count": 1000000,
+   "digest_equal": true,
+   "fault": {
+    "fired": true,
+    "at_docs": 239166,
+    "podman_restart_exit": 125,
+    "start_retries": 1,
+    "down_s": 8.8
+   },
+   "proxy": null,
+   "message": null
+  }
+ ]
+}

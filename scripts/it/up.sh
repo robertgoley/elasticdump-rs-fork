@@ -177,6 +177,9 @@ case "$PROFILE" in
       if [[ "${IT_ES_DATA_MOUNT:-0}" == 1 ]]; then
         OFF_MOUNTS=(-v "$(es_data_dir "$NAME" 1000):/usr/share/elasticsearch/data:Z")
       fi
+      # IT_ES_EXTRA_SETTINGS="k=v k=v" (load fault runs, L-804): extra static node settings,
+      # e.g. thread_pool.write.size=1 thread_pool.write.queue_size=1 for a 429 storm.
+      for kv in ${IT_ES_EXTRA_SETTINGS:-}; do OFF_MOUNTS+=(-e "$kv"); done
       engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
         -p "127.0.0.1:${PORT}:9200" "${OFF_MOUNTS[@]}" \
         -e discovery.type=single-node \

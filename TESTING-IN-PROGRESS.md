@@ -2,7 +2,7 @@
 
 The task plan delegated to the other agent (Grok 4.7 through OpenCode, using [`project/handoff/HANDOFF-GROK-OPENCODE.md`](project/handoff/HANDOFF-GROK-OPENCODE.md)). Everything below is assigned to it; it commits each task to `main` as `L-NNN: ...` and adds a row to [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Finished tasks move to [TESTING-COMPLETED.md](TESTING-COMPLETED.md). Tests outside this plan are in [TESTING-TODO.md](TESTING-TODO.md).
 
-Status as of `main` at L-802a (2026-11-01): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705, L-801, the L-455c fix-up (empty `_source` refused unless `--allowMissingSource`), L-802 (memory checks; README memory formula changed, pending lead review) L-803 (kill/resume runs) and L-802a (allocator study; default allocator unchanged, owner decision pending). **Next: L-804.** L-703 was skipped and is still open.
+Status as of `main` at L-804 (2026-11-01): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705, L-801, the L-455c fix-up (empty `_source` refused unless `--allowMissingSource`), L-802 (memory checks; README memory formula changed, pending lead review), L-803 (kill/resume runs) L-802a (allocator study; default allocator unchanged, owner decision pending) and L-804 (fault injection at 1M; non-zero exits await lead classification). **Next: L-805.** L-703 was skipped and is still open.
 
 Who: impl = bounded code card, runner = scripted campaign, lead = supervised session for security-sensitive work, review = independent read-only review of every change.
 
@@ -29,7 +29,6 @@ Scale: L0 100k docs and L1-lite 1M docs, disk at most 12 GB.
 
 | Item | Req | Who | Note |
 |---|---|---|---|
-| L-804 | LOAD-007 | impl/runner → lead | fault injection under load; failures classified by lead |
 | L-805 | LOAD-008 | runner | compression levels table |
 | L-806 | LOAD-009 | runner | splitting at scale |
 | L-807 | LOAD-010 | runner | concurrency curves (noisy here; B10 is authoritative) |
