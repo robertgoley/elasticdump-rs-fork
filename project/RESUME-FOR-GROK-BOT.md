@@ -48,7 +48,7 @@ Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/
 - Sudo scope that was approved in the old account. **Re-confirm it with the user in the new account before using it:** cgroup memory-limit OOM tests; switching apt to HTTPS and installing strace/perf/valgrind; tc network fault injection on test containers only; tmpfs/loop mounts for disk-full tests.
 
 ## Queue (2026-11-01)
-- Order (D-2 and L-811 were taken first on 2026-11-01 because L-809 did not fit the usage check; both done): L-809, L-810 (impl/runner parts; the 413/limit wording is marked for lead review), L-811, L-812, L-814, L-815 (expectations marked for lead review), L-816, L-817, then D-1 and D-2.
+- Order (D-2 and L-811 were taken first on 2026-11-01 because L-809 did not fit the usage check; both done): L-809, L-810 (impl/runner parts; the 413/limit wording is marked for lead review), L-811, L-812, L-814, L-815 (expectations marked for lead review), L-816, L-817, L-811a (end-of-run leak check for the Rust IT runs; user decision 2026-11-01), then D-1.
 - Skip (lead-only or blocked): L-703, L-813, H4, Final, the B campaigns (B0-B13).
 - Each task: one squashed `L-NNN` commit, a PROGRESS.md row, root docs (TESTING-COMPLETED Total = row count, Next line), full gates, `scripts/check-clean-tree.sh`, `scripts/sup/secret-scan.sh`, the credential grep, normal push to the fork's `main`.
 
@@ -66,7 +66,7 @@ Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/
 - L-804 fault-injection non-zero exits await lead classification.
 - L-808: Rust restore/copy CPU about 2x M6, unattributed, for the lead.
 - The `scripts/third-party-notices.py --check` drift check is not wired into CI yet.
-- L-811: TST-LOAD-017 also names IT runs; the Rust IT suite checks open contexts per test index but has no per-run teardown leak check (lead to decide).
+- L-811: TST-LOAD-017 also names IT runs; the Rust IT suite checks open contexts per test index but had no per-run teardown leak check. User decision 2026-11-01: add it as L-811a (queued after L-817). Branches `wip/D-2` and `wip/L-811` deleted with user approval; `wip/L-809` kept.
 - Lead-only/blocked: L-703, L-813, H4, Final, B campaigns; the sudo scope must be re-confirmed (below).
 
 ## Work style

@@ -38,6 +38,7 @@ Scale: L0 100k docs and L1-lite 1M docs, disk at most 12 GB.
 | L-815 | DATA-003 | impl/runner → lead | edge catalogue `--profile edge` (tools/edgen/src/edge.rs exists; check first); expectations reviewed by lead |
 | L-816 | DATA-007 | impl | OSB generate-data cross-check |
 | L-817 | DATA-008 | impl | corpus generator with `--seed` |
+| L-811a | LOAD-017 | impl | user decision 2026-11-01: end-of-run leak check for the Rust integration test runs (open scroll/PIT contexts, `.part` files incl. hidden `.name.part-*`, stray hidden indices) after the whole IT run, failing the run on a leak; reuse the L-811 checks; after L-817, before D-1 |
 | Final | gate | lead | bundle after A8 → B2 (full), B10 |
 
 ## 4. Big-host campaigns (B0 to B13)
