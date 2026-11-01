@@ -21,3 +21,10 @@ These are final. Do not reopen them; implement or keep as stated.
 | D-5 | impl (review agent reviews) | After an OOM kill, leave the hidden `.part` file in place; on the next run targeting the same output, print a warning naming the leftover `.part` file. Do not delete or overwrite it automatically. |
 
 _Owner column re-labelled 2026-10-31 for the Grok 4.7 / OpenCode agent split (impl, runner, review, lead); decisions unchanged._
+
+## Decisions 2026-11-01 (L-808b to L-808d)
+- Default build and image: glibc + mimalloc, image on `dhi.io/static:20250419-glibc-debian13` (supersedes D-3's Alpine default). Alpine keeps musl's allocator as the non-default `-alpine` variant.
+- The default image's 5 no-fix High CVEs (libc6 CVE-2026-19499, CVE-2026-5435, CVE-2026-84243; libgcc-s1 CVE-2026-102010, CVE-2026-95619) are accepted until upstream fixes them; `make scan` ignores only those, only while not-fixed/wont-fix.
+- License: the project stays MIT; Apache-2.0 only for the 12 fixtures copied from elasticsearch-dump.
+- TESTING-TODO, not now: l638 `--intervalCap 1` timing on a stable machine (do not widen the limit); full arm64 image build (low priority).
+- Usage: past 90% weekly usage is OK if every task completes before 100% (start a task only if usage + 1.5 × estimate < 98%).

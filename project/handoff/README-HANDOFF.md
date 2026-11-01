@@ -37,6 +37,12 @@ Then:
 - Engine images listed in images.lock.
 
 
+## Current state (2026-11-01)
+This bundle header describes b4134af. For the current state read `project/RESUME-FOR-GROK-BOT.md`: done through
+L-808d on `main`, the queue (L-809 next) and skip list, the usage rule, the 2026-11-01 user decisions and the open
+items awaiting the user or lead. In-progress tasks push WIP commits to `wip/L-NNN` on the fork; `main` gets one
+squashed `L-NNN` commit per task.
+
 ## Status
 A0-A5 done; A6 done through L-642 (HEAD b4134af). The original agent has stopped. The local Grok/OpenCode setup owns
 everything from **L-643** on, plus A7, A8, the B tasks and D-1..D-5 (DECISIONS.md). Start with G-00 (lead), then T-L643.
