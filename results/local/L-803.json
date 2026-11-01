@@ -1,0 +1,309 @@
+{
+ "task": "L-803",
+ "card": "TST-LOAD-006",
+ "date": "2026-10-31",
+ "engine": "es717-plain",
+ "place": "box",
+ "tiers": {
+  "L0": {
+   "docs": 100000,
+   "result": "PASS",
+   "failures": [],
+   "a": {
+    "kills": 10,
+    "kill_at_docs": [
+     7551,
+     13447,
+     17092,
+     27956,
+     45454,
+     49589,
+     63643,
+     73739,
+     75985,
+     81269
+    ],
+    "all_final_absent": true,
+    "all_leftovers_named": true,
+    "all_digest_equal": true
+   },
+   "b": {
+    "kills": 5,
+    "all_digest_equal": true
+   },
+   "c": [
+    {
+     "concurrency": 8,
+     "signal": "SIGINT",
+     "stops": [
+      [
+       130,
+       0,
+       31000,
+       31000
+      ],
+      [
+       130,
+       31000,
+       19000,
+       50000
+      ],
+      [
+       130,
+       50000,
+       41000,
+       91000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 8,
+     "signal": "SIGTERM",
+     "stops": [
+      [
+       143,
+       0,
+       17000,
+       17000
+      ],
+      [
+       143,
+       17000,
+       45000,
+       62000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 1,
+     "signal": "SIGINT",
+     "stops": [
+      [
+       130,
+       0,
+       10000,
+       10000
+      ],
+      [
+       130,
+       10000,
+       67000,
+       77000
+      ],
+      [
+       130,
+       77000,
+       17000,
+       94000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 1,
+     "signal": "SIGTERM",
+     "stops": [
+      [
+       143,
+       0,
+       8000,
+       8000
+      ],
+      [
+       143,
+       8000,
+       48000,
+       56000
+      ],
+      [
+       143,
+       56000,
+       40000,
+       96000
+      ]
+     ],
+     "digest_equal": true
+    }
+   ],
+   "c1": {
+    "kills": 3,
+    "all_digest_equal": true
+   },
+   "d": {
+    "recipe_digest_equal": true,
+    "kill9_same_id": {
+     "killed": true,
+     "staged_docs_of_killed_run": 40000,
+     "rerun_exit": 0,
+     "rerun_docs": 58000,
+     "first_page_docs": 1000,
+     "duplicates": 0,
+     "missing": 41000
+    }
+   },
+   "leaks": {
+    "scroll_current": 10,
+    "part_files": []
+   },
+   "engine_version": "7.17.29",
+   "heap": "1024m"
+  },
+  "L1L": {
+   "docs": 1000000,
+   "result": "PASS",
+   "failures": [],
+   "a": {
+    "kills": 10,
+    "kill_at_docs": [
+     75512,
+     134473,
+     170927,
+     279562,
+     454541,
+     495891,
+     636433,
+     737397,
+     759851,
+     812690
+    ],
+    "all_final_absent": true,
+    "all_leftovers_named": true,
+    "all_digest_equal": true
+   },
+   "b": {
+    "kills": 5,
+    "all_digest_equal": true
+   },
+   "c": [
+    {
+     "concurrency": 8,
+     "signal": "SIGINT",
+     "stops": [
+      [
+       130,
+       0,
+       304000,
+       304000
+      ],
+      [
+       130,
+       304000,
+       513000,
+       817000
+      ],
+      [
+       130,
+       817000,
+       82000,
+       899000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 8,
+     "signal": "SIGTERM",
+     "stops": [
+      [
+       143,
+       0,
+       171000,
+       171000
+      ],
+      [
+       143,
+       171000,
+       224000,
+       395000
+      ],
+      [
+       143,
+       395000,
+       290000,
+       685000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 1,
+     "signal": "SIGINT",
+     "stops": [
+      [
+       130,
+       0,
+       78000,
+       78000
+      ],
+      [
+       130,
+       78000,
+       7000,
+       85000
+      ]
+     ],
+     "digest_equal": true
+    },
+    {
+     "concurrency": 1,
+     "signal": "SIGTERM",
+     "stops": [
+      [
+       143,
+       0,
+       61000,
+       61000
+      ],
+      [
+       143,
+       61000,
+       560000,
+       621000
+      ],
+      [
+       143,
+       621000,
+       115000,
+       736000
+      ]
+     ],
+     "digest_equal": true
+    }
+   ],
+   "c1": {
+    "kills": 3,
+    "all_digest_equal": true
+   },
+   "d": {
+    "recipe_digest_equal": true,
+    "kill9_same_id": {
+     "killed": true,
+     "staged_docs_of_killed_run": 394000,
+     "rerun_exit": 0,
+     "rerun_docs": 604000,
+     "first_page_docs": 1000,
+     "duplicates": 0,
+     "missing": 395000
+    }
+   },
+   "leaks": {
+    "scroll_current": 0,
+    "part_files": []
+   },
+   "engine_version": "7.17.29",
+   "heap": "2048m"
+  }
+ },
+ "notes": [
+  "kill points come from the staged file size (dump) or the target _count (restore): the tool prints no per-batch progress (runner hook KILL_AT_DOCS)",
+  "c: printed --offset always equals previous offset + Total Writes; a stop that lands after the last bulk request exits 0 with a complete run (recorded as finished_before_stop)",
+  "d: after kill -9, rerunning with the same --scrollId continues from the cluster cursor; the pages the killed run fetched are lost (missing ~= staged docs of the killed run), as the README says",
+  "10M (L1) needs a dedicated load host (Phase B)",
+  "resume for cluster input on OpenSearch PIT depends on owner Q4 (default sort) and is not tested",
+  "leak check: no part files left; at L0 the engine still had 10 open scroll contexts at the end, which matches the 10 kill -9 dumps in (a) (a killed process cannot clear its scroll; it expires after --scrollTime, default 10m). At L1L they had already expired (0)."
+ ],
+ "git": "85a8dba",
+ "stops_format": "[exit, offset_before, total_writes, printed_offset]"
+}

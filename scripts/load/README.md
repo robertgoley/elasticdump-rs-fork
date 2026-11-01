@@ -142,3 +142,15 @@ Split file names follow Node elasticdump: `<base>.split-<n><ext>[.gz|.zst]`. An 
 - `memcheck.py plateau -- CMD...` (or `--from SAMPLES`): one long run, sampled every 0.1 s. It passes when the peak after the first half of the run is at most `--flat-pct` above the peak before it, which separates bounded growth from a leak on 10M-doc runs.
 
 Results go to `results/load/<run-id>/memcheck-*.json`; the L-802 summary is `results/local/L-802.json`. Set `MALLOC_ARENA_MAX=2` to compare with glibc limited to two malloc arenas; the files mode records the setting. On this box a 10M-doc run is limited to single cells. The full L1 tier at 10M docs needs a dedicated load host.
+
+## Kill and resume checks (LOAD-006, `resume.py`)
+
+`resume.py <tier> [--docs N] [--points 10] [--seed 1] [--only a,b,c,c1,d]` starts one engine (`es717-plain` by default), seeds `load-logs` and runs the README resume recipes verbatim, checking every result with `edverify diff`:
+
+- `a`: a dump to a file is killed with `kill -9` at `--points` random places (picked from the staged `.NAME.part-PID-TS` file's size, since the tool prints no progress). The final file must be absent and the leftover must exist; the rerun with `--overwrite` must name the leftover in its warning and give the full digest.
+- `b`: a restore (`--concurrency=8`) is killed with `kill -9` when the target's `_count` reaches a random point; rerunning the same command must give the same digest (writes go by `_id`).
+- `c`: a restore is stopped with SIGINT or SIGTERM (concurrency 8 and 1) up to three times, each rerun using the printed `--offset N`; N must equal the previous offset plus that run's `Total Writes`.
+- `c1`: after `kill -9`, the rerun uses `--offset` = the target's refreshed `_count` (README "count from what the cluster has", concurrency 1).
+- `d`: `--scrollId` from your own first `_search?scroll=` page; first page + tool output must equal the index. It also records what a killed scroll dump loses (the pages it had fetched) when rerun with the same id.
+
+Kill points are driven by the staged file size or `_count`, the `KILL_AT_DOCS` runner hook from the card. Results go to `results/load/<run-id>/resume.json`; the L-803 summary is `results/local/L-803.json`. L0 and L1L (1M) run on this box; 10M (L1) needs a dedicated load host. The resume recipe for cluster input on OpenSearch PIT depends on owner question Q4 (default sort) and is not covered here.
