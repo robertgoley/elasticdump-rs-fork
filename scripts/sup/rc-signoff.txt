@@ -1,0 +1,5 @@
+# L-705 (TST-SUP-016): signed-off behaviour changes between releases.
+# One rule per line: kind<TAB>value-glob<TAB>reason (who reviewed it, and why it is fine).
+# kind: exec | path | connect | bind | socket | process | syscall | dns | noroute | unexpected
+# (noroute/unexpected take the egress phase name as value). `*` and `?` are the only wildcards.
+# Rules apply to one release step: clear the file once the new baseline profile is committed.

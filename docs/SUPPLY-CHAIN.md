@@ -272,6 +272,71 @@ Not covered here:
   installing it in the offline sandbox needs a vendored copy. Until it is added, the embedded
   dependency list comes from the SBOM job (SUP-011) instead.
 
+## Release-candidate behaviour diff (SUP-016, L-705)
+
+For every release candidate, `scripts/sup/rc-diff.sh` runs SUP-002 (`trace.sh`) and SUP-001
+(`egress.sh --tiers T1,T7,T2`). It condenses the two runs into a **behaviour profile** with
+`scripts/sup/rc-profile.py build`, then diffs that profile against the previous release's
+profile, which is the highest-versioned `results/profiles/*.json` (or `--baseline`).
+
+The profile is JSON (schema 1) with these parts:
+- `trace.entries`: every distinct `kind<TAB>value` from the trace's `observed.tsv`. Kinds are exec, path,
+  connect, bind, socket, process and syscall, with the trace's placeholders (`@BIN`, `@WORK`, `@PORT`, …).
+- `trace.cases`: the same entries listed per command case, used for context in the report.
+- `egress.dns`: every name the processes tried to resolve.
+- `egress.phases`: rc, no-route count and unexpected names per egress phase.
+
+Run-specific values are normalised so that two runs of the same code give the same profile:
+- staging-file pid/nanos (`.part-*`)
+- files inside the system CA directories (these change with the ca-certificates package)
+- the host's cgroup path (`/sys/fs/cgroup/*/memory.max`)
+- numeric suffixes of pod names
+
+The diff fails (exit 1) on any **addition** that no line in `scripts/sup/rc-signoff.txt` covers.
+An addition is one of:
+- a new trace entry: a new syscall class, path, socket kind, connect target, exec or child process
+- a new DNS name
+- an egress phase with more no-route attempts or new unexpected names than before
+
+Removals are listed but pass. A sign-off line is `kind<TAB>value-glob<TAB>reason`, and a
+line without a reason is rejected. Each rule covers one release step: once the new baseline
+is committed, the file is cleared.
+
+Artefacts in `$RC_DIFF_DIR` (default `$IT_DIR/rc-diff`): `profile.json`, `diff.md`, `diff.json`,
+`rc-diff-summary.log`, and the trace/egress logs. `--trace-dir/--egress-dir` builds the profile
+from runs that already happened (for example downloaded nightly `trace` and `egress` artefacts).
+`--write-baseline` stores the profile as `results/profiles/<release>.json`, which is committed
+with the release.
+
+`rc-profile.py --selftest` plants each kind of change and checks the outcome:
+- caught: a new syscall, path, exec, connect target and DNS name, and a phase with more no-route attempts and unexpected names
+- passes: identical profiles, and a removal
+- also checked: a signed-off change passes, a rule of the wrong kind does not cover a change, a rule without a reason is refused, and the normalisation works
+
+CI: the `behaviour-diff` job in `release.yml` (manual dispatch, the same trigger as the release
+build) runs the self-test and `rc-diff.sh`, adds `diff.md` to the job summary, and uploads `rc-diff`.
+
+Entries that only some runs of the same code show are listed in `VOLATILE` in `rc-profile.py`,
+each with its reason. They are reported as `volatile` and need no sign-off. Today the list has
+one entry: `/proc/sys/vm/overcommit_memory`, which glibc reads when a thread arena shrinks.
+
+Baseline `results/profiles/v0.1.0.json` (2026-10-31): the binary code is that of commit fdab304.
+The profile comes from one full `rc-diff.sh` run on this box (`trace.sh` OK; `egress.sh` T1, T7, T2
+OK with all 7 phases at 0 unexpected queries and 0 no-route attempts). It has 98 trace entries in
+20 cases and one DNS name (`no-such-host.invalid`, from a test).
+
+Stability checks:
+- A second trace run of the same tree differs only in the volatile entry.
+- The L-702 trace of commit 948f73f (an earlier run in another work directory) gives the same profile with 0 changes.
+
+The T2 image phase used the local image built at 16:03 EDT on 2026-10-31, before L-642b. The
+image's own process is not traced, and its egress counters were 0.
+
+Limits:
+- The profile covers only the trace and egress command matrices. A new code path that those matrices do not run cannot show up in it.
+- `@WORK` output paths are part of the profile, so changing the trace matrix itself (new cases, different split counts) shows up as a diff and needs a new baseline.
+- Profiles from a different runner image (other glibc, other library paths) can differ in loader paths. Compare candidates against a baseline made on the same runner image.
+
 ## SBOM diff per PR (SUP-011, L-207)
 
 `scripts/sup/sbom-pr.sh <base-ref>` checks the base out into a temporary worktree and compares it with HEAD. It builds the following for both sides:
