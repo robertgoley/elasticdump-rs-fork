@@ -13,6 +13,11 @@ Every test idea that is **not** part of the other agent's task plan. The delegat
 | Squeezed resources | cgroup CPU throttling (`cpu.max`), a very low open-file limit during a large parallel copy, IPv6-only clusters, DNS failure or change mid-run, TLS certificate rotation mid-run. |
 | Slow servers | Responses trickled one byte at a time and stalls mid-headers, checking `--timeout` and `--idleTimeout` under high concurrency. |
 
+### Performance
+| Test | What it checks |
+|---|---|
+| Networked backup and restore with compression at scale | Tool and cluster on **separate machines** over a real network, with bandwidth and latency measured first (for example 1 Gbit and 10 Gbit links, iperf3 and ping); a multi-node cluster; 10M+ docs and multi-GB files. Dump (scroll unsliced, scroll with slices = shards, PIT with 4/8/16 slices) and restore (`--concurrency` 1/4/8/16) with `--compressionType` none, gzip levels 1 and 6, and zstd levels 1, 3 and 9. Record throughput in MB/s and docs/s, client CPU-s and server CPU per node, and network utilisation, and find out whether compression pays off once the network, not the CPU or the cluster, is the bottleneck. Baseline: the box results in [`results/local/L-805.md`](results/local/L-805.md) (compression levels) and [`results/local/L-807.md`](results/local/L-807.md) (concurrency curves). Those ran tool and engine on one 8-vCPU machine over loopback, with no real network, so they measure codec CPU and engine limits, not transfer cost. |
+
 ### Malicious or broken input
 | Test | What it checks |
 |---|---|
