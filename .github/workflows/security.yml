@@ -40,6 +40,12 @@ jobs:
         with: { name: sbom-cargo, path: "sbom-cargo.cdx.json" }
 
   image:
+    # L-808h: Dependabot PRs get no repository secrets (the dhi.io pull login), so the
+    # dhi.io login below would fail. Skip the whole job on PRs opened by Dependabot (the
+    # PR author, so a human re-run of a Dependabot PR is skipped too). Every other event
+    # (pushes to main/rewrite, schedule, dispatch, human PRs) still fails hard when the
+    # secrets are missing. The dependencies, sbom-diff and secret-scan jobs still run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
