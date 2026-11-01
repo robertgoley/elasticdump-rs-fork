@@ -78,6 +78,10 @@ memchr = "2"
 rust-ini = "0.21"
 semver = "1"
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
+# Optional global allocators (L-802a; features `jemalloc` / `mimalloc`, off by default: the
+# default stays the platform allocator, glibc or musl). Benchmarks: results/local/L-802a.md.
+tikv-jemallocator = { version = "0.7", optional = true }
+mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -92,6 +96,9 @@ default = ["encrypted-keys"]
 # Decrypt encrypted PKCS#8 client keys (`--key` + `--pass`). Pulls in the RustCrypto
 # aes/scrypt/pbkdf2/sha2 stack; `--no-default-features` builds leave it out (SUP-023).
 encrypted-keys = ["dep:pkcs8"]
+# Global allocator (L-802a). At most one; neither changes behaviour, only memory use and speed.
+jemalloc = ["dep:tikv-jemallocator"]
+mimalloc = ["dep:mimalloc"]
 # Test tiers (TST-INF-001; .config/nextest.toml). None of these change the shipped binary.
 # Podman-backed integration suite (tests/it, tests/integration_test.rs); see scripts/it/run.sh.
 it = []

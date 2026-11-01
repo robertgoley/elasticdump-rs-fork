@@ -5,6 +5,16 @@
 /// parsers recurse per nesting level, and a deeply nested document (up to the 1000 levels
 /// Elasticsearch accepts) overflowed the default 8 MiB / 2 MiB stacks. Stacks are reserved,
 /// not committed, so this does not raise resident memory.
+// Optional global allocators (L-802a); the default build uses the platform allocator.
+#[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
+compile_error!("features `jemalloc` and `mimalloc` are mutually exclusive");
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const MAIN_STACK: usize = 256 << 20;
 const WORKER_STACK: usize = 64 << 20;
 

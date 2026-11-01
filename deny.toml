@@ -89,6 +89,7 @@ allow-build-scripts = [
     { crate = "icu_normalizer_data" }, # cfg probe for baked data
     { crate = "icu_properties_data" }, # cfg probe for baked data
     { crate = "libc" }, # rustc version / target cfg probe
+    { crate = "libmimalloc-sys" }, # NATIVE: compiles bundled mimalloc C via cc; optional feature `mimalloc` only (L-802a)
     { crate = "num-traits" }, # autocfg rustc probe only (dev-only, via proptest; L-501)
     { crate = "parking_lot_core" }, # cfg probe
     { crate = "portable-atomic" }, # target-feature cfg probe
@@ -102,6 +103,7 @@ allow-build-scripts = [
     { crate = "serde_core" }, # rustc version probe
     { crate = "serde_json" }, # cfg probe
     { crate = "thiserror" }, # rustc nightly-feature probe
+    { crate = "tikv-jemalloc-sys" }, # NATIVE: runs jemalloc's configure + make (sh); optional feature `jemalloc` only (L-802a)
     { crate = "tiny-keccak" }, # cfg probe
     { crate = "zerocopy" }, # rustc version probe
     { crate = "zmij" }, # cfg probe
@@ -113,11 +115,17 @@ allow-build-scripts = [
 #  - untrusted: maintainer shell scripts under mk/;
 #  - ring: perlasm generators; the crates.io package carries pregenerated
 #    assembly and build.rs only runs perl when building from a git checkout;
-#  - zerocopy: maintainer CI scripts.
+#  - zerocopy: maintainer CI scripts;
+#  - tikv-jemalloc-sys (optional feature `jemalloc` only, L-802a): unlike the
+#    others, its build.rs DOES run jemalloc's autoconf `configure` script and
+#    `make` (with sh); the namespace/mangle .sh helpers run during that build and
+#    the rest are upstream maintainer scripts. The default build never compiles
+#    this crate.
 bypass = [
     { crate = "untrusted@0.9.0", allow-globs = ["mk/*"] },
     { crate = "ring@0.17.14", allow-globs = ["crypto/**/*.pl"] },
     { crate = "zerocopy@0.8.63", allow-globs = ["cargo.sh", "ci/*.sh"] },
+    { crate = "tikv-jemalloc-sys@0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8", allow-globs = ["configure/configure", "jemalloc/autogen.sh", "jemalloc/bin/*.in", "jemalloc/build-aux/*", "jemalloc/include/jemalloc/*.sh", "jemalloc/include/jemalloc/internal/*.sh", "jemalloc/scripts/**", "jemalloc/src/ticker.py", "jemalloc/test/**"] },
 ]
 
 [sources]

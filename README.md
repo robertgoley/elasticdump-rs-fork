@@ -497,6 +497,16 @@ arenas the same 10M-doc restore reached 537 MB and was still growing slowly, so 
 concurrent restores in tight memory (glibc builds; restores and copies ran at the same speed within 10%, sliced
 dumps within this box's noise; musl/Alpine builds were not measured). File-to-file runs stay at 14–40 MB for ~1 KB
 docs at any size up to 10M docs.
+Allocator tuning (L-802a, `results/local/L-802a.md`; ~1 KB docs, `--concurrency 8 --limit 5000`, defaults unchanged):
+on glibc builds, `MALLOC_MMAP_THRESHOLD_=131072` lowers memory use the most. Peak RSS at 10M docs was 158 MB restoring
+(glibc default 520 MB, `MALLOC_ARENA_MAX=2` 318 MB), 226 MB copying (684 / 432 MB), 20 MB dumping (75 / 50 MB) and
+40 MB for `--slices 4` (165 / 65 MB), and it stays flat from 1M to 10M docs. The tradeoff: plain dumps ran 15–20%
+slower (137–140k docs/s against 162–178k); restores, copies and sliced dumps ran at the same speed within this box's
+noise (restore 65k and copy 55–60k docs/s at 10M, like the default; one 10M restore at 21k docs/s was a box stall that
+hit other allocators the same way). The musl builds (release binaries and the default Alpine image) already use about
+as little memory as that setting (154 / 222 / 18 / 34–44 MB at 10M) with the same tradeoff. Builds with
+`--features mimalloc` or `--features jemalloc` ran at the same speed as glibc; mimalloc used 365 MB restoring and
+419 MB copying at 10M, and more than glibc on dumps (131 MB, sliced 212 MB).
 When the first batch shows that the estimate (still computed as × 1.5 + 10 MB in `src/memplan.rs` until the lead
 reviews the change above) exceeds the memory available (the cgroup's `memory.max` or
 `MemAvailable`, whichever is smaller), a warning names the flags to lower; under real cgroup caps of 64–256 MB every

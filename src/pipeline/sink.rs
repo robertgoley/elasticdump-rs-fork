@@ -47,6 +47,8 @@ impl Sink {
                     let mut scratch = std::mem::take(&mut f.scratch);
                     source_only_lines(buf, &mut scratch);
                     let r = f.write_batch(&scratch).await;
+                    // L-802a: an outlier batch must not keep its size resident.
+                    super::json_split::release_excess(&mut scratch);
                     f.scratch = scratch;
                     r?;
                 } else {

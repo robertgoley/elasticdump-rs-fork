@@ -22,6 +22,21 @@ pub struct ValueSplitter {
     max_value: Option<usize>,
 }
 
+/// Capacity a reused byte buffer may keep whatever it holds (L-802a).
+pub(crate) const RETAIN_FLOOR: usize = 4 << 20;
+
+/// Gives back the capacity a reused buffer kept after an outlier (L-802a). One large
+/// document (up to `--maxDocBytes`, hundreds of MB) grew the buffer to its size, and
+/// `clear`/`drain` keep the capacity, so it stayed resident for the rest of the run.
+/// Keeps `max(RETAIN_FLOOR, 2 x len)` and only shrinks above twice that, so a buffer
+/// in its normal size range is never reallocated.
+pub(crate) fn release_excess(buf: &mut Vec<u8>) {
+    let keep = RETAIN_FLOOR.max(buf.len().saturating_mul(2));
+    if buf.capacity() > keep.saturating_mul(2) {
+        buf.shrink_to(keep);
+    }
+}
+
 fn is_ws(b: u8) -> bool {
     matches!(b, b' ' | b'\n' | b'\r' | b'\t') || b == 0xEF || b == 0xBB || b == 0xBF
 }
@@ -62,6 +77,7 @@ impl ValueSplitter {
                 *s = 0;
             }
         }
+        release_excess(&mut self.buf);
     }
 
     /// Next complete value, if any. With `eof`, a trailing scalar without a
@@ -76,6 +92,7 @@ impl ValueSplitter {
                             let v = self.buf[start..].to_vec();
                             self.reset_value();
                             self.buf.clear();
+                            release_excess(&mut self.buf);
                             self.pos = 0;
                             return Ok(Some(v));
                         }
@@ -308,6 +325,61 @@ mod tests {
         let mut s = ValueSplitter::with_max_value(Some(4));
         s.push(b"1234");
         assert_eq!(s.next_value(true).unwrap().unwrap(), b"1234");
+    }
+
+    #[test]
+    fn buffer_capacity_is_given_back_after_a_large_document() {
+        // L-802a: one 32 MiB document must not keep 32 MiB+ resident for the rest of the run.
+        let mut s = ValueSplitter::new();
+        let mut big = b"{\"big\":\"".to_vec();
+        big.resize(big.len() + (32 << 20), b'x');
+        big.extend_from_slice(b"\"}\n");
+        let chunks: Vec<&[u8]> = big.chunks(256 << 10).collect();
+        let (last, head) = chunks.split_last().unwrap();
+        for c in head {
+            s.push(c);
+            assert!(s.next_value(false).unwrap().is_none());
+        }
+        assert!(
+            s.buf.capacity() >= 31 << 20,
+            "the large value is buffered whole"
+        );
+        s.push(last);
+        assert_eq!(s.next_value(false).unwrap().unwrap().len(), big.len() - 1);
+        assert!(s.next_value(false).unwrap().is_none());
+        let small = b"{\"a\":1}\n".repeat(1000);
+        for _ in 0..4 {
+            s.push(&small);
+            while let Some(v) = s.next_value(false).unwrap() {
+                assert_eq!(v, b"{\"a\":1}");
+            }
+        }
+        assert!(
+            s.buf.capacity() <= 2 * RETAIN_FLOOR,
+            "capacity {} kept after the large document",
+            s.buf.capacity()
+        );
+    }
+
+    #[test]
+    fn release_excess_leaves_normal_buffers_alone() {
+        // A buffer in its usual range keeps its capacity (no realloc per batch) ...
+        let mut b = Vec::with_capacity(RETAIN_FLOOR);
+        b.extend_from_slice(&[1u8; 1000]);
+        release_excess(&mut b);
+        assert_eq!(b.capacity(), RETAIN_FLOOR);
+        // ... and so does one whose contents fill most of it.
+        let mut b = vec![0u8; 20 << 20];
+        let cap = b.capacity();
+        release_excess(&mut b);
+        assert_eq!(b.capacity(), cap);
+        assert_eq!(b.len(), 20 << 20);
+        // An emptied outlier shrinks to the floor and keeps its contents.
+        let mut b = vec![7u8; 64 << 20];
+        b.truncate(10);
+        release_excess(&mut b);
+        assert!(b.capacity() <= RETAIN_FLOOR + 4096, "{}", b.capacity());
+        assert_eq!(b, vec![7u8; 10]);
     }
 
     #[test]

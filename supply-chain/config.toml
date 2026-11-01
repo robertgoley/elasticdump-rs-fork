@@ -408,6 +408,11 @@ version = "0.2.191"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
+[[exemptions.libmimalloc-sys]]
+version = "0.1.49"
+criteria = "safe-to-deploy"
+notes = "L-802a 2026-11-01: optional global allocator (feature jemalloc/mimalloc, off by default; not in the shipped binary); audit before turning it on by default"
+
 [[exemptions.linux-raw-sys]]
 version = "0.12.1"
 criteria = "safe-to-deploy"
@@ -437,6 +442,11 @@ notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (o
 version = "2.8.3"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.mimalloc]]
+version = "0.1.52"
+criteria = "safe-to-deploy"
+notes = "L-802a 2026-11-01: optional global allocator (feature jemalloc/mimalloc, off by default; not in the shipped binary); audit before turning it on by default"
 
 [[exemptions.miniz_oxide]]
 version = "0.9.1"
@@ -822,6 +832,16 @@ notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (o
 version = "2.0.21"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.tikv-jemalloc-sys]]
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+criteria = "safe-to-deploy"
+notes = "L-802a 2026-11-01: optional global allocator (feature jemalloc/mimalloc, off by default; not in the shipped binary); audit before turning it on by default"
+
+[[exemptions.tikv-jemallocator]]
+version = "0.7.0"
+criteria = "safe-to-deploy"
+notes = "L-802a 2026-11-01: optional global allocator (feature jemalloc/mimalloc, off by default; not in the shipped binary); audit before turning it on by default"
 
 [[exemptions.tiny-keccak]]
 version = "2.0.2"

@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 188 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-803 (`git log -1 --grep '^L-803'`; the next commit fills in its sha).
+Total: 189 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-802a (`git log -1 --grep '^L-802a'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -235,4 +235,5 @@ Total: 188 task commits (including follow-up fixes with a letter suffix). Last u
 |---|---|---|---|
 | L-801 | `8cad039` | 2026-10-31 | LOAD-004 scenario matrix with correctness and perf gates (25 cells; five baselines; L1 10M needs a dedicated load host) |
 | L-802 | `64e7f27` | 2026-10-31 | LOAD-005 memory checks (scripts/load/memcheck.py matrix/files/plateau): README formula changed to x3 + 15 MB (lead review); concurrent restores grow with doc count and plateau at 10M only with MALLOC_ARENA_MAX=2; full L1 at 10M needs a dedicated load host |
-| L-803 | this commit (`git log --grep '^L-803'`) | 2026-10-31 | LOAD-006 kill/resume runs (scripts/load/resume.py): dump kill -9 x10 + `--overwrite`, restore kill -9 rerun, `--offset N` after SIGINT/SIGTERM and after kill -9 from `_count`, `--scrollId` recipe; all digests equal at 100k and 1M on es717-plain; 10M needs a dedicated load host; OpenSearch PIT resume waits on owner Q4 |
+| L-802a | this commit (`git log --grep '^L-802a'`) | 2026-11-01 | Allocator study for LOAD-005 growth (scripts/load/allocbench.py): heaptrack shows no leak (restore heap flat, copy heap bounded by the bufferSize queues); RSS growth is glibc malloc retention; optional `jemalloc`/`mimalloc` cargo features (default unchanged); ValueSplitter/FileSink scratch buffers give back capacity after an outsized document; 100k/1M x3 reps and 10M x1 rep for 8 allocator/build variants; builds verified on x86_64/aarch64 gnu/musl |
+| L-803 | `03156fc` | 2026-10-31 | LOAD-006 kill/resume runs (scripts/load/resume.py): dump kill -9 x10 + `--overwrite`, restore kill -9 rerun, `--offset N` after SIGINT/SIGTERM and after kill -9 from `_count`, `--scrollId` recipe; all digests equal at 100k and 1M on es717-plain; 10M needs a dedicated load host; OpenSearch PIT resume waits on owner Q4 |
