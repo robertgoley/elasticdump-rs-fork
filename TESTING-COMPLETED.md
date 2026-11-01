@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 183 task commits (including follow-up fixes with a letter suffix). Last updated from commit `73c3ad6`.
+Total: 184 task commits (including follow-up fixes with a letter suffix). Last updated from commit `8cad039`.
 
 ## Setup and planning (L-0xx)
 
