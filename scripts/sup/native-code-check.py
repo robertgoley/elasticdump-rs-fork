@@ -13,7 +13,9 @@ The graph is the feature-resolved one from `cargo tree -e normal,build --target 
 import json, os, subprocess, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-ALLOW = {"zstd-sys": "libzstd (vendored C), reviewed L-213", "ring": "BoringSSL-derived C/asm crypto, reviewed L-213"}
+ALLOW = {"zstd-sys": "libzstd (vendored C), reviewed L-213", "ring": "BoringSSL-derived C/asm crypto, reviewed L-213",
+         # L-808b (user decision): mimalloc is the default global allocator on *-linux-gnu.
+         "libmimalloc-sys": "mimalloc (vendored C, MIT), default allocator on glibc Linux, added L-808b"}
 NATIVE_BUILD = {"cc", "cmake", "bindgen", "pkg-config", "autotools", "vcpkg"}
 EXT = (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".S", ".s", ".asm")
 

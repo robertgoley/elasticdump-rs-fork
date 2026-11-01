@@ -1,20 +1,37 @@
 // SUP-006: no unsafe Rust in this crate; all unsafe comes from audited deps.
 #![forbid(unsafe_code)]
 
+// Global allocator (L-802a, L-808b): mimalloc by default on glibc Linux, the platform
+// allocator elsewhere (musl keeps its own). `jemalloc` / `mimalloc` force one on any target;
+// `system-allocator` keeps glibc malloc on *-linux-gnu.
+#[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
+compile_error!("features `jemalloc` and `mimalloc` are mutually exclusive");
+#[cfg(all(
+    feature = "system-allocator",
+    any(feature = "jemalloc", feature = "mimalloc")
+))]
+compile_error!("feature `system-allocator` excludes `jemalloc` and `mimalloc`");
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+#[cfg(all(
+    not(feature = "jemalloc"),
+    any(
+        feature = "mimalloc",
+        all(
+            target_os = "linux",
+            target_env = "gnu",
+            not(feature = "system-allocator")
+        )
+    )
+))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Stack for the thread driving the runtime and for its workers (TST-BRK-IN-008): the JSON
 /// parsers recurse per nesting level, and a deeply nested document (up to the 1000 levels
 /// Elasticsearch accepts) overflowed the default 8 MiB / 2 MiB stacks. Stacks are reserved,
 /// not committed, so this does not raise resident memory.
-// Optional global allocators (L-802a); the default build uses the platform allocator.
-#[cfg(all(feature = "jemalloc", feature = "mimalloc"))]
-compile_error!("features `jemalloc` and `mimalloc` are mutually exclusive");
-#[cfg(feature = "jemalloc")]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 const MAIN_STACK: usize = 256 << 20;
 const WORKER_STACK: usize = 64 << 20;
 

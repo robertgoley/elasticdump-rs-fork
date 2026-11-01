@@ -98,7 +98,7 @@ Every non-default feature enabled in `Cargo.toml` is listed below with its reaso
 | zstd | no default features | no legacy/zdict builder; the `zstd-sys` C code is on the native allow-list |
 | regex | `std`, `unicode-perl`, `unicode-case` (no default) | template/rename patterns with `\w`/`\d` and `(?i)`; the rest of the Unicode tables and the perf features are off |
 | tikv-jemallocator (optional) | default | jemalloc as the global allocator; only with the crate feature `jemalloc` (off by default; L-802a) |
-| mimalloc (optional) | no default features | mimalloc (v2) as the global allocator; only with the crate feature `mimalloc` (off by default; L-802a) |
+| mimalloc (glibc Linux: always; elsewhere optional) | no default features | mimalloc (bundled C, reports v3.3.2 at run time) as the global allocator: the default on `*-linux-gnu` since L-808b (opt out with the feature `system-allocator`); on other targets only with the feature `mimalloc` |
 
 ## Build-time code (SUP-009, L-206)
 
@@ -213,7 +213,9 @@ What the list allows today:
     by glibc NSS;
   * dynamic-loader paths;
   * `/proc/self/*` and `/proc/meminfo` (memory guard);
-  * `/proc/sys/vm/overcommit_memory` (glibc malloc `check_may_shrink_heap`);
+  * `/proc/sys/vm/overcommit_memory` (glibc malloc `check_may_shrink_heap`, system-allocator builds);
+  * `/sys/devices/system/node/node*` and `/sys/kernel/mm/transparent_hugepage/enabled`
+    (mimalloc init: NUMA node count and THP mode; the default allocator on glibc since L-808b);
   * CPU-count and cgroup v2 `cpu.max`/`memory.max`/`cgroup.controllers` files.
 
 Not on the list, so each of these fails the run: a DNS query, any other address or port, a
@@ -370,12 +372,12 @@ Not covered: unsafe deltas. `scripts/sup/geiger-gate.sh` in the `supply-chain` j
 - a `cc`, `cmake`, `bindgen` or `pkg-config` build dependency;
 - C, C++ or assembly sources.
 
-Any flagged crate that is not on the allow-list fails the job. The allow-list is `ring` (BoringSSL-derived C/asm) and `zstd-sys` (vendored libzstd).
+Any flagged crate that is not on the allow-list fails the job. The allow-list is `ring` (BoringSSL-derived C/asm), `zstd-sys` (vendored libzstd) and, since L-808b, `libmimalloc-sys` (vendored mimalloc C, MIT; the default global allocator on glibc Linux, which puts it in the default graph of the `x86_64`/`aarch64` gnu targets).
 
-The check covers the default feature set. The optional allocator features add
-`tikv-jemalloc-sys` (jemalloc 5.3.1, vendored C, BSD-2-Clause) and
-`libmimalloc-sys` (mimalloc 2.3, vendored C, MIT); both would be flagged and must be
-added to the allow-list before either feature is turned on by default.
+The check covers the default feature set. The optional `jemalloc` feature adds
+`tikv-jemalloc-sys` (jemalloc 5.3.1, vendored C, BSD-2-Clause), which would be flagged and must
+be added to the allow-list before it is turned on by default. `libmimalloc-sys` (vendored
+mimalloc C, MIT) was added to the allow-list in L-808b, when mimalloc became the glibc default.
 
 Verified: adding `libz-sys` fails the check. `deny.toml` also bans it, so `cargo deny` fails as well.
 
@@ -447,11 +449,13 @@ reduction.
 ## Optional allocators (L-802a)
 
 `cargo build --release --features jemalloc` (or `--features mimalloc`) sets one
-`#[global_allocator]` in `src/main.rs`; the two features are mutually exclusive and
-neither is on by default, so the shipped binary still uses the platform allocator
-(glibc or musl). New crates, all MIT or MIT/Apache-2.0 at the crate level:
+`#[global_allocator]` in `src/main.rs`; the two features are mutually exclusive.
+Since L-808b (user decision) glibc Linux builds (`*-linux-gnu`) use mimalloc without any
+feature (a target-specific dependency in Cargo.toml); `--features system-allocator` keeps
+glibc's malloc there (the mimalloc C sources are then compiled but not linked). musl builds
+keep musl's allocator unless a feature asks for another. New crates, all MIT or MIT/Apache-2.0 at the crate level:
 `tikv-jemallocator` 0.7.0 and `tikv-jemalloc-sys` 0.7.1 (jemalloc 5.3.1, BSD-2-Clause
-C sources), `mimalloc` 0.1.52 and `libmimalloc-sys` 0.1.49 (mimalloc 2.3.2, MIT C
+C sources), `mimalloc` 0.1.52 and `libmimalloc-sys` 0.1.49 (bundled mimalloc, v3.3.2 at run time, MIT C
 sources). What each gate sees:
 
 - `cargo deny` (all features): licences pass; both `-sys` crates are in

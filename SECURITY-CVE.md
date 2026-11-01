@@ -22,7 +22,10 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 | 2026-10-29 | c620b80 | trivy | `make image-alpine` | **0** (all severities) |
 | 2026-10-29 | ae2531f | grype | `make image-public` (rust:1.99-trixie → debian:trixie-slim) | 54 High, 47 Medium, 10 Low, 46 Negligible (157 matches, 0 fixable) |
 | 2026-10-29 | ae2531f | trivy | `make image-public` | 43 HIGH, 58 MEDIUM, 60 LOW, 1 UNKNOWN (162) |
-| 2026-10-29 | d36b906 | grype DB v6.1.10 + trivy | `make image` (**default**: dhi.io/rust:1.99.0-alpine3.23-dev → dhi.io/alpine-base:3.24-alpine3.24-dev) | **0 at every severity** in both scanners |
+| 2026-10-29 | d36b906 | grype DB v6.1.10 + trivy | `make image` (default until L-808b: dhi.io/rust:1.99.0-alpine3.23-dev → dhi.io/alpine-base:3.24-alpine3.24-dev) | **0 at every severity** in both scanners |
+| 2026-11-01 | L-808b | grype 0.121.0 + trivy | `make image` (**default since L-808b**: dhi.io/rust:1.99.1-debian13-dev → dhi.io/static:20250419-glibc-debian13, glibc + mimalloc) | grype: 5 High, 9 Medium, 3 Low, 7 Negligible (24 distinct CVEs, all in libc6 / libgcc-s1, 0 fixable: Debian `wont-fix` / `not-fixed`); trivy: **0 HIGH/CRITICAL** (16 MEDIUM, 8 LOW). Fails `make scan` (grype `--fail-on high`), see [the default image](#dhiio-static-glibc-make-image-the-default-since-l-808b) |
+| 2026-11-01 | L-808b | grype + trivy | dhi.io glibc runtime candidates, bare bases (`results/local/L-808b.md`) | `static:20250419-glibc-debian13`: grype 5 High (24 distinct), trivy 0 HIGH; `debian-base:trixie-debian13`: grype 14 High (46 distinct), trivy 6 HIGH; `debian-base:trixie-debian13-dev`: grype 46 High (71 distinct), trivy 35 HIGH. 0 fixable in all three |
+| 2026-11-01 | L-808b | build + `scripts/test-image.sh` | `make image-dhi-alpine` (the previous default, now `:<ver>-alpine`) | builds unchanged; 0 at every severity at the 2026-10-29 scan |
 | 2026-10-29 | fb46cea | grype | `make image-dhi-debian` (dhi.io/rust:1.99.1-debian13-dev → dhi.io/debian-base:trixie-debian13-dev), the default before this change, scanned before any fix | 284 raw matches. grype reports every package twice, from `/var/lib/dpkg/status` and from DHI's `status.d`; deduplicated: 44 High, 46 Medium, 10 Low, 42 Negligible (142 package matches). Distinct CVEs: 15 High, 24 Medium, 6 Low, 25 Negligible. 0 fixable |
 | 2026-10-29 | fb46cea | trivy | `make image-dhi-debian` | 33 HIGH, 56 MEDIUM, 54 LOW, 1 UNKNOWN (144). Distinct CVEs: 9 HIGH, 30 MEDIUM, 32 LOW, 1 UNKNOWN. 0 fixable |
 
@@ -34,6 +37,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 | `cargo deny check advisories bans licenses sources` | advisories: 13 vulnerability, 13 unsound, 2 unmaintained errors; licenses: 1 rejected (tiny-keccak CC0-1.0); no deny.toml before | all four checks ok (ae2531f) |
 | Default image (`make image`), grype High+Critical | dhi.io Debian 13 `-dev`: 88 raw / 44 deduplicated (15 distinct CVEs) | dhi.io Alpine `-dev`: **0** (0 at any severity) |
 | Default image (`make image`), trivy HIGH+CRITICAL | dhi.io Debian 13 `-dev`: 33 (9 distinct CVEs) | dhi.io Alpine `-dev`: **0** (0 at any severity) |
+| Default image since L-808b (glibc requested), grype / trivy High+Critical | dhi.io Alpine `-dev` (musl): 0 / 0 | dhi.io `static` glibc: 5 / 0 (glibc and libgcc-s, none fixable); the Alpine image stays available as `make image-dhi-alpine` / `:<ver>-alpine` |
 | Public fallback, grype High+Critical | Debian 13 (`image-public`): 54 | Alpine (`image-alpine`): 0 |
 | Public fallback, trivy HIGH+CRITICAL | Debian 13 (`image-public`): 43 | Alpine (`image-alpine`): 0 |
 
@@ -57,7 +61,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 - **CI**
   - [.github/workflows/security.yml](.github/workflows/security.yml) runs on push to `main`/`rewrite`, on manual dispatch, and weekly.
   - It fails on any RustSec advisory or warning, a cargo-deny violation, or a HIGH/CRITICAL image CVE.
-  - It never logs in to push and never publishes images. The dhi.io login is pull-only and is used only when the manual `base=dhi` input is chosen.
+  - It never logs in to push and never publishes images. The dhi.io login is pull-only and is used for the `dhi*` bases (the default `base=dhi` is the static glibc image; `base=dhi-alpine` the Alpine one).
 - **Reproduce locally**
   - `cargo audit`
   - `cargo deny check advisories bans licenses sources`
@@ -124,7 +128,8 @@ Related cargo-deny finding:
 
 | Build | Builder | Runtime | libc | Scan result (High+Critical) |
 |---|---|---|---|---|
-| `make image` (**default**) | `dhi.io/rust:1.99.0-alpine3.23-dev` (`sha256:8fd18196a3c5…`) | `dhi.io/alpine-base:3.24-alpine3.24-dev` (`sha256:a6349b553099…`), plus apk `upgrade`, `bash`, `ca-certificates`, `libgcc` | musl / musl | 0 (0 at any severity) |
+| `make image` (**default**, L-808b) | `dhi.io/rust:1.99.1-debian13-dev` (`sha256:be6c6ec91c61…`) | `dhi.io/static:20250419-glibc-debian13` (`sha256:dcf8da7f5cde…`, multi-arch index), COPY-only stage, no shell | glibc 2.41 / glibc 2.41, mimalloc | grype 5 High (24 distinct CVEs at any severity), trivy 0 HIGH; none fixable |
+| `make image-dhi-alpine` (`:<ver>-alpine`; default until L-808b) | `dhi.io/rust:1.99.0-alpine3.23-dev` (`sha256:8fd18196a3c5…`) | `dhi.io/alpine-base:3.24-alpine3.24-dev` (`sha256:a6349b553099…`), plus apk `upgrade`, `bash`, `ca-certificates`, `libgcc` | musl / musl | 0 (0 at any severity) |
 | `make image-dhi-debian` | `dhi.io/rust:1.99.1-debian13-dev` (`sha256:e2dbe6c0d027…`) | `dhi.io/debian-base:trixie-debian13-dev` (`sha256:09943fbda224…`) | glibc 2.41 / glibc 2.41 | 15 distinct CVEs (grype) / 9 (trivy), none fixable |
 | `make image-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` | glibc 2.41 / glibc 2.41 | 54 High matches (grype) |
 | `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3`, plus the same apk steps | musl / musl | 0 |
@@ -154,9 +159,26 @@ Related cargo-deny finding:
 |---|---|---|---|---|
 | CVE-2025-60876 | busybox 1.37.0-r31, busybox-binsh, ssl_client | Medium (grype, CVSS 6.5); trivy does not report it | not-affected; no Alpine fix yet | The flaw is in the busybox `wget` applet (and `ssl_client`, which only `wget` uses). Nothing in the image calls `wget`: the tool does HTTP itself through reqwest/rustls, and the entrypoint is the Rust binary. Re-check at the next scan. |
 
-### dhi.io Debian 13 `-dev` (`make image-dhi-debian`, the previous default)
+### dhi.io static glibc (`make image`, the default since L-808b)
 
-This build is kept for glibc parity. It fails `make scan`. Every finding is Debian `wont-fix`/`not-fixed`, and the status for each is **open on this base, resolved by the default (dhi.io Alpine) build**. HIGH/CRITICAL findings, grouped by CVE:
+L-808b made the glibc + mimalloc build the default image at the user's request. Of the dhi.io glibc runtimes,
+`dhi.io/static:20250419-glibc-debian13` has the fewest findings (comparison above and in `results/local/L-808b.md`): it ships
+only `base-files`, `ca-certificates`, `libc6`, `libgcc-s1` and `tzdata`, with no shell or package manager. trivy reports no
+HIGH/CRITICAL finding; grype rates five CVEs High that trivy rates MEDIUM. All five are Debian `wont-fix` / `not-fixed`,
+so `make scan` fails on this image (grype `--fail-on high`) until Debian or DHI ships fixes. Status: **open** (no fix
+available); the Alpine image (`make image-dhi-alpine`, `:<ver>-alpine`) has none of them.
+
+| CVE | Package | Severity (grype / trivy) | Debian status | Notes |
+|---|---|---|---|---|
+| CVE-2026-19499 | libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | wont-fix | also in every Debian 13 base below |
+| CVE-2026-5435 | libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | wont-fix | also in every Debian 13 base below |
+| CVE-2026-84243 | libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | not-fixed | new since the 2026-10-29 scan |
+| CVE-2026-102010 | libgcc-s1 14.2.0-19+dhi5 | High / MEDIUM | wont-fix | also in every Debian 13 base below |
+| CVE-2026-95619 | libgcc-s1 14.2.0-19+dhi5 | High / MEDIUM | wont-fix | also in every Debian 13 base below |
+
+### dhi.io Debian 13 `-dev` (`make image-dhi-debian`, the default before the Alpine change)
+
+This build is kept for glibc parity. It fails `make scan`. Every finding is Debian `wont-fix`/`not-fixed`, and the status for each is **open on this base**; most are not in the default (dhi.io static) image, and none are in the Alpine image. HIGH/CRITICAL findings, grouped by CVE:
 
 | ID | Packages | Severity | Status |
 |---|---|---|---|
@@ -233,7 +255,7 @@ The stray `oom` file: no code path in `src/`, `tests/` or `scripts/` writes it (
 
 ## Decisions and follow-ups
 
-- **Default base.** The default is now dhi.io Alpine (`make image`), which scans clean, and CI scans it by default. CI needs the repository secrets `DHI_USERNAME`/`DHI_TOKEN` (pull-only token, not committed). Without them, dispatch with `base=alpine`. The glibc builds (`make image-dhi-debian`, `make image-public`) are kept, but they fail `make scan`.
-- **musl vs glibc.** The default binary is musl. The full integration matrix runs the host (glibc) build; the container's musl build was verified with `make test-image` and a dump/restore against OpenSearch 2.19.7.
+- **Default base.** Since L-808b the default is the glibc + mimalloc build on `dhi.io/static:20250419-glibc-debian13` (`make image`, `scripts/build-image.sh`), chosen by the user for glibc; it has 5 grype-High findings in glibc / libgcc-s with no fix, so CI's `make scan` fails on it until Debian ships fixes (lead decision pending: accept these as open, or dispatch CI with `base=dhi-alpine`). The dhi.io Alpine build (`make image-dhi-alpine`, `:<ver>-alpine`) scans clean and stays available. CI needs the repository secrets `DHI_USERNAME`/`DHI_TOKEN` (pull-only token, not committed). Without them, dispatch with `base=alpine`. `make image-dhi-debian` and `make image-public` are kept, but they fail `make scan`.
+- **musl vs glibc.** The default binary and image are glibc + mimalloc (L-808b); the release workflow also builds static musl binaries, and the Alpine image is musl. The full integration matrix runs the host (glibc) build; both images were verified with `scripts/test-image.sh` and a dump/restore against OpenSearch 2.19.7 (L-808b for the glibc image).
 - **MSRV.** No advisory needed an MSRV bump once the `elasticsearch` dev-dependency was removed. If `time` comes back into the tree, its fix (0.3.47) needs Rust 1.88.
 - **Image visibility into the binary's crates.** Building with `cargo auditable` would let grype and trivy see the crates inside the binary. It is not adopted yet; cargo-audit on the committed Cargo.lock covers those crates instead.

@@ -35,6 +35,14 @@ cargo build --profile it         # lighter optimised build (no LTO), used by the
 # binary: target/release/elasticdump-rs (or target/it/elasticdump-rs)
 ```
 
+Allocator: builds for glibc Linux (`*-linux-gnu`, the preferred release artifacts and the default container image)
+use mimalloc as the global allocator; musl builds (`*-linux-musl`, the Alpine image) keep musl's own allocator.
+Features: `--features system-allocator` builds glibc Linux with glibc's malloc (mimalloc's C code is still compiled
+but not linked in), `--features jemalloc` uses jemalloc on any target, `--features mimalloc` forces mimalloc on any
+target (also musl). `jemalloc` and `mimalloc` are mutually exclusive, and `system-allocator` excludes both.
+Release builds (`.github/workflows/release.yml`, `cargo zigbuild`): `x86_64`/`aarch64-unknown-linux-gnu` against
+glibc 2.28 (preferred), plus static `x86_64`/`aarch64-unknown-linux-musl`.
+
 ## Migrating from elasticdump
 
 Replace `elasticdump` with `elasticdump-rs`; the flags are spelled the same (`--input-index`, `--fsCompress`,
@@ -353,40 +361,68 @@ elasticdump-rs --input data.json --output http://os:9200 --renamePrefix logstash
 
 ## Container image
 
-`Dockerfile` is a two-stage build: a Rust builder (release profile, `CARGO_BUILD_JOBS=2` by default
-because the fat-LTO link peaks at ~1.5-2 GB) and a runtime with `bash`. Builder and runtime always use the
-same libc. All four builds use the same Dockerfile through the `BUILDER_IMAGE`/`BUILDER_TAG`/`BASE_IMAGE`/`BASE_TAG`
-build args:
+`Dockerfile` is a multi-stage build: a Rust builder (release profile, `CARGO_BUILD_JOBS=2` by default
+because the fat-LTO link peaks at ~1.5-2 GB) and one of two runtime stages. Builder and runtime always use the
+same libc. Every build uses the same Dockerfile through the `BUILDER_IMAGE`/`BUILDER_TAG`/`BASE_IMAGE`/`BASE_TAG`
+build args and a `--target` (bases are pinned by multi-arch index digest in the Makefile):
 
-| Make target | Builder | Runtime | libc | Size | HIGH/CRITICAL CVEs (2026-10-29) |
-|---|---|---|---|---|---|
-| `make image` (**default**) | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` | musl | 20 MB | **0** (0 at any severity) |
-| `make image-dhi-debian` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` | glibc 2.41 | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable |
-| `make image-alpine` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` | musl | 20 MB | 0 |
-| `make image-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` | glibc 2.41 | 90 MB | 54 High matches (grype) / 43 (trivy), none fixable |
+| Make target | Tag | Builder | Runtime (`--target`) | libc / allocator | Size | HIGH/CRITICAL CVEs (2026-11-01) |
+|---|---|---|---|---|---|---|
+| `make image` (**default**) | `:<ver>`, `:latest` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/static:20250419-glibc-debian13` (`runtime`, COPY-only, no shell) | glibc 2.41 / mimalloc | 24 MB | grype 5 High (glibc, libgcc-s; won't-fix / not-fixed upstream), trivy 0 |
+| `make image-dhi-alpine` | `:<ver>-alpine` | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 21 MB | **0** (0 at any severity) |
+| `make image-dhi-debian` | `:<ver>-debian-dev` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable (2026-10-29) |
+| `make image-alpine` | `:<ver>-alpine-public` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 20 MB | 0 (2026-10-29) |
+| `make image-public` | `:<ver>-debian-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 54 High matches (grype) / 43 (trivy), none fixable (2026-10-29) |
 
-The default is the dhi.io Alpine build. The dhi.io Debian `-dev` base ships apt, perl, util-linux and other packages
-with open CVEs that Debian marks as won't-fix. Details: [SECURITY-CVE.md](SECURITY-CVE.md). On Alpine runtimes the Dockerfile
+The default is the glibc + mimalloc build on the dhi.io `static` glibc base (L-808b). Of the dhi.io glibc bases it is
+the smallest (16 MB: glibc, libgcc_s, the CA bundle, tzdata and a `nonroot` 65532 user; no shell, no package manager),
+has the fewest CVEs (grype 5 High / 24 distinct against 14 / 46 for `debian-base:trixie-debian13` and 46 / 71 for the
+`-dev` base) and is published for amd64 and arm64; the comparison is in `results/local/L-808b.md` and
+[SECURITY-CVE.md](SECURITY-CVE.md). Without a shell the default image cannot run wrapper scripts inside the container;
+use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for that. On Alpine runtimes the Dockerfile
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
 `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
-never enters a build layer. The `-dev` variants are used on purpose, so that a shell is available for wrapper
-scripts.
+never enters a build layer.
 
-The image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
+Every image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,
 base name).
 
+### `scripts/build-image.sh`
+
+Builds the two main variants locally (nothing is pushed unless `--push` is given):
+
 ```bash
-make image                 # dhi.io Alpine bases, the default (after `podman login dhi.io`)
-make image-dhi-debian      # dhi.io Debian 13 bases (after the login)
+scripts/build-image.sh                              # glibc + mimalloc on dhi.io/static: elasticdump-rs:<ver>, :latest
+scripts/build-image.sh --variant alpine             # Alpine/musl, musl allocator: elasticdump-rs:<ver>-alpine
+scripts/build-image.sh --platform both              # linux/amd64 + linux/arm64 manifest list (podman)
+scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/elasticdump-rs:0.1.0-arm64
+scripts/build-image.sh --tag registry.example.com/team/elasticdump-rs:0.1.0 --push
+scripts/build-image.sh --dry-run --variant alpine   # print the podman commands only
+scripts/build-image.sh --help
+```
+
+Options: `--variant glibc|alpine` (default `glibc`), `--platform linux/amd64|linux/arm64|both` (default: the host's),
+`--tag REF` (repeatable; replaces the default tags), `--name REPO` (default `localhost/elasticdump-rs`), `--jobs N`
+(`CARGO_BUILD_JOBS`, default 2), `--push`, `--dry-run`. The base pins are read from the Makefile. A foreign platform
+runs the Rust build under emulation, so the host needs qemu-user-static (binfmt_misc) and it is slow; `both` builds a
+podman manifest list. `--push` uses only the container tool's existing registry login (`podman login <registry>`);
+the script never reads, takes or stores credentials. `CONTAINER=docker` works for single-platform builds.
+
+```bash
+make image                 # default: dhi.io static glibc + mimalloc (after `podman login dhi.io`)
+make image-dhi-alpine      # dhi.io Alpine/musl (after the login)
+make image-dhi-debian      # dhi.io Debian 13 -dev runtime with a shell (after the login)
 make image-public          # public Debian 13 bases, no login
-make image-alpine          # public Alpine/musl bases, no login, fewest CVEs
-make test-image            # --version, --help, bash present, non-root, symlink, CA bundle
-make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL)
+make image-alpine          # public Alpine/musl bases, no login
+make test-image            # --version, --help, non-root, symlink, CA bundle, --read-only, executables, base digest
+make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-static, dhi-alpine,
+                                           # dhi-debian, public, alpine)
+make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL) of IMAGE_VARIANT
 make image REGISTRY=registry.example.com/team IMAGE_NAME=elasticdump-rs IMAGE_TAG=0.1.0
 
 # podman
@@ -488,25 +524,30 @@ Each direction resolves its basic-auth username and password on its own (L-645).
 
 Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~3 + ~15 MB` (**changed in L-802, from
 × 1.5 + 10 MB, pending lead review**: the old estimate was exceeded by up to 127% by concurrent restores and sliced
-copies at 1M documents; `results/local/L-802.json`). Measured (Elasticsearch 7.17, ~1 KB docs): 24 MB dumping at
+copies at 1M documents; `results/local/L-802.json`). Measured with glibc's malloc before L-808b (Elasticsearch 7.17, ~1 KB docs): 24 MB dumping at
 `--limit 5000`, 30–80 MB sliced (`--slices 2`–`16`), 180–330 MB restoring at `--limit 5000 --concurrency 4`–`8`,
 85–160 MB copying. Peak RSS grows slowly with the number of documents in concurrent restores and copies (restore
 `--concurrency 8 --limit 5000`: 196 MB at 100k docs, 268 MB at 1M, 346 MB at 10M with `MALLOC_ARENA_MAX=2`), and
 stops growing on long runs when glibc is limited to two malloc arenas (`MALLOC_ARENA_MAX=2`). With glibc's default
 arenas the same 10M-doc restore reached 537 MB and was still growing slowly, so set `MALLOC_ARENA_MAX=2` for long
-concurrent restores in tight memory (glibc builds; restores and copies ran at the same speed within 10%, sliced
+concurrent restores in tight memory (builds with glibc's malloc, `--features system-allocator`; restores and copies ran at the same speed within 10%, sliced
 dumps within this box's noise; musl/Alpine builds were not measured). File-to-file runs stay at 14–40 MB for ~1 KB
 docs at any size up to 10M docs.
-Allocator tuning (L-802a, `results/local/L-802a.md`; ~1 KB docs, `--concurrency 8 --limit 5000`, defaults unchanged):
-on glibc builds, `MALLOC_MMAP_THRESHOLD_=131072` lowers memory use the most. Peak RSS at 10M docs was 158 MB restoring
-(glibc default 520 MB, `MALLOC_ARENA_MAX=2` 318 MB), 226 MB copying (684 / 432 MB), 20 MB dumping (75 / 50 MB) and
-40 MB for `--slices 4` (165 / 65 MB), and it stays flat from 1M to 10M docs. The tradeoff: plain dumps ran 15–20%
-slower (137–140k docs/s against 162–178k); restores, copies and sliced dumps ran at the same speed within this box's
-noise (restore 65k and copy 55–60k docs/s at 10M, like the default; one 10M restore at 21k docs/s was a box stall that
-hit other allocators the same way). The musl builds (release binaries and the default Alpine image) already use about
-as little memory as that setting (154 / 222 / 18 / 34–44 MB at 10M) with the same tradeoff. Builds with
-`--features mimalloc` or `--features jemalloc` ran at the same speed as glibc; mimalloc used 365 MB restoring and
-419 MB copying at 10M, and more than glibc on dumps (131 MB, sliced 212 MB).
+Allocators (L-808b): glibc Linux builds (the release `*-linux-gnu` binaries and the default container image) use
+mimalloc; musl builds (the `*-linux-musl` binaries and the `:<ver>-alpine` image) use musl's own allocator. The
+glibc-arena figures above (`MALLOC_ARENA_MAX=2`) and the `MALLOC_*` tuning below apply only to builds with glibc's malloc
+(`cargo build --features system-allocator`); mimalloc and musl ignore those variables. Measured with mimalloc (L-802a,
+`results/local/L-802a.md`, confirmed for the default build in `results/local/L-808b.md`; ~1 KB docs,
+`--concurrency 8 --limit 5000`): peak RSS 312 / 335 / 364 MB restoring at 100k / 1M / 10M docs, 278 / 388 / 419 MB
+copying, 68 / 82 / 131 MB dumping and 176 / 148 / 212 MB for `--slices 4`, at the same speed as glibc's malloc. That is
+below glibc's default arenas on long concurrent restores and copies (520 / 684 MB at 10M) and above them on dumps;
+the × 3 estimate above still covers every mimalloc run except the 10M copy (≈ 7% over, inside the 25% tolerance of
+`scripts/load/memcheck.py`).
+musl builds use the least memory (154 / 222 / 18 / 34–44 MB restore / copy / dump / sliced at 10M) with plain dumps
+15–20% slower. With `--features system-allocator`, `MALLOC_MMAP_THRESHOLD_=131072` gives about the same footprint
+as musl (158 / 226 / 20 / 40 MB at 10M, flat from 1M to 10M; glibc default 520 / 684 / 75 / 165 MB,
+`MALLOC_ARENA_MAX=2` 318 / 432 / 50 / 65 MB) with the same dump slowdown (137–140k docs/s against 162–178k), and
+`MALLOC_ARENA_MAX=2` stops the slow growth of long concurrent restores. `--features jemalloc` ran at the same speed.
 When the first batch shows that the estimate (still computed as × 1.5 + 10 MB in `src/memplan.rs` until the lead
 reviews the change above) exceeds the memory available (the cgroup's `memory.max` or
 `MemAvailable`, whichever is smaller), a warning names the flags to lower; under real cgroup caps of 64–256 MB every

@@ -1,29 +1,44 @@
 # Container image helpers. Nothing here pushes: tag and push yourself, e.g.
 #   podman push $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+# scripts/build-image.sh wraps the two main variants (--variant glibc|alpine, --platform, --tag).
 #
-#   make image                 # dhi.io Alpine bases, the default (needs `podman login dhi.io`)
-#   make image-dhi-debian      # dhi.io Debian 13 bases (needs the login)
-#   make image-public          # public Debian 13 bases (no login)
-#   make image-alpine          # public Alpine/musl bases (no login, fewest CVEs)
-#   make test-image            # SUP-017: non-root, --read-only + /data, binary set, base digest
-#   make sbom scan             # syft SBOM + grype/trivy scan of the image
+#   make image                 # default: dhi.io Debian 13 builder -> dhi.io/static glibc, mimalloc (:<ver>, :latest)
+#   make image-dhi-alpine      # dhi.io Alpine/musl, musl allocator (:<ver>-alpine)
+#   make image-dhi-debian      # dhi.io Debian 13 -dev runtime with a shell (:<ver>-debian-dev)
+#   make image-public          # public Debian 13 bases, no login (:<ver>-debian-public)
+#   make image-alpine          # public Alpine/musl bases, no login (:<ver>-alpine-public)
+#   make test-image            # SUP-017 for IMAGE_VARIANT: non-root, --read-only + /data, binary set, base digest
+#   make sbom scan             # syft SBOM + grype/trivy scan of the IMAGE_VARIANT image
 REGISTRY   ?= localhost
 IMAGE_NAME ?= elasticdump-rs
 IMAGE_TAG  ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 IMAGE      := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
-# docker/image-binaries.<variant>.txt used by test-image (dhi-alpine | alpine | dhi-debian | public)
-IMAGE_VARIANT ?= dhi-alpine
+# Variant used by test-image/save/sbom/scan; selects docker/image-binaries.<variant>.txt and
+# the tag suffix (dhi-static | dhi-alpine | dhi-debian | public | alpine)
+IMAGE_VARIANT ?= dhi-static
+SUFFIX_dhi-static :=
+SUFFIX_dhi-alpine := -alpine
+SUFFIX_dhi-debian := -debian-dev
+SUFFIX_public     := -debian-public
+SUFFIX_alpine     := -alpine-public
+VARIANT_IMAGE := $(IMAGE)$(SUFFIX_$(IMAGE_VARIANT))
 
 CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
-# F-14: every base is pinned by digest (TAG = tag@sha256:...). Refresh a
-# digest with `podman pull <image>:<tag>` + `podman images --digests`.
+# F-14: every base is pinned by digest (TAG = tag@sha256:...; multi-arch index digests).
+# Refresh a digest with `podman pull <image>:<tag>` + `podman image inspect --format '{{.RepoDigests}}'`.
+# Default: Docker Hardened Images, Debian 13 / glibc builder -> static glibc runtime (no shell)
 BUILDER_IMAGE ?= dhi.io/rust
-BUILDER_TAG   ?= 1.99.0-alpine3.23-dev@sha256:2d4387114840f672c75a8cec9414a300e07b285798382c76a466eafec4686b6e
-BASE_IMAGE    ?= dhi.io/alpine-base
-BASE_TAG      ?= 3.24-alpine3.24-dev@sha256:7182e0bc2f186386bb23bc0718508913450ba1876e93cf07e5e3cf263c4dbb63
-# Docker Hardened Images, Debian 13 / glibc (more CVEs than the Alpine default)
+BUILDER_TAG   ?= 1.99.1-debian13-dev@sha256:be6c6ec91c61ae15b80521052df1c7f60fefd303293563b3dbd9f57e58783809
+BASE_IMAGE    ?= dhi.io/static
+BASE_TAG      ?= 20250419-glibc-debian13@sha256:dcf8da7f5cdeb490d825814561995ce6c6cf931aa4322dae89f4f0170b0fb693
+# Docker Hardened Images, Alpine/musl (the default before L-808b; 0 CVEs at L-808b)
+DHI_ALPINE_BUILDER_IMAGE ?= dhi.io/rust
+DHI_ALPINE_BUILDER_TAG   ?= 1.99.0-alpine3.23-dev@sha256:2d4387114840f672c75a8cec9414a300e07b285798382c76a466eafec4686b6e
+DHI_ALPINE_BASE_IMAGE    ?= dhi.io/alpine-base
+DHI_ALPINE_BASE_TAG      ?= 3.24-alpine3.24-dev@sha256:7182e0bc2f186386bb23bc0718508913450ba1876e93cf07e5e3cf263c4dbb63
+# Docker Hardened Images, Debian 13 -dev runtime (shell, apt; more CVEs)
 DHI_DEBIAN_BUILDER_IMAGE ?= dhi.io/rust
 DHI_DEBIAN_BUILDER_TAG   ?= 1.99.1-debian13-dev@sha256:be6c6ec91c61ae15b80521052df1c7f60fefd303293563b3dbd9f57e58783809
 DHI_DEBIAN_BASE_IMAGE    ?= dhi.io/debian-base
@@ -46,43 +61,50 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_ARGS = --build-arg VERSION=$(IMAGE_TAG) --build-arg VCS_REF=$(VCS_REF) \
              --build-arg BUILD_DATE=$(BUILD_DATE) --build-arg CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS)
 
-.PHONY: help image image-dhi-debian image-public image-alpine test-image save sbom scan print
+.PHONY: help image image-dhi-alpine image-dhi-debian image-public image-alpine test-image save sbom scan print
 help:
-	@sed -n '1,11p' Makefile
+	@sed -n '1,12p' Makefile
 
 print:
-	@echo "IMAGE=$(IMAGE) CONTAINER=$(CONTAINER)"
+	@echo "IMAGE=$(IMAGE) VARIANT_IMAGE=$(VARIANT_IMAGE) CONTAINER=$(CONTAINER)"
 	@echo "builder=$(BUILDER_IMAGE):$(BUILDER_TAG) base=$(BASE_IMAGE):$(BASE_TAG)"
 
+# shell-less static base: the default `runtime` stage (COPY only)
 image:
-	$(CONTAINER) build $(BUILD_ARGS) \
+	$(CONTAINER) build $(BUILD_ARGS) --target runtime \
 	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) --build-arg BUILDER_TAG=$(BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg BASE_TAG=$(BASE_TAG) \
-	  -t $(IMAGE) .
+	  -t $(IMAGE) -t $(REGISTRY)/$(IMAGE_NAME):latest .
+
+image-dhi-alpine:
+	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
+	  --build-arg BUILDER_IMAGE=$(DHI_ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_ALPINE_BUILDER_TAG) \
+	  --build-arg BASE_IMAGE=$(DHI_ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_ALPINE_BASE_TAG) \
+	  -t $(IMAGE)$(SUFFIX_dhi-alpine) .
 
 image-dhi-debian:
-	$(CONTAINER) build $(BUILD_ARGS) \
+	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_DEBIAN_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_DEBIAN_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_DEBIAN_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_DEBIAN_BASE_TAG) \
-	  -t $(IMAGE) .
+	  -t $(IMAGE)$(SUFFIX_dhi-debian) .
 
 image-public:
-	$(CONTAINER) build $(BUILD_ARGS) \
+	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(PUBLIC_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(PUBLIC_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(PUBLIC_BASE_IMAGE) --build-arg BASE_TAG=$(PUBLIC_BASE_TAG) \
-	  -t $(IMAGE) .
+	  -t $(IMAGE)$(SUFFIX_public) .
 
 image-alpine:
-	$(CONTAINER) build $(BUILD_ARGS) \
+	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(ALPINE_BASE_TAG) \
-	  -t $(IMAGE) .
+	  -t $(IMAGE)$(SUFFIX_alpine) .
 
 test-image:
-	CONTAINER=$(CONTAINER) scripts/test-image.sh $(IMAGE) $(IMAGE_VARIANT)
+	CONTAINER=$(CONTAINER) scripts/test-image.sh $(VARIANT_IMAGE) $(IMAGE_VARIANT)
 
 save:
-	$(CONTAINER) save -o image.tar $(IMAGE)
+	$(CONTAINER) save -o image.tar $(VARIANT_IMAGE)
 
 sbom: save
 	syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json

@@ -1,6 +1,6 @@
 {
- "total_used_unsafe": 27245,
- "crates_with_unsafe": 110,
+ "total_used_unsafe": 27264,
+ "crates_with_unsafe": 111,
  "elasticdump_rs_forbids_unsafe": true,
  "per_crate": {
   "aes": 783,
@@ -86,11 +86,13 @@
   "jiff": 175,
   "jiff-core": 6,
   "libc": 99,
+  "libmimalloc-sys": 0,
   "linux-raw-sys": 322,
   "litemap": 0,
   "lock_api": 0,
   "log": 21,
   "memchr": 2138,
+  "mimalloc": 19,
   "mio": 181,
   "once_cell": 89,
   "openssl-probe": 32,

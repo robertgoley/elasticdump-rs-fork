@@ -52,8 +52,14 @@
   "libc@0.2.191": [
    "build.rs"
   ],
+  "libmimalloc-sys@0.1.49": [
+   "build.rs"
+  ],
   "munge_macro@0.4.7": [
    "proc-macro"
+  ],
+  "num-traits@0.2.19": [
+   "build.rs"
   ],
   "parking_lot_core@0.9.12": [
    "build.rs"
@@ -188,11 +194,11 @@
  },
  "counts": {
   "all": {
-   "build.rs": 45,
+   "build.rs": 47,
    "proc-macro": 18
   },
   "linux": {
-   "build.rs": 26,
+   "build.rs": 27,
    "proc-macro": 10
   }
  },
@@ -234,6 +240,9 @@
    "build.rs"
   ],
   "libc@0.2.191": [
+   "build.rs"
+  ],
+  "libmimalloc-sys@0.1.49": [
    "build.rs"
   ],
   "portable-atomic@1.15.0": [
@@ -320,6 +329,7 @@
   "icu_normalizer_data@2.1.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "icu_properties_data@2.1.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "libc@0.2.191": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "libmimalloc-sys@0.1.49": "L-808b 2026-11-01: reviewed (build.rs compiles the vendored mimalloc C with cc; default allocator on glibc Linux, see docs/SUPPLY-CHAIN.md)",
   "portable-atomic@1.15.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "proc-macro2@1.0.107": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "quote@1.0.47": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",

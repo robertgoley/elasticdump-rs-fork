@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Image bases: dhi (default; dhi.io Alpine), dhi-debian, alpine (public), debian (public)"
+        description: "Image bases: dhi (default; dhi.io static glibc + mimalloc), dhi-alpine, dhi-debian, alpine (public), debian (public)"
         type: choice
-        options: [dhi, dhi-debian, alpine, debian]
+        options: [dhi, dhi-alpine, dhi-debian, alpine, debian]
         default: dhi
   schedule:
     - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
@@ -85,25 +85,28 @@ jobs:
         run: |
           case "$BASE" in
             dhi) make image CONTAINER=podman ;;
+            dhi-alpine) make image-dhi-alpine CONTAINER=podman ;;
             dhi-debian) make image-dhi-debian CONTAINER=podman ;;
             debian) make image-public CONTAINER=podman ;;
             alpine) make image-alpine CONTAINER=podman ;;
-            *) echo "::error::unknown base '$BASE' (allowed: dhi, dhi-debian, alpine, debian)"; exit 1 ;;
+            *) echo "::error::unknown base '$BASE' (allowed: dhi, dhi-alpine, dhi-debian, alpine, debian)"; exit 1 ;;
           esac
-      # L-211 / SUP-017: non-root, --read-only + /data, executable set, base digest
+      # L-211 / SUP-017: non-root, --read-only + /data, executable set, base digest.
+      # IMAGE_VARIANT also picks the tag that sbom/scan read (Makefile SUFFIX_*).
       - name: Image hardening tests
         env:
           BASE: ${{ inputs.base || 'dhi' }}
         run: |
           case "$BASE" in
-            dhi) v=dhi-alpine ;; dhi-debian) v=dhi-debian ;; debian) v=public ;; alpine) v=alpine ;;
+            dhi) v=dhi-static ;; dhi-alpine) v=dhi-alpine ;; dhi-debian) v=dhi-debian ;; debian) v=public ;; alpine) v=alpine ;;
             *) echo "::error::unknown base '$BASE'"; exit 1 ;;
           esac
+          echo "IMAGE_VARIANT=$v" >> "$GITHUB_ENV"
           make test-image CONTAINER=podman IMAGE_VARIANT="$v"
       - name: SBOM (CycloneDX + SPDX)
-        run: make sbom CONTAINER=podman
+        run: make sbom CONTAINER=podman IMAGE_VARIANT="$IMAGE_VARIANT"
       - name: grype + trivy (fail on HIGH/CRITICAL)
-        run: make scan CONTAINER=podman
+        run: make scan CONTAINER=podman IMAGE_VARIANT="$IMAGE_VARIANT"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: sbom-image, path: "sbom-image.*.json" }
