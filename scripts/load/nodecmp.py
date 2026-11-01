@@ -281,13 +281,14 @@ def main():
                 row["speedup_vs_node"] = round(nd["wall_s"] / row["wall_s"], 2)
                 row["cpu_ratio_node_over_rust"] = round(nd["cpu_s"] / row["cpu_s"], 2) if row["cpu_s"] else None
         res["summary"] = summ
-        sc_stats = cl.req("GET", "/_nodes/stats/indices/search")["nodes"]
-        res["leak"] = dict(scroll_current=sum(v["indices"]["search"].get("scroll_current", 0)
-                                              for v in sc_stats.values()),
-                           open_contexts=sum(v["indices"]["search"].get("open_contexts", 0)
-                                             for v in sc_stats.values()))
+        # LOAD-017: Node elasticdump may leave scrolls open, so contexts are recorded, not asserted;
+        # the Rust runs are held to zero through the per-run scrolls_left_open count below.
+        res["leak"], f = R.leak_check(cl, work, contexts=False)
+        res["failures"] += f
         res["leak"]["by_tool"] = {t: sum(x.get("scrolls_left_open", 0) for x in res["runs"] if x["tool"].startswith(t))
                                   for t in ("node", "rust")}
+        if res["leak"]["by_tool"]["rust"]:
+            res["failures"].append(f"leak: rust runs left {res['leak']['by_tool']['rust']} scroll(s) open")
         rc = 0 if not res["failures"] else 1
     except Exception as e:
         res["failures"].append(f"error: {e!r}")

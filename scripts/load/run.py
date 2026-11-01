@@ -36,6 +36,66 @@ def log(*a):
     print("load:", *a, file=sys.stderr, flush=True)
 
 
+
+# LOAD-017 / TST-LOAD-017 (L-811): server-side leak check asserted in the teardown of every load run.
+# Index names that engines create on their own; a new hidden index outside these is reported as a
+# possible staging leftover (the tool itself stages only in hidden `.name.part-*` files, never indices).
+SYSTEM_INDEX_PREFIXES = (".ds-", ".tasks", ".security", ".geoip_databases", ".kibana", ".apm", ".fleet",
+                         ".opendistro", ".plugins", ".opensearch", ".ql-", ".async-search", ".transform")
+
+
+def leak_check(cl, work=None, before=None, expected=(), wait_s=15, contexts=True, allow_part=None):
+    """Return (leak, failures). `cl` may be None (file-only runs).
+
+    * `scroll_current` and `point_in_time_current` summed over `_nodes/stats/indices/search` must reach 0
+      within `wait_s`. Elasticsearch has no PIT stat (pit_current None): there `open_contexts` minus the
+      scrolls (`other_open_contexts`, PITs included) must reach 0 instead.
+      `contexts=False` records them without failing (Node elasticdump comparisons).
+    * No `.part` file under `work` (hidden staging files included; `glob` skips dotfiles, so walk).
+      Cluster data dirs (`it`, `it-*` at the top of `work`) are skipped; `allow_part(rel_dir, name)`
+      exempts intentional leftovers (killed runs).
+    * With `before` (index names at the start): no new index outside `expected`, no new hidden index
+      outside SYSTEM_INDEX_PREFIXES.
+    """
+    leak, fails = {}, []
+    if cl is not None:
+        deadline = time.time() + wait_s
+        while True:
+            se = [n["indices"]["search"] for n in cl.req("GET", "/_nodes/stats/indices/search")["nodes"].values()]
+            scroll = sum(s.get("scroll_current", 0) for s in se)
+            has_pit = any("point_in_time_current" in s for s in se)
+            pit = sum(s.get("point_in_time_current", 0) for s in se) if has_pit else None
+            # without the PIT stat (Elasticsearch), open_contexts counts every open reader context:
+            # scrolls, PITs and searches in flight (none at teardown)
+            other = max(0, sum(s.get("open_contexts", 0) for s in se) - scroll) if not has_pit else None
+            if (not scroll and not pit and not other) or time.time() > deadline:
+                break
+            time.sleep(1)
+        leak.update(scroll_current=scroll, pit_current=pit, other_open_contexts=other)
+        if contexts and (scroll or pit or other):
+            fails.append(f"leak: open search contexts scroll_current={scroll} point_in_time_current={pit}"
+                         f" other_open_contexts={other}")
+    parts = []
+    if work and os.path.isdir(work):
+        for dp, dns, fs in os.walk(work):
+            rel = os.path.relpath(dp, work)
+            if rel == ".":
+                dns[:] = [d for d in dns if d != "it" and not d.startswith("it-")]
+            parts += [os.path.normpath(os.path.join(rel, f)) for f in fs
+                      if ".part" in f and not (allow_part and allow_part(rel, f))]
+    leak.update(part_files=sorted(parts)[:20], part_files_n=len(parts))
+    if parts:
+        fails.append(f"leak: {len(parts)} .part file(s) left, e.g. {sorted(parts)[:3]}")
+    if cl is not None and before is not None:
+        after = {i["index"] for i in cl.req("GET", "/_cat/indices?format=json&expand_wildcards=all")}
+        new = after - set(before) - set(expected)
+        leak["unexpected_indices"] = sorted(i for i in new if not i.startswith("."))
+        leak["new_system_indices"] = sorted(i for i in new if i.startswith(".") and i.startswith(SYSTEM_INDEX_PREFIXES))
+        leak["new_hidden_indices"] = sorted(i for i in new if i.startswith(".") and not i.startswith(SYSTEM_INDEX_PREFIXES))
+        if leak["unexpected_indices"] or leak["new_hidden_indices"]:
+            fails.append(f"leak: indices left {leak['unexpected_indices'] + leak['new_hidden_indices']}")
+    return leak, fails
+
 def tool_path(name):
     for d in ("release", "it", "debug"):
         p = os.path.join(ROOT, "target", d, name)
@@ -572,21 +632,8 @@ def main():
         check_node()
 
         # LOAD-017 leak check
-        deadline, scroll, pit = time.time() + 15, None, None
-        while True:
-            ns = cl.req("GET", "/_nodes/stats/indices/search")["nodes"]
-            scroll = sum(n["indices"]["search"].get("scroll_current", 0) for n in ns.values())
-            pit = sum(n["indices"]["search"].get("point_in_time_current", 0) for n in ns.values())
-            if (scroll == 0 and pit == 0) or time.time() > deadline:
-                break
-            time.sleep(1)
-        parts = [os.path.relpath(p, work) for p in glob.glob(os.path.join(work, "**", "*.part*"), recursive=True)]
-        after = {i["index"] for i in cl.req("GET", "/_cat/indices?format=json&expand_wildcards=all")}
-        extra_idx = sorted(i for i in after - before - expected if not i.startswith("."))
-        result["leak"] = dict(scroll_current=scroll, pit_current=pit, part_files=parts, unexpected_indices=extra_idx,
-                              new_system_indices=sorted(i for i in after - before - expected if i.startswith(".")))
-        if scroll or pit or parts or extra_idx:
-            result["failures"].append(f"leak: {result['leak']}")
+        result["leak"], f = leak_check(cl, work, before=before, expected=expected)
+        result["failures"] += f
         rc = 0 if not result["failures"] else 1
     except Exception as e:  # report, then tear down
         result["failures"].append(f"error: {e}")

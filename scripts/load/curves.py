@@ -287,11 +287,9 @@ def main():
             json.dump(dict(schema="edrs-curves-baseline/v1", source_run=run_id, tier=a.tier, engine=a.engine,
                            docs=n, limit=LIMIT, git=res["git"], summary=summ),
                       open(a.write_baseline, "w"), indent=1)
-        sc = cl.req("GET", "/_nodes/stats/indices/search")["nodes"]
-        res["leak"] = dict(scroll_current=sum(v["indices"]["search"].get("scroll_current", 0) for v in sc.values()),
-                           open_contexts=sum(v["indices"]["search"].get("open_contexts", 0) for v in sc.values()))
-        if res["leak"]["scroll_current"]:
-            fail(f"leak: {res['leak']}")
+        res["leak"], f = R.leak_check(cl, work)  # LOAD-017
+        for x in f:
+            fail(x)
         rc = 0 if not res["failures"] else 1
     except Exception as e:
         res["failures"].append(f"error: {e!r}")

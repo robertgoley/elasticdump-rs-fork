@@ -54,11 +54,13 @@ LOAD_PLACE=runner scripts/load/run.sh L1R dump-restore-logs
 
 **Metrics (LOAD-003).** Each tool step runs under `measure.sh` and is schema-validated. The tool's max RSS must stay under the place's `tool_mem_mb`. `Total Writes` must equal the source count, and `Failed Writes` must be 0.
 
-**Leak check (LOAD-017).** At the end of a run there must be:
+**Leak check (LOAD-017).** Every load script (`run.py`, `split.py`, `resume.py`, `faults.py`, `curves.py`, `compress.py`, `allocbench.py`, `nodecmp.py`) calls `run.leak_check` before its teardown and fails the run on a leak (L-811). At the end of a run there must be:
 
-- no open scroll or PIT contexts;
-- no `*.part*` files in the work directory;
-- no unexpected non-system indices.
+- no open scroll or PIT contexts: `scroll_current` and, on OpenSearch, `point_in_time_current` reach 0 within 15 s. Elasticsearch has no PIT stat, so there `open_contexts` minus the scrolls (`other_open_contexts`, which counts PITs) must reach 0. `nodecmp.py` only records the contexts, because Node elasticdump may leave scrolls open; its Rust runs must leave none;
+- no `.part` files in the work directory, hidden staging files (`.name.part-*`) included. Cluster data dirs (`it`, `it-*`) are skipped; `split.py` allows the parts its kill cases leave on purpose;
+- no unexpected non-system indices and no new hidden index outside the engines' own prefixes (`run.SYSTEM_INDEX_PREFIXES`), when the script records the indices at the start (`run.py`).
+
+`leakcheck_selftest.py` checks the helper itself: offline stubs, plus one small container (`--engine es717-plain` or `opensearch-plain`) with an open scroll, an open PIT, a stray index and a hidden index; about 15 s per engine.
 
 **Results.** Output is written to `results/load/<run-id>/<scenario>.json` (schema `edrs-load/v1`), alongside the metrics and verify reports. Credentials reach the tools through environment variables only, never through argv.
 

@@ -451,12 +451,8 @@ def main():
             run("restart-restore-retry20", "restore", url, cl, url, fault=at(rng.uniform(0.2, 0.6), restart),
                 extra=["--retryAttempts=20"])
 
-        left = [f for f in os.listdir(work) if ".part" in f]
-        ns = cl.req("GET", "/_nodes/stats/indices/search")["nodes"]
-        res["leak"] = dict(scroll_current=sum(v["indices"]["search"].get("scroll_current", 0) for v in ns.values()),
-                           part_files=left)
-        if left:
-            res["failures"].append(f"leak: {res['leak']}")
+        res["leak"], f = R.leak_check(cl, work)  # LOAD-017
+        res["failures"] += f
         rc = 0 if not res["failures"] else 1
     except Exception as e:
         res["failures"].append(f"error: {e!r}")

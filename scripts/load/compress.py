@@ -264,6 +264,8 @@ def main():
                     d["mb_per_s_per_core"] = round(raw / 1e6 / extra, 1) if extra > 0 else None
                 summ.append(d)
         res["summary"] = summ
+        res["leak"], f = R.leak_check(cl, work)  # LOAD-017
+        res["failures"] += f
         rc = 0 if not res["failures"] else 1
     except Exception as e:
         res["failures"].append(f"error: {e!r}")

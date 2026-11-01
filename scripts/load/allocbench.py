@@ -226,6 +226,8 @@ def main():
             cl.req("DELETE", "/dst", ok404=True)
             cl.req("DELETE", "/src", ok404=True)
             os.unlink(data)
+        res["leak"], f = R.leak_check(cl, work)  # LOAD-017
+        res["failures"] += f
         rc = 1 if res["failures"] else 0
     except Exception as e:
         res["failures"].append(f"error: {e}")

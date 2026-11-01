@@ -370,16 +370,10 @@ def main():
         if rc_ or not new_ok or (o["older_left"] and not warn):
             fail(f"overwrite-fewer: {o}")
 
-        left = []
-        for dp, _, fs in os.walk(work):
-            if "/it" in dp:
-                continue
-            left += [f for f in fs if ".part-" in f and not dp.endswith("kill")]
-        res["leak"] = dict(part_files_outside_kill=left[:5],
-                           scroll_current=sum(v["indices"]["search"].get("scroll_current", 0) for v in
-                                              cl.req("GET", "/_nodes/stats/indices/search")["nodes"].values()))
-        if left:
-            fail(f"leak: {res['leak']}")
+        # LOAD-017; the kill cases leave their staged parts on purpose (D-5)
+        res["leak"], f = R.leak_check(cl, work, allow_part=lambda rel, _f: rel.endswith("kill"))
+        for x in f:
+            fail(x)
         rc = 0 if not res["failures"] else 1
     except Exception as e:
         res["failures"].append(f"error: {e!r}")
