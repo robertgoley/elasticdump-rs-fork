@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 201 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-811 (`git log -1 --grep '^L-811'`; the next commit fills in its sha).
+Total: 202 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808f (`git log -1 --grep '^L-808f'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -248,4 +248,5 @@ Total: 201 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808d | 16e4482 | 2026-11-01 | User decisions: the default image's 5 glibc/libgcc-s High CVEs (no fix) accepted; `make scan` ignores exactly those ids while not-fixed/wont-fix and passes; TESTING-TODO rows for the l638 timing flake (stable machine) and the low-priority arm64 image build. |
 | L-808e | 09bdab8 | 2026-11-01 | Handoff state (docs only): usage rule, `wip/L-NNN` branches, queue and skip list, 2026-11-01 user decisions and open items recorded in RESUME-FOR-GROK-BOT.md and the handoff docs. |
 | D-2 | f96c434 | 2026-11-01 | gzip stays the default codec and zstd is opt-in (code, `--help`, README) verified; `compression_default_tests` added (4 unit tests); help and README wording made explicit. |
-| L-811 | this commit | 2026-11-01 | LOAD-017: leak check (scroll, PIT or ES open_contexts, `.part` files incl. hidden staging files, stray/hidden indices) asserted in the teardown of every load script; `leakcheck_selftest.py` PASS on es717-plain and opensearch-plain. |
+| L-811 | aaff19a | 2026-11-01 | LOAD-017: leak check (scroll, PIT or ES open_contexts, `.part` files incl. hidden staging files, stray/hidden indices) asserted in the teardown of every load script; `leakcheck_selftest.py` PASS on es717-plain and opensearch-plain. |
+| L-808f | this commit | 2026-11-01 | CI: `scripts/third-party-notices.py --check` added to security.yml (dependencies job); passes locally, fails (rc 1) on a stale file. |

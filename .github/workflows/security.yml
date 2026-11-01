@@ -33,6 +33,8 @@ jobs:
       # any vulnerability, or an unmaintained/unsound/yanked warning, fails the job
       - run: cargo audit --deny warnings
       - run: cargo deny check advisories bans licenses sources
+      # L-808f: THIRD-PARTY-NOTICES.md (generated block) must match Cargo.lock / the cargo-deny crate graph
+      - run: scripts/third-party-notices.py --check
       - run: cargo cyclonedx --format json --override-filename sbom-cargo.cdx
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: sbom-cargo, path: "sbom-cargo.cdx.json" }
