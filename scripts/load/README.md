@@ -236,3 +236,28 @@ Extras:
 - `--overwrite` with fewer parts replaces the set, leaves the older higher-numbered parts, and logs a warning.
 
 Output goes to `results/load/<run-id>/split.json`. 10M docs with 256 MB parts is Phase B.
+
+## Concurrency curves (LOAD-010, L-807, `curves.py`)
+
+`python3 scripts/load/curves.py <tier> [--docs N] [--reps 3] [--points 1,2,4,8,12,16] [--shards 1,4]
+[--baseline FILE] [--threshold 10] [--write-baseline FILE] [--run-id ID] [--keep]`
+
+The script provisions one engine without a CPU cap and seeds `load-logs` (1 primary shard). For each extra
+`--shards` value it makes a copy with `_split`, force-merged to one segment per shard. Each rep runs every point in
+shuffled order:
+
+- **dump:** `--slices S --workers S`, with scroll and with PIT (`--searchAfter --pit`), on each index.
+- **restore:** `--concurrency C` from a one-file dump into a fresh 1-shard index (`--noRefresh`).
+
+Each run records wall s, docs/s, the tool's CPU-s (wait4) and the engine's CPU-s (its process tree in `/proc`; this
+includes background merges). Each point gets the median, min, max and CV over the reps.
+
+Checks:
+
+- Every run exits 0 with the full doc count.
+- On the first rep, every dump and every restore is digest-equal to its source (edverify).
+- **Regression gate:** `--baseline` fails on a drop of more than `--threshold`% in any point's median docs/s
+  (TST-LOAD-010). The box baseline is in `baselines/box-L1L-es717-plain-curves.json`.
+
+Output goes to `results/load/<run-id>/curves.json` and `curves.csv`. On the shared 8-vCPU box the curves are trends;
+the authoritative 10M curves on dedicated cores are Phase B (B10).
