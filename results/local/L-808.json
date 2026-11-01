@@ -1,0 +1,717 @@
+{
+ "task": "L-808",
+ "test": "TST-LOAD-011",
+ "phase": "A",
+ "result": "PASS: 78 runs exit 0, all digests equal, ratios recorded. PLAN \u00a78 met: sliced (scroll and PIT), --fsCompress, CPU except copy, defaults at 100k. Missed on this box: defaults at 1M (1.63x), restore (2.42x / 1.88x), copy (1.61x / 1.30x), copy CPU (2.7x / 2.5x)",
+ "setup": {
+  "engine": "es717-plain 7.17.29, no CPU cap, 2-shard _split copy force-merged",
+  "nproc": 8,
+  "node": "6.125.1 on v24.22.1 (installed with --ignore-scripts; only the CLI was run)",
+  "rust": "release build",
+  "data": "edgen logs, seed 1, about 1 KB per doc",
+  "reps": 3
+ },
+ "runs": {
+  "l0": {
+   "docs": 100000,
+   "raw_bytes": 101557516,
+   "runs": 39,
+   "failures": [],
+   "checks": [
+    {
+     "check": "dump-defaults: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-5000: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-5000-gzip: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-sliced: node output == rust-pit8 output",
+     "ok": true
+    },
+    {
+     "check": "dump-sliced: node output == rust-scroll2 output",
+     "ok": true
+    }
+   ],
+   "leak": {
+    "scroll_current": 30,
+    "open_contexts": 30,
+    "by_tool": {
+     "node": 30,
+     "rust": 0
+    }
+   },
+   "summary": [
+    {
+     "scenario": "dump-defaults",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 3.185,
+     "wall_min": 3.14,
+     "wall_max": 3.404,
+     "cv_pct": 3.6,
+     "docs_per_s": 31397,
+     "cpu_s": 2.661,
+     "maxrss_mb": 292.3
+    },
+    {
+     "scenario": "dump-defaults",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 1.73,
+     "wall_min": 1.673,
+     "wall_max": 1.904,
+     "cv_pct": 5.6,
+     "docs_per_s": 57803,
+     "cpu_s": 0.574,
+     "maxrss_mb": 43.1,
+     "speedup_vs_node": 1.84,
+     "cpu_ratio_node_over_rust": 4.64
+    },
+    {
+     "scenario": "dump-5000",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 1.63,
+     "wall_min": 1.603,
+     "wall_max": 1.728,
+     "cv_pct": 3.2,
+     "docs_per_s": 61350,
+     "cpu_s": 1.962,
+     "maxrss_mb": 349.9
+    },
+    {
+     "scenario": "dump-5000",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 0.696,
+     "wall_min": 0.69,
+     "wall_max": 0.748,
+     "cv_pct": 3.7,
+     "docs_per_s": 143678,
+     "cpu_s": 0.407,
+     "maxrss_mb": 49.2,
+     "speedup_vs_node": 2.34,
+     "cpu_ratio_node_over_rust": 4.82
+    },
+    {
+     "scenario": "dump-5000-gzip",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 4.92,
+     "wall_min": 4.366,
+     "wall_max": 5.405,
+     "cv_pct": 8.7,
+     "docs_per_s": 20325,
+     "cpu_s": 5.18,
+     "maxrss_mb": 437.1
+    },
+    {
+     "scenario": "dump-5000-gzip",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 0.703,
+     "wall_min": 0.667,
+     "wall_max": 0.742,
+     "cv_pct": 4.4,
+     "docs_per_s": 142248,
+     "cpu_s": 0.937,
+     "maxrss_mb": 54.2,
+     "speedup_vs_node": 7.0,
+     "cpu_ratio_node_over_rust": 5.53
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 1.627,
+     "wall_min": 1.587,
+     "wall_max": 1.644,
+     "cv_pct": 1.5,
+     "docs_per_s": 61463,
+     "cpu_s": 1.96,
+     "maxrss_mb": 345.3
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "rust-scroll2",
+     "n": 3,
+     "wall_s": 0.423,
+     "wall_min": 0.422,
+     "wall_max": 0.425,
+     "cv_pct": 0.3,
+     "docs_per_s": 236407,
+     "cpu_s": 0.442,
+     "maxrss_mb": 63.6,
+     "speedup_vs_node": 3.85,
+     "cpu_ratio_node_over_rust": 4.43
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "rust-pit8",
+     "n": 3,
+     "wall_s": 0.27,
+     "wall_min": 0.245,
+     "wall_max": 0.374,
+     "cv_pct": 18.9,
+     "docs_per_s": 370370,
+     "cpu_s": 0.522,
+     "maxrss_mb": 112.5,
+     "speedup_vs_node": 6.03,
+     "cpu_ratio_node_over_rust": 3.75
+    },
+    {
+     "scenario": "restore",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 3.811,
+     "wall_min": 3.554,
+     "wall_max": 3.996,
+     "cv_pct": 4.8,
+     "docs_per_s": 26240,
+     "cpu_s": 4.21,
+     "maxrss_mb": 512.2
+    },
+    {
+     "scenario": "restore",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 1.574,
+     "wall_min": 1.416,
+     "wall_max": 1.784,
+     "cv_pct": 9.5,
+     "docs_per_s": 63532,
+     "cpu_s": 0.826,
+     "maxrss_mb": 191.2,
+     "speedup_vs_node": 2.42,
+     "cpu_ratio_node_over_rust": 5.1
+    },
+    {
+     "scenario": "copy",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 2.811,
+     "wall_min": 2.786,
+     "wall_max": 2.982,
+     "cv_pct": 3.0,
+     "docs_per_s": 35575,
+     "cpu_s": 2.939,
+     "maxrss_mb": 497.0
+    },
+    {
+     "scenario": "copy",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 1.75,
+     "wall_min": 1.682,
+     "wall_max": 1.789,
+     "cv_pct": 2.5,
+     "docs_per_s": 57143,
+     "cpu_s": 1.084,
+     "maxrss_mb": 223.7,
+     "speedup_vs_node": 1.61,
+     "cpu_ratio_node_over_rust": 2.71
+    }
+   ],
+   "started": "2026-11-01T07:29:25-05:00",
+   "finished": "2026-11-01T07:31:21-05:00",
+   "loadavg": [
+    [
+     "2.16",
+     "1.54",
+     "2.23"
+    ],
+    [
+     "2.65",
+     "2.00",
+     "2.32"
+    ]
+   ]
+  },
+  "l1l": {
+   "docs": 1000000,
+   "raw_bytes": 1016231323,
+   "runs": 39,
+   "failures": [],
+   "checks": [
+    {
+     "check": "dump-defaults: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-5000: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-5000-gzip: node output == rust output",
+     "ok": true
+    },
+    {
+     "check": "dump-sliced: node output == rust-pit8 output",
+     "ok": true
+    },
+    {
+     "check": "dump-sliced: node output == rust-scroll2 output",
+     "ok": true
+    }
+   ],
+   "leak": {
+    "scroll_current": 24,
+    "open_contexts": 24,
+    "by_tool": {
+     "node": 24,
+     "rust": 0
+    }
+   },
+   "summary": [
+    {
+     "scenario": "dump-defaults",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 25.042,
+     "wall_min": 24.765,
+     "wall_max": 27.587,
+     "cv_pct": 4.9,
+     "docs_per_s": 39933,
+     "cpu_s": 19.569,
+     "maxrss_mb": 309.1
+    },
+    {
+     "scenario": "dump-defaults",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 15.384,
+     "wall_min": 14.21,
+     "wall_max": 16.003,
+     "cv_pct": 4.9,
+     "docs_per_s": 65003,
+     "cpu_s": 5.499,
+     "maxrss_mb": 43.5,
+     "speedup_vs_node": 1.63,
+     "cpu_ratio_node_over_rust": 3.56
+    },
+    {
+     "scenario": "dump-5000",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 13.816,
+     "wall_min": 13.258,
+     "wall_max": 14.221,
+     "cv_pct": 2.9,
+     "docs_per_s": 72380,
+     "cpu_s": 15.502,
+     "maxrss_mb": 354.4
+    },
+    {
+     "scenario": "dump-5000",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 6.864,
+     "wall_min": 6.648,
+     "wall_max": 7.052,
+     "cv_pct": 2.4,
+     "docs_per_s": 145688,
+     "cpu_s": 4.018,
+     "maxrss_mb": 72.4,
+     "speedup_vs_node": 2.01,
+     "cpu_ratio_node_over_rust": 3.86
+    },
+    {
+     "scenario": "dump-5000-gzip",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 42.631,
+     "wall_min": 42.325,
+     "wall_max": 44.137,
+     "cv_pct": 1.8,
+     "docs_per_s": 23457,
+     "cpu_s": 49.66,
+     "maxrss_mb": 1415.8
+    },
+    {
+     "scenario": "dump-5000-gzip",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 6.374,
+     "wall_min": 6.343,
+     "wall_max": 6.571,
+     "cv_pct": 1.6,
+     "docs_per_s": 156887,
+     "cpu_s": 9.102,
+     "maxrss_mb": 77.0,
+     "speedup_vs_node": 6.69,
+     "cpu_ratio_node_over_rust": 5.46
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 13.593,
+     "wall_min": 13.56,
+     "wall_max": 14.079,
+     "cv_pct": 1.7,
+     "docs_per_s": 73567,
+     "cpu_s": 15.639,
+     "maxrss_mb": 355.8
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "rust-scroll2",
+     "n": 3,
+     "wall_s": 3.878,
+     "wall_min": 3.401,
+     "wall_max": 4.035,
+     "cv_pct": 7.1,
+     "docs_per_s": 257865,
+     "cpu_s": 3.955,
+     "maxrss_mb": 97.5,
+     "speedup_vs_node": 3.51,
+     "cpu_ratio_node_over_rust": 3.95
+    },
+    {
+     "scenario": "dump-sliced",
+     "tool": "rust-pit8",
+     "n": 3,
+     "wall_s": 2.111,
+     "wall_min": 2.075,
+     "wall_max": 2.224,
+     "cv_pct": 3.0,
+     "docs_per_s": 473709,
+     "cpu_s": 4.617,
+     "maxrss_mb": 216.0,
+     "speedup_vs_node": 6.44,
+     "cpu_ratio_node_over_rust": 3.39
+    },
+    {
+     "scenario": "restore",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 33.223,
+     "wall_min": 32.473,
+     "wall_max": 34.804,
+     "cv_pct": 2.9,
+     "docs_per_s": 30100,
+     "cpu_s": 35.965,
+     "maxrss_mb": 622.5
+    },
+    {
+     "scenario": "restore",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 17.664,
+     "wall_min": 17.342,
+     "wall_max": 17.743,
+     "cv_pct": 1.0,
+     "docs_per_s": 56612,
+     "cpu_s": 8.367,
+     "maxrss_mb": 250.1,
+     "speedup_vs_node": 1.88,
+     "cpu_ratio_node_over_rust": 4.3
+    },
+    {
+     "scenario": "copy",
+     "tool": "node",
+     "n": 3,
+     "wall_s": 22.996,
+     "wall_min": 22.376,
+     "wall_max": 23.372,
+     "cv_pct": 1.8,
+     "docs_per_s": 43486,
+     "cpu_s": 24.887,
+     "maxrss_mb": 583.2
+    },
+    {
+     "scenario": "copy",
+     "tool": "rust",
+     "n": 3,
+     "wall_s": 17.643,
+     "wall_min": 17.569,
+     "wall_max": 18.397,
+     "cv_pct": 2.1,
+     "docs_per_s": 56680,
+     "cpu_s": 9.866,
+     "maxrss_mb": 346.9,
+     "speedup_vs_node": 1.3,
+     "cpu_ratio_node_over_rust": 2.52
+    }
+   ],
+   "started": "2026-11-01T07:31:37-05:00",
+   "finished": "2026-11-01T07:47:16-05:00",
+   "loadavg": [
+    [
+     "2.68",
+     "2.03",
+     "2.32"
+    ],
+    [
+     "3.28",
+     "2.86",
+     "2.66"
+    ]
+   ]
+  }
+ },
+ "targets": [
+  {
+   "target": "ES->file defaults unsliced >= 1.8x Node",
+   "l0": 1.84,
+   "l1l": 1.63,
+   "met_l0": true,
+   "met_l1l": false
+  },
+  {
+   "target": "ES->file sliced, scroll slices=shards >= 3x",
+   "l0": 3.85,
+   "l1l": 3.51,
+   "met_l0": true,
+   "met_l1l": true
+  },
+  {
+   "target": "ES->file sliced, PIT 8 slices >= 3x",
+   "l0": 6.03,
+   "l1l": 6.44,
+   "met_l0": true,
+   "met_l1l": true
+  },
+  {
+   "target": "file->ES limit 5000 conc 4 noRefresh >= 3x",
+   "l0": 2.42,
+   "l1l": 1.88,
+   "met_l0": false,
+   "met_l1l": false
+  },
+  {
+   "target": "ES->ES >= 2.5x",
+   "l0": 1.61,
+   "l1l": 1.3,
+   "met_l0": false,
+   "met_l1l": false
+  },
+  {
+   "target": "CPU >= 3x fewer CPU-s than Node",
+   "l0": {
+    "dump-defaults/rust": 4.64,
+    "dump-5000/rust": 4.82,
+    "dump-5000-gzip/rust": 5.53,
+    "dump-sliced/rust-scroll2": 4.43,
+    "dump-sliced/rust-pit8": 3.75,
+    "restore/rust": 5.1,
+    "copy/rust": 2.71
+   },
+   "l1l": {
+    "dump-defaults/rust": 3.56,
+    "dump-5000/rust": 3.86,
+    "dump-5000-gzip/rust": 5.46,
+    "dump-sliced/rust-scroll2": 3.95,
+    "dump-sliced/rust-pit8": 3.39,
+    "restore/rust": 4.3,
+    "copy/rust": 2.52
+   },
+   "met_l0": false,
+   "met_l1l": false,
+   "note": "all scenarios except copy (2.71x / 2.52x)"
+  },
+  {
+   "target": "--fsCompress >= 150 MB/s uncompressed per core (level 6)",
+   "l1l": {
+    "codec_mb_per_cpu_s": 200,
+    "whole_tool_mb_per_cpu_s": 112,
+    "wall_mb_s": 159
+   },
+   "met_l1l": true,
+   "note": "codec CPU over the uncompressed run, as in L-805"
+  }
+ ],
+ "readme_check": {
+  "setup": "quick-vs-node.py on OpenSearch 2.19.7, 512 MB heap, 100k docs (42 MB), 3 runs, release build",
+  "rows": [
+   {
+    "scenario": "dump limit=100",
+    "readme": {
+     "node_s": 3.75,
+     "rust_s": 1.36,
+     "speedup": 2.8,
+     "node_cpu": 2.6,
+     "rust_cpu": 0.26
+    },
+    "measured": {
+     "node_s": 2.85,
+     "rust_s": 1.3,
+     "speedup": 2.19,
+     "node_cpu": 2.07,
+     "rust_cpu": 0.32
+    },
+    "speedup_delta_pct": -22,
+    "rust_cpu_delta_pct": 23
+   },
+   {
+    "scenario": "dump limit=5000",
+    "readme": {
+     "node_s": 1.14,
+     "rust_s": 0.28,
+     "speedup": 4.1,
+     "node_cpu": 1.43,
+     "rust_cpu": 0.13
+    },
+    "measured": {
+     "node_s": 1.0,
+     "rust_s": 0.41,
+     "speedup": 2.44,
+     "node_cpu": 1.22,
+     "rust_cpu": 0.19
+    },
+    "speedup_delta_pct": -40,
+    "rust_cpu_delta_pct": 46
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "readme": {
+     "node_s": 3.22,
+     "rust_s": 1.02,
+     "speedup": 3.2,
+     "node_cpu": 3.36,
+     "rust_cpu": 1.09
+    },
+    "measured": {
+     "node_s": 3.32,
+     "rust_s": 0.62,
+     "speedup": 5.35,
+     "node_cpu": 3.41,
+     "rust_cpu": 0.74
+    },
+    "speedup_delta_pct": 67,
+    "rust_cpu_delta_pct": -32
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "readme": {
+     "node_s": 2.5,
+     "rust_s": 0.98,
+     "speedup": 2.6,
+     "node_cpu": 2.65,
+     "rust_cpu": 0.23
+    },
+    "measured": {
+     "node_s": 2.29,
+     "rust_s": 0.76,
+     "speedup": 3.01,
+     "node_cpu": 2.55,
+     "rust_cpu": 0.44
+    },
+    "speedup_delta_pct": 16,
+    "rust_cpu_delta_pct": 91
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "readme": {
+     "node_s": 1.92,
+     "rust_s": 1.13,
+     "speedup": 1.7,
+     "node_cpu": 2.08,
+     "rust_cpu": 0.24
+    },
+    "measured": {
+     "node_s": 1.77,
+     "rust_s": 0.92,
+     "speedup": 1.92,
+     "node_cpu": 1.96,
+     "rust_cpu": 0.54
+    },
+    "speedup_delta_pct": 13,
+    "rust_cpu_delta_pct": 125
+   }
+  ],
+  "action": "README Performance table replaced with the measured medians; raw runs in docs/bench/l808-opensearch-2.19.7-100k.json"
+ },
+ "rust_cpu_drift": {
+  "note": "Rust-only A/B on OpenSearch 2.19.7 (512 MB), quick-vs-node data (100k docs, 42 MB), 9 interleaved runs per cell after the gates; release builds of 704641c (M6, the old README table's build), c042e0c (L-633) and e9d8cc5 (head)",
+  "cells": {
+   "copy/head": {
+    "wall": 0.928,
+    "cpu": 0.507,
+    "cpu_min": 0.485,
+    "cpu_max": 0.571,
+    "ginstr": 0.0
+   },
+   "copy/l633": {
+    "wall": 0.943,
+    "cpu": 0.535,
+    "cpu_min": 0.5,
+    "cpu_max": 0.552,
+    "ginstr": 0.0
+   },
+   "copy/m6": {
+    "wall": 0.861,
+    "cpu": 0.243,
+    "cpu_min": 0.233,
+    "cpu_max": 0.256,
+    "ginstr": 0.0
+   },
+   "dump5000/head": {
+    "wall": 0.36,
+    "cpu": 0.189,
+    "cpu_min": 0.179,
+    "cpu_max": 0.224,
+    "ginstr": 0.0
+   },
+   "dump5000/l633": {
+    "wall": 0.361,
+    "cpu": 0.192,
+    "cpu_min": 0.184,
+    "cpu_max": 0.213,
+    "ginstr": 0.0
+   },
+   "dump5000/m6": {
+    "wall": 0.311,
+    "cpu": 0.134,
+    "cpu_min": 0.126,
+    "cpu_max": 0.156,
+    "ginstr": 0.0
+   },
+   "restore/head": {
+    "wall": 0.699,
+    "cpu": 0.442,
+    "cpu_min": 0.421,
+    "cpu_max": 0.46,
+    "ginstr": 0.0
+   },
+   "restore/l633": {
+    "wall": 0.719,
+    "cpu": 0.418,
+    "cpu_min": 0.404,
+    "cpu_max": 0.466,
+    "ginstr": 0.0
+   },
+   "restore/m6": {
+    "wall": 0.729,
+    "cpu": 0.223,
+    "cpu_min": 0.218,
+    "cpu_max": 0.235,
+    "ginstr": 0.0
+   }
+  },
+  "first_ab": "an earlier 5-run A/B (m6 vs head) gave the same: restore 0.246 vs 0.477, copy 0.265 vs 0.574, dump5000 0.155 vs 0.209 CPU-s",
+  "verdict": "real: M6 and head CPU-s ranges do not overlap in any cell (restore 0.218-0.235 vs 0.421-0.460; copy 0.233-0.256 vs 0.485-0.571). Wall is 4-14% slower because the engine bounds it. The increase is already present at L-633",
+  "bisect": "inconclusive. git bisect run (3 non-interleaved runs per step, fixed 0.36 CPU-s threshold) named 3e5a706 (L-618), which only changes tests/it; a test-only commit cannot change the binary, so it is a false positive from noise (its L-633 sample read 0.308, against 0.418 in the 9-run A/B). The commit(s) responsible are not identified",
+  "profile_hint": "perf on head restore (not compared with M6): sonic_rs skip_one about 27%, ValueSplitter::next_value 12%, bulk::check_doc_line 9%, get_from_object 5%; a hint, not an attribution",
+  "action": "no code change in L-808; for the lead: bisect 704641c..c042e0c with interleaved runs, then decide whether the cost is intended"
+ },
+ "findings": [
+  "Node leaves every scroll context open (2 per dump on 2 shards, until scrollTime); elasticdump-rs leaves none (checked after every run).",
+  "Node and Rust dump outputs are digest-equal in all 5 dump cells at both tiers. Byte sizes differ (Node about 2 B/doc smaller; Rust PIT about 19 B/doc larger) by metadata formatting only.",
+  "Restore and copy: Rust uses 0.47-0.56 of a core, Node about 1.08 cores. Node is CPU-bound, Rust waits on the single engine node (L-807: restore reaches 85k docs/s at --concurrency 16). The 3x/2.5x targets need a bigger engine: Phase B.",
+  "Unsliced defaults (--limit 100) are round-trip bound for Rust: 1.84x at 100k, 1.63x at 1M (target 1.8x).",
+  "Node --fsCompress RSS reached 1.4 GB at 1M; Rust stays at 77 MB."
+ ],
+ "phase_b": [
+  "Node at 10M on a quiet machine (hours)",
+  "\u00a78 restore/copy ratios against a multi-node engine",
+  "Rust CPU increase since M6 (2x on restore/copy, real, unattributed): proper bisect 704641c..c042e0c and decision (lead)"
+ ]
+}

@@ -6,6 +6,9 @@
 
 Seeds index `bsrc` (N docs, 2 shards) and times dump / restore / copy for both
 tools. Results go to $BENCH_DIR/results.json. Deletes `bsrc` and `bdst`.
+
+For repeated runs at 100k/1M with digest checks and the PLAN.md §8 scenarios, use
+scripts/load/nodecmp.py (LOAD-011).
 """
 import json, os, resource, subprocess, sys, time, urllib.request, random
 URL = os.environ.get("URL", "http://127.0.0.1:19200")

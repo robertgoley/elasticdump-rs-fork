@@ -2,7 +2,7 @@
 
 The task plan delegated to the other agent (Grok 4.7 through OpenCode, using [`project/handoff/HANDOFF-GROK-OPENCODE.md`](project/handoff/HANDOFF-GROK-OPENCODE.md)). Everything below is assigned to it; it commits each task to `main` as `L-NNN: ...` and adds a row to [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Finished tasks move to [TESTING-COMPLETED.md](TESTING-COMPLETED.md). Tests outside this plan are in [TESTING-TODO.md](TESTING-TODO.md).
 
-Status as of `main` at L-807 (2026-11-01): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705, L-801, the L-455c fix-up (empty `_source` refused unless `--allowMissingSource`), L-802 (memory checks; README memory formula changed, pending lead review), L-803 (kill/resume runs), L-802a (allocator study; default allocator unchanged, owner decision pending), L-804 (fault injection at 1M; non-zero exits await lead classification) L-805 (compression levels; README numbers updated), L-806 (splitting at scale) and L-807 (concurrency curves; box baseline committed). **Next: L-808.** L-703 was skipped and is still open.
+Status as of `main` at L-808 (2026-11-01): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705, L-801, the L-455c fix-up (empty `_source` refused unless `--allowMissingSource`), L-802 (memory checks; README memory formula changed, pending lead review), L-803 (kill/resume runs), L-802a (allocator study; default allocator unchanged, owner decision pending), L-804 (fault injection at 1M; non-zero exits await lead classification) L-805 (compression levels; README numbers updated), L-806 (splitting at scale), L-807 (concurrency curves; box baseline committed) and L-808 (Node comparison; README Performance table re-measured). **Next: L-809.** L-703 was skipped and is still open.
 
 Who: impl = bounded code card, runner = scripted campaign, lead = supervised session for security-sensitive work, review = independent read-only review of every change.
 
@@ -29,7 +29,6 @@ Scale: L0 100k docs and L1-lite 1M docs, disk at most 12 GB.
 
 | Item | Req | Who | Note |
 |---|---|---|---|
-| L-808 | LOAD-011 | runner | Node comparison at 100k/1M (Node in /tmp/ed) |
 | L-809 | LOAD-014 | runner | 300 indices campaign |
 | L-810 | LOAD-015 | impl/runner → lead | large docs; 413/limit wording is lead's |
 | L-811 | LOAD-017 | impl | leak check in teardown of each run (script change in scripts/load) |

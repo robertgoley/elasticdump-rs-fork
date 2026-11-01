@@ -261,3 +261,38 @@ Checks:
 
 Output goes to `results/load/<run-id>/curves.json` and `curves.csv`. On the shared 8-vCPU box the curves are trends;
 the authoritative 10M curves on dedicated cores are Phase B (B10).
+
+## Node comparison (LOAD-011, L-808, `nodecmp.py`)
+
+`python3 scripts/load/nodecmp.py <tier> [--docs N] [--reps 3] [--node PATH] [--scenarios a,b,...] [--run-id ID] [--keep]`
+
+This is the load-scale version of `scripts/benchmark/quick-vs-node.py`. It runs the README Performance scenarios and
+the PLAN.md §8 scenarios for upstream Node elasticdump and for elasticdump-rs, with the same flags for both. The Node
+CLI defaults to `/tmp/ed/node_modules/.bin/elasticdump`, or `$NODE_ED`. It must be installed with
+`--ignore-scripts`; the script only runs the CLI and never runs npm.
+
+The script provisions one engine without a CPU cap and seeds `load-logs`. It splits that index into a 2-shard copy,
+force-merges it and dumps a reference. Each rep runs these scenarios, in shuffled order and with the two tools in
+shuffled order:
+
+- **dump-defaults:** no flags (limit 100).
+- **dump-5000:** `--limit 5000`.
+- **dump-5000-gzip:** `--limit 5000 --fsCompress`.
+- **dump-sliced:** Node `--limit 5000` against Rust `--slices 2` (= shards) and Rust `--searchAfter --pit --slices 8`.
+- **restore:** the reference into a fresh 2-shard index, `--limit 5000 --concurrency 4 --noRefresh`.
+- **copy:** index to index, with the same flags.
+
+Each run records wall s, docs/s, CPU-s and max RSS (wait4), plus the scroll contexts it left open on the engine. The
+summary gives the median, CV, the speed-up against Node and the Node/Rust CPU ratio.
+
+Checks:
+
+- Every run exits 0. Restore and copy reach the full count.
+- On the first rep, every dump is digest-equal to the index. Each Node output is digest-equal to each Rust output for
+  the same scenario. Restore and copy targets are digest-equal to the source.
+- No Rust run leaves a scroll context open. Node does leave them open (one per shard until `scrollTime` expires);
+  this is recorded, not failed.
+
+Output goes to `results/load/<run-id>/nodecmp.json`. The ratios are reported against the §8 targets, not asserted:
+on the shared box, one engine node next to both tools bounds restore and copy. Node at 10M on a quiet machine is
+Phase B.

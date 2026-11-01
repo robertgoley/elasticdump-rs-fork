@@ -515,19 +515,25 @@ run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L
 ## Performance
 
 `scripts/benchmark/quick-vs-node.py` against a single-node OpenSearch 2.19.7 (512 MB heap, podman, same host,
-100k docs ≈ 42 MB, `it` profile build). Raw numbers: [`docs/bench/`](docs/bench/).
+100k docs ≈ 42 MB, release build; medians of 3 runs, L-808). Raw numbers: [`docs/bench/`](docs/bench/).
 
 | Scenario | Node 6.125.1 | elasticdump-rs | Speed-up | CPU-s Node / Rust |
 |---|---|---|---|---|
-| dump, defaults (`--limit 100`) | 3.75–4.28 s | 1.36–1.51 s | 2.8× | 2.6 / 0.26 |
-| dump `--limit 5000` | 1.14 s | 0.28 s | 4.1× | 1.43 / 0.13 |
-| dump `--limit 5000 --fsCompress` | 3.22 s | 1.02 s | 3.2× | 3.36 / 1.09 |
-| dump `--limit 5000 --compressionType zstd` | – | 0.29 s | – | – / 0.18 |
-| restore `--limit 5000 --concurrency 4 --noRefresh` | 2.50 s | 0.98 s | 2.6× | 2.65 / 0.23 |
-| copy `--limit 5000 --concurrency 4 --noRefresh` | 1.92 s | 1.13 s | 1.7× | 2.08 / 0.24 |
+| dump, defaults (`--limit 100`) | 2.85 s | 1.30 s | 2.2× | 2.07 / 0.32 |
+| dump `--limit 5000` | 1.00 s | 0.41 s | 2.4× | 1.22 / 0.19 |
+| dump `--limit 5000 --fsCompress` | 3.32 s | 0.62 s | 5.4× | 3.41 / 0.74 |
+| dump `--limit 5000 --compressionType zstd` | – | 0.36 s | – | – / 0.27 |
+| restore `--limit 5000 --concurrency 4 --noRefresh` | 2.29 s | 0.76 s | 3.0× | 2.55 / 0.44 |
+| copy `--limit 5000 --concurrency 4 --noRefresh` | 1.77 s | 0.92 s | 1.9× | 1.96 / 0.54 |
 
-Restore and copy are bound by the single 512 MB OpenSearch node here; the CPU column (9–11× less) is the
-portable result.
+Restore and copy are bound by the single 512 MB OpenSearch node here; the CPU column (4.6–6.5× less, 3.6× for
+copy) is the more portable result.
+
+At 1M docs of about 1 KB (1.02 GB NDJSON, edgen `logs`, Elasticsearch 7.17 on a 2-shard index, no CPU cap;
+`scripts/load/nodecmp.py`, medians of 3 runs, [`results/local/L-808.md`](results/local/L-808.md)), the same flags
+give 1.6× (defaults), 2.0× (`--limit 5000`), 6.7× (`--fsCompress`), 1.9× (restore) and 1.3× (copy). Sliced
+dumps, which Node cannot do, give 3.5× (`--slices 2` = shards) and 6.4× (`--searchAfter --pit --slices 8`). The
+CPU ratio is 2.5–5.5× less. Node output and elasticdump-rs output are digest-equal in every dump scenario.
 
 Compression levels at 1M docs (1.01 GB of NDJSON, edgen `logs` profile, es717-plain; medians of 3 runs, zstd 19 one run;
 [`results/local/L-805.md`](results/local/L-805.md)). Per-core speed is the uncompressed MB divided by the CPU-s the codec

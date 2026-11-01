@@ -1,0 +1,403 @@
+{
+ "n_docs": 100000,
+ "dataset_bytes": 42052460,
+ "engine": "opensearch 2.19.7, single node, 512 MB heap, podman, same host",
+ "node": "elasticdump 6.125.1 on node v24.22.1",
+ "rust": "release profile at e9d8cc5",
+ "script": "scripts/benchmark/quick-vs-node.py, 3 runs",
+ "task": "L-808",
+ "runs": [
+  [
+   {
+    "scenario": "dump limit=100",
+    "tool": "node",
+    "seconds": 3.83,
+    "docs_per_s": 26119,
+    "cpu_s": 2.23,
+    "max_rss_mb_cumulative": 257
+   },
+   {
+    "scenario": "dump limit=100",
+    "tool": "rust",
+    "seconds": 1.8,
+    "docs_per_s": 55437,
+    "cpu_s": 0.39,
+    "max_rss_mb_cumulative": 257
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "node",
+    "seconds": 1.05,
+    "docs_per_s": 95330,
+    "cpu_s": 1.27,
+    "max_rss_mb_cumulative": 257
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "rust",
+    "seconds": 0.43,
+    "docs_per_s": 233668,
+    "cpu_s": 0.2,
+    "max_rss_mb_cumulative": 257
+   },
+   {
+    "scenario": "dump limit=5000 sliced PIT x4",
+    "tool": "rust",
+    "seconds": 0.72,
+    "docs_per_s": 138180,
+    "cpu_s": 0.26,
+    "max_rss_mb_cumulative": 257
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "node",
+    "seconds": 3.32,
+    "docs_per_s": 30103,
+    "cpu_s": 3.41,
+    "max_rss_mb_cumulative": 297
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "rust",
+    "seconds": 0.61,
+    "docs_per_s": 162758,
+    "cpu_s": 0.74,
+    "max_rss_mb_cumulative": 297
+   },
+   {
+    "scenario": "dump limit=5000 zstd",
+    "tool": "rust",
+    "seconds": 0.36,
+    "docs_per_s": 277797,
+    "cpu_s": 0.27,
+    "max_rss_mb_cumulative": 297
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "node",
+    "seconds": 2.32,
+    "docs_per_s": 43099,
+    "cpu_s": 2.55,
+    "max_rss_mb_cumulative": 366
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "rust",
+    "seconds": 0.78,
+    "docs_per_s": 128015,
+    "cpu_s": 0.43,
+    "max_rss_mb_cumulative": 366
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "node",
+    "seconds": 1.74,
+    "docs_per_s": 57540,
+    "cpu_s": 1.92,
+    "max_rss_mb_cumulative": 377
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "rust",
+    "seconds": 0.92,
+    "docs_per_s": 108398,
+    "cpu_s": 0.54,
+    "max_rss_mb_cumulative": 377
+   }
+  ],
+  [
+   {
+    "scenario": "dump limit=100",
+    "tool": "node",
+    "seconds": 2.85,
+    "docs_per_s": 35070,
+    "cpu_s": 2.0,
+    "max_rss_mb_cumulative": 256
+   },
+   {
+    "scenario": "dump limit=100",
+    "tool": "rust",
+    "seconds": 1.3,
+    "docs_per_s": 76854,
+    "cpu_s": 0.32,
+    "max_rss_mb_cumulative": 256
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "node",
+    "seconds": 0.96,
+    "docs_per_s": 104031,
+    "cpu_s": 1.15,
+    "max_rss_mb_cumulative": 256
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "rust",
+    "seconds": 0.41,
+    "docs_per_s": 246621,
+    "cpu_s": 0.19,
+    "max_rss_mb_cumulative": 256
+   },
+   {
+    "scenario": "dump limit=5000 sliced PIT x4",
+    "tool": "rust",
+    "seconds": 0.48,
+    "docs_per_s": 206486,
+    "cpu_s": 0.26,
+    "max_rss_mb_cumulative": 256
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "node",
+    "seconds": 3.34,
+    "docs_per_s": 29931,
+    "cpu_s": 3.47,
+    "max_rss_mb_cumulative": 278
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "rust",
+    "seconds": 0.63,
+    "docs_per_s": 159571,
+    "cpu_s": 0.73,
+    "max_rss_mb_cumulative": 278
+   },
+   {
+    "scenario": "dump limit=5000 zstd",
+    "tool": "rust",
+    "seconds": 0.37,
+    "docs_per_s": 268729,
+    "cpu_s": 0.27,
+    "max_rss_mb_cumulative": 278
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "node",
+    "seconds": 2.29,
+    "docs_per_s": 43743,
+    "cpu_s": 2.6,
+    "max_rss_mb_cumulative": 362
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "rust",
+    "seconds": 0.74,
+    "docs_per_s": 134273,
+    "cpu_s": 0.44,
+    "max_rss_mb_cumulative": 362
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "node",
+    "seconds": 1.78,
+    "docs_per_s": 56302,
+    "cpu_s": 1.96,
+    "max_rss_mb_cumulative": 377
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "rust",
+    "seconds": 0.97,
+    "docs_per_s": 103013,
+    "cpu_s": 0.54,
+    "max_rss_mb_cumulative": 377
+   }
+  ],
+  [
+   {
+    "scenario": "dump limit=100",
+    "tool": "node",
+    "seconds": 2.74,
+    "docs_per_s": 36455,
+    "cpu_s": 2.07,
+    "max_rss_mb_cumulative": 260
+   },
+   {
+    "scenario": "dump limit=100",
+    "tool": "rust",
+    "seconds": 1.15,
+    "docs_per_s": 86762,
+    "cpu_s": 0.31,
+    "max_rss_mb_cumulative": 260
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "node",
+    "seconds": 1.0,
+    "docs_per_s": 100199,
+    "cpu_s": 1.22,
+    "max_rss_mb_cumulative": 260
+   },
+   {
+    "scenario": "dump limit=5000",
+    "tool": "rust",
+    "seconds": 0.33,
+    "docs_per_s": 302468,
+    "cpu_s": 0.17,
+    "max_rss_mb_cumulative": 260
+   },
+   {
+    "scenario": "dump limit=5000 sliced PIT x4",
+    "tool": "rust",
+    "seconds": 0.45,
+    "docs_per_s": 220641,
+    "cpu_s": 0.27,
+    "max_rss_mb_cumulative": 260
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "node",
+    "seconds": 3.31,
+    "docs_per_s": 30181,
+    "cpu_s": 3.35,
+    "max_rss_mb_cumulative": 267
+   },
+   {
+    "scenario": "dump limit=5000 gzip",
+    "tool": "rust",
+    "seconds": 0.62,
+    "docs_per_s": 162422,
+    "cpu_s": 0.74,
+    "max_rss_mb_cumulative": 267
+   },
+   {
+    "scenario": "dump limit=5000 zstd",
+    "tool": "rust",
+    "seconds": 0.35,
+    "docs_per_s": 285694,
+    "cpu_s": 0.26,
+    "max_rss_mb_cumulative": 267
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "node",
+    "seconds": 2.12,
+    "docs_per_s": 47100,
+    "cpu_s": 2.46,
+    "max_rss_mb_cumulative": 362
+   },
+   {
+    "scenario": "restore limit=5000 conc=4 noRefresh",
+    "tool": "rust",
+    "seconds": 0.76,
+    "docs_per_s": 131210,
+    "cpu_s": 0.44,
+    "max_rss_mb_cumulative": 362
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "node",
+    "seconds": 1.77,
+    "docs_per_s": 56423,
+    "cpu_s": 1.98,
+    "max_rss_mb_cumulative": 381
+   },
+   {
+    "scenario": "copy limit=5000 conc=4",
+    "tool": "rust",
+    "seconds": 0.91,
+    "docs_per_s": 109749,
+    "cpu_s": 0.53,
+    "max_rss_mb_cumulative": 381
+   }
+  ]
+ ],
+ "median": [
+  {
+   "scenario": "dump limit=100",
+   "tool": "node",
+   "seconds": 2.85,
+   "seconds_min": 2.74,
+   "seconds_max": 3.83,
+   "cpu_s": 2.07
+  },
+  {
+   "scenario": "dump limit=100",
+   "tool": "rust",
+   "seconds": 1.3,
+   "seconds_min": 1.15,
+   "seconds_max": 1.8,
+   "cpu_s": 0.32
+  },
+  {
+   "scenario": "dump limit=5000",
+   "tool": "node",
+   "seconds": 1.0,
+   "seconds_min": 0.96,
+   "seconds_max": 1.05,
+   "cpu_s": 1.22
+  },
+  {
+   "scenario": "dump limit=5000",
+   "tool": "rust",
+   "seconds": 0.41,
+   "seconds_min": 0.33,
+   "seconds_max": 0.43,
+   "cpu_s": 0.19
+  },
+  {
+   "scenario": "dump limit=5000 sliced PIT x4",
+   "tool": "rust",
+   "seconds": 0.48,
+   "seconds_min": 0.45,
+   "seconds_max": 0.72,
+   "cpu_s": 0.26
+  },
+  {
+   "scenario": "dump limit=5000 gzip",
+   "tool": "node",
+   "seconds": 3.32,
+   "seconds_min": 3.31,
+   "seconds_max": 3.34,
+   "cpu_s": 3.41
+  },
+  {
+   "scenario": "dump limit=5000 gzip",
+   "tool": "rust",
+   "seconds": 0.62,
+   "seconds_min": 0.61,
+   "seconds_max": 0.63,
+   "cpu_s": 0.74
+  },
+  {
+   "scenario": "dump limit=5000 zstd",
+   "tool": "rust",
+   "seconds": 0.36,
+   "seconds_min": 0.35,
+   "seconds_max": 0.37,
+   "cpu_s": 0.27
+  },
+  {
+   "scenario": "restore limit=5000 conc=4 noRefresh",
+   "tool": "node",
+   "seconds": 2.29,
+   "seconds_min": 2.12,
+   "seconds_max": 2.32,
+   "cpu_s": 2.55
+  },
+  {
+   "scenario": "restore limit=5000 conc=4 noRefresh",
+   "tool": "rust",
+   "seconds": 0.76,
+   "seconds_min": 0.74,
+   "seconds_max": 0.78,
+   "cpu_s": 0.44
+  },
+  {
+   "scenario": "copy limit=5000 conc=4",
+   "tool": "node",
+   "seconds": 1.77,
+   "seconds_min": 1.74,
+   "seconds_max": 1.78,
+   "cpu_s": 1.96
+  },
+  {
+   "scenario": "copy limit=5000 conc=4",
+   "tool": "rust",
+   "seconds": 0.92,
+   "seconds_min": 0.91,
+   "seconds_max": 0.97,
+   "cpu_s": 0.54
+  }
+ ]
+}
