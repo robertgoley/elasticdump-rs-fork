@@ -2,7 +2,7 @@
 
 The task plan delegated to the other agent (Grok 4.7 through OpenCode, using [`project/handoff/HANDOFF-GROK-OPENCODE.md`](project/handoff/HANDOFF-GROK-OPENCODE.md)). Everything below is assigned to it; it commits each task to `main` as `L-NNN: ...` and adds a row to [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Finished tasks move to [TESTING-COMPLETED.md](TESTING-COMPLETED.md). Tests outside this plan are in [TESTING-TODO.md](TESTING-TODO.md).
 
-Status as of `main` at L-801 (2026-10-31): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705 and L-801. **Next: L-802.** L-703 was skipped and is still open.
+Status as of `main` at L-455c (2026-10-31): the agent finished A6 (L-643 to L-657), L-701, L-702, L-704, L-705, L-801 and the L-455c fix-up (empty `_source` refused unless `--allowMissingSource`). **Next: L-802.** L-703 was skipped and is still open.
 
 Who: impl = bounded code card, runner = scripted campaign, lead = supervised session for security-sensitive work, review = independent read-only review of every change.
 

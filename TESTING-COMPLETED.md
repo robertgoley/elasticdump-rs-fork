@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 184 task commits (including follow-up fixes with a letter suffix). Last updated from commit `8cad039`.
+Total: 186 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-455c (`git log -1 --grep '^L-455c'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -52,6 +52,7 @@ Total: 184 task commits (including follow-up fixes with a letter suffix). Last u
 | Task | Commit | Date | Result |
 |---|---|---|---|
 | L-305 | `99f1a7f` | 2026-10-29 | INF-005: edverify document-set verifier (multiset SHA-256 digest, buckets, diff names ids, files gz/zst/split, own sliced-scroll cluster reader) |
+| L-309/L-318/L-320/L-321 | `702f87a` | 2026-10-29 | INF-009, DATA-001/005/010: edgen seeded generator (8 profiles, mappings, edge catalogue, golden hashes) and converters (rally/clf/loghub, deterministic ids) |
 | L-319 | `6b3ff5a` | 2026-10-29 | DATA-004, INF-008: datasets.toml manifest (19 entries, 11 pinned, licence classes), fetch.sh cache manager with resume/checksum/licence gate/prefix, convert.sh, offline selftest |
 | L-307 | `48ef459` | 2026-10-29 | INF-007: resource guards (flock serialisation, per-profile memory/disk preflight with SKIP or IT_REQUIRED=1 failure, container --memory/--cpus caps, loopback ports) |
 | L-306 | `b49c5c1` | 2026-10-29 | INF-006: measure.sh metrics wrapper (rusage + /proc sampling, stderr parsing, cluster stats), edrs-metrics/v1 schema + validator, compare.py regression gate |
@@ -128,6 +129,7 @@ Total: 184 task commits (including follow-up fixes with a letter suffix). Last u
 | L-431a | `b0f9106` | 2026-10-31 | a TLS client-certificate rejection is never retried (fixes the tls_failures_have_one_clear_message flake) |
 | L-455a | `a74656d` | 2026-10-31 | a missing _source caused by stored_fields in the search body is named as such (still refused by default); was already failing on 38fb47c |
 | L-455b | `f2818bf` | 2026-10-31 | refuse a search body that turns _source off unless --allowMissingSource |
+| L-455c | this commit (`git log --grep '^L-455c'`) | 2026-10-31 | behaviour change: an empty _source ({}) is refused like a missing one unless --allowMissingSource; an excludes-all _source filter is refused before the first search |
 
 ## Property tests, fuzzing and injection (L-5xx)
 
@@ -226,3 +228,9 @@ Total: 184 task commits (including follow-up fixes with a letter suffix). Last u
 | L-702a | `259d3c4` | 2026-10-31 | lint every workflow with reinstalled actionlint/zizmor; fix own nightly jobs |
 | L-704 | `fdab304` | 2026-10-31 | reproducible-build check (SUP-010) |
 | L-705 | `73c3ad6` | 2026-10-31 | release-candidate behaviour diff (SUP-016) |
+
+## Load and data generation (L-8xx)
+
+| Task | Commit | Date | Result |
+|---|---|---|---|
+| L-801 | `8cad039` | 2026-10-31 | LOAD-004 scenario matrix with correctness and perf gates (25 cells; five baselines; L1 10M needs a dedicated load host) |

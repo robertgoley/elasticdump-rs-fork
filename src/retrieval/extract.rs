@@ -298,6 +298,40 @@ fn missing_source_error(hit: &LazyValue<'_>, body: super::BodySource) -> anyhow:
     )
 }
 
+/// `{}` with any whitespace inside (L-455c).
+fn is_empty_object(raw: &[u8]) -> bool {
+    let mut it = raw.iter().filter(|c| !c.is_ascii_whitespace());
+    it.next() == Some(&b'{') && it.next() == Some(&b'}') && it.next().is_none()
+}
+
+/// A hit whose `_source` is `{}` (L-455c): with a `_source` filter in the search body that
+/// is the likely cause; without one the document itself is empty in the source index, and
+/// an empty document needs --allowMissingSource too. Names the hit's `_index` and `_id`.
+fn empty_source_error(hit: &LazyValue<'_>, body: super::BodySource) -> anyhow::Error {
+    let field = |k: &str| {
+        let s: String = hit
+            .get(k)
+            .map(|v| {
+                v.as_str()
+                    .map_or_else(|| v.as_raw_str().to_string(), str::to_string)
+            })
+            .unwrap_or_else(|| "?".to_string())
+            .chars()
+            .take(200)
+            .collect();
+        s.escape_debug().to_string()
+    };
+    let (index, id) = (field("_index"), field("_id"));
+    if body == super::BodySource::Filter {
+        return anyhow!(
+            "documents cannot be fully dumped: document '{id}' in index '{index}' has an empty _source ({{}}), most likely because the search body's _source filter leaves none of its fields (or the document is really empty in the source index). Nothing of this page was written; change the _source filter to keep the documents, or pass --allowMissingSource to dump them with an empty _source"
+        );
+    }
+    anyhow!(
+        "documents cannot be fully dumped: document '{id}' in index '{index}' has an empty _source ({{}}): the document is empty in the source index (or the index mapping's _source includes/excludes leave none of its fields). An empty document counts as one without _source; nothing of this page was written; pass --allowMissingSource to dump empty documents as they are"
+    )
+}
+
 /// A response body that is not a search response (TST-BRK-NET-011): say what it looks like.
 fn malformed(body: &Bytes, e: anyhow::Error) -> anyhow::Error {
     if body.starts_with(&[0x1f, 0x8b]) {
@@ -340,8 +374,14 @@ pub(crate) fn extract_batch(
     for hit in iter {
         let hit = hit.map_err(|e| malformed(response_bytes, e.into()))?;
         doc_count += 1;
-        if require_source && hit.get("_source").is_none() {
-            return Err(missing_source_error(&hit, body_drops_source));
+        if require_source {
+            match hit.get("_source") {
+                None => return Err(missing_source_error(&hit, body_drops_source)),
+                Some(s) if is_empty_object(s.as_raw_str().as_bytes()) => {
+                    return Err(empty_source_error(&hit, body_drops_source));
+                }
+                Some(_) => {}
+            }
         }
 
         // The cluster returns `_source` byte for byte as indexed, so a
@@ -380,11 +420,62 @@ pub(crate) fn extract_batch(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_hits_and_last_sort_raw, extract_batch, extract_batch_metadata, missing_source_error,
-        require_hits_array,
+        count_hits_and_last_sort_raw, empty_source_error, extract_batch, extract_batch_metadata,
+        is_empty_object, missing_source_error, require_hits_array,
     };
     use crate::cli::SearchType;
     use bytes::Bytes;
+
+    // L-455c: an empty _source ({}) is detected with any inner whitespace and named with
+    // the hit's _index/_id (escaped) and the likely cause; a filter that excludes every
+    // field is found before the first search
+    #[test]
+    fn empty_source_is_detected_and_named() {
+        for raw in ["{}", "{ }", "{\n  }", " {\t} "] {
+            assert!(is_empty_object(raw.as_bytes()), "{raw:?}");
+        }
+        for raw in ["{\"a\":1}", "[]", "\"{}\"", "{}{}", "null"] {
+            assert!(!is_empty_object(raw.as_bytes()), "{raw:?}");
+        }
+        let hit = sonic_rs::from_str::<sonic_rs::LazyValue<'_>>(
+            r#"{"_index":"i1","_id":"d\u001b9","_source":{}}"#,
+        )
+        .unwrap();
+        let doc = empty_source_error(&hit, super::super::BodySource::Kept).to_string();
+        assert!(
+            doc.contains("document 'd\\u{1b}9' in index 'i1' has an empty _source ({})")
+                && doc.contains("the document is empty in the source index")
+                && doc.contains("--allowMissingSource")
+                && !doc.contains("search body"),
+            "{doc}"
+        );
+        let filt = empty_source_error(&hit, super::super::BodySource::Filter).to_string();
+        assert!(
+            filt.contains("the search body's _source filter leaves none of its fields")
+                && filt.contains("--allowMissingSource"),
+            "{filt}"
+        );
+        let all =
+            |b: &str| super::super::source_filter_excludes_all(&sonic_rs::from_str(b).unwrap());
+        assert_eq!(
+            all(r#"{"_source":{"excludes":["x","*"]}}"#).as_deref(),
+            Some("*")
+        );
+        assert_eq!(
+            all(r#"{"_source":{"exclude":"**"}}"#).as_deref(),
+            Some("**")
+        );
+        for keep in [
+            r#"{"_source":{"excludes":["x*","*y"]}}"#,
+            r#"{"_source":{"includes":["*"]}}"#,
+            r#"{"_source":["*"]}"#,
+            r#"{"_source":"*"}"#,
+            r#"{"_source":{"excludes":[""]}}"#,
+            r#"{"query":{"match_all":{}}}"#,
+        ] {
+            assert_eq!(all(keep), None, "{keep}");
+        }
+    }
 
     // L-455a: a hit without _source names the search body when it set stored_fields
     // without _source, and the mapping otherwise

@@ -379,7 +379,7 @@ async fn malformed_auth_file_is_an_error() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn size_stops_early_and_clears_scroll() {
-    let hits: Vec<String> = (1..=5).map(|i| hit(&i.to_string(), "{}")).collect();
+    let hits: Vec<String> = (1..=5).map(|i| hit(&i.to_string(), r#"{"n":1}"#)).collect();
     // The reader may or may not issue one continuation before it observes
     // the --size cancellation; an empty page keeps both orders valid.
     let mock = MockEs::serve(vec![
@@ -1106,9 +1106,9 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
         &input,
         format!(
             "{}\n{}\n{}\n",
-            hit("1", "{}"),
-            hit("2", "{}"),
-            hit("3", "{}")
+            hit("1", r#"{"n":1}"#),
+            hit("2", r#"{"n":1}"#),
+            hit("3", r#"{"n":1}"#)
         ),
     )
     .unwrap();
@@ -1179,9 +1179,9 @@ async fn warning_headers_are_logged_once_and_not_fatal() {
             Reply::ok(r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#)
                 .with_header("X-Elastic-Product", "Elasticsearch"),
         ))
-        .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(page("s1", &[hit("1", "{}")], 2)).with_header("Warning", w)))
+        .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(page("s1", &[hit("1", r#"{"n":1}"#)], 2)).with_header("Warning", w)))
         .route(Route::exact("POST", "/_search/scroll").replies([
-            Reply::ok(page("s1", &[hit("2", "{}")], 2)).with_header("Warning", w),
+            Reply::ok(page("s1", &[hit("2", r#"{"n":1}"#)], 2)).with_header("Warning", w),
             Reply::ok(page("s1", &[], 2)).with_header("Warning", w),
         ]))
         .route(Route::prefix("DELETE", "/_search/scroll").reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)))
@@ -1837,7 +1837,7 @@ async fn http_5xx_per_request_kind() {
         let m = RouterMock::builder()
             .route(Route::contains("POST", "/idx/_search").replies([
                 Reply::json(status, &fail),
-                Reply::ok(page("s1", &[hit("1", "{}")], 3)),
+                Reply::ok(page("s1", &[hit("1", r#"{"n":1}"#)], 3)),
             ]))
             .route(Route::exact("POST", "/_search/scroll").reply(Reply::json(status, &fail)))
             .route(
@@ -1905,13 +1905,13 @@ async fn partial_results_fail_and_commit_nothing() {
     let ok = |sid: &str, ids: &[&str]| {
         page(
             sid,
-            &ids.iter().map(|i| hit(i, "{}")).collect::<Vec<_>>(),
+            &ids.iter().map(|i| hit(i, r#"{"n":1}"#)).collect::<Vec<_>>(),
             4,
         )
     };
     let failed_slice1 = r#"{"_scroll_id":"s1","timed_out":false,"_shards":{"total":2,"successful":1,"skipped":0,"failed":1,"failures":[{"shard":1,"index":"idx","node":"n","reason":{"type":"circuit_breaking_exception","reason":"[parent] Data too large"}}]},"hits":{"total":{"value":4,"relation":"eq"},"hits":[]}}"#;
     let timed_out = r#"{"_scroll_id":"s0","timed_out":true,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":4,"relation":"eq"},"hits":[]}}"#;
-    let skipped = r#"{"_scroll_id":"s0","timed_out":false,"_shards":{"total":4,"successful":4,"skipped":3,"failed":0},"hits":{"total":{"value":2,"relation":"eq"},"hits":[{"_index":"idx","_id":"a","_source":{}},{"_index":"idx","_id":"b","_source":{}}]}}"#;
+    let skipped = r#"{"_scroll_id":"s0","timed_out":false,"_shards":{"total":4,"successful":4,"skipped":3,"failed":0},"hits":{"total":{"value":2,"relation":"eq"},"hits":[{"_index":"idx","_id":"a","_source":{"n":1}},{"_index":"idx","_id":"b","_source":{"n":1}}]}}"#;
     let cases: Vec<(&str, RouterMock, Vec<&str>, Option<&str>)> = vec![
         (
             "one slice fails",
@@ -2489,7 +2489,7 @@ async fn stalled_server_fails_within_the_idle_timeout() {
     use support::router_mock::{Fault, Reply, Route, RouterMock};
     let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
     let stall = Duration::from_secs(60);
-    let body = page("s1", &[hit("1", "{}")], 1);
+    let body = page("s1", &[hit("1", r#"{"n":1}"#)], 1);
     for (label, fault) in [
         ("never answers", Fault::Delay(stall)),
         ("headers then silence", Fault::StallAfterHeaders(stall)),
@@ -2558,14 +2558,14 @@ async fn stale_keep_alive_connections_do_not_fail_continuations() {
             .route(
                 Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
                     "s1",
-                    &[hit("1", "{}")],
+                    &[hit("1", r#"{"n":1}"#)],
                     N,
                 ))),
             )
             .route(
                 Route::exact("POST", "/_search/scroll").replies(
                     (2..=N)
-                        .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), "{}")], N)))
+                        .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), r#"{"n":1}"#)], N)))
                         .chain([Reply::ok(page("s1", &[], N))]),
                 ),
             )
@@ -2767,7 +2767,7 @@ async fn scroll_total_mismatch_is_an_error() {
         .route(
             Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
                 "s1",
-                &[hit("1", "{}"), hit("2", "{}")],
+                &[hit("1", r#"{"n":1}"#), hit("2", r#"{"n":1}"#)],
                 5,
             ))),
         )
@@ -3346,14 +3346,16 @@ async fn sigterm_and_sigint_stop_cleanly_with_128_plus_signal() {
 
 // L-455 (BRK-XV-002): hits without _source (mapping _source.enabled: false) stop the dump
 // with "documents cannot be fully dumped" unless --allowMissingSource or a searchBody that
-// filters _source itself.
+// filters _source itself. L-455c: so do hits whose _source is empty ({}).
 #[tokio::test(flavor = "multi_thread")]
 async fn hits_without_source_are_refused_unless_allowed() {
     use support::router_mock::{Reply, Route, RouterMock};
     let info = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#;
     let page = r#"{"_scroll_id":"s1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"nosrc","_id":"1","_score":1.0}]}}"#;
+    // L-455c: a hit whose _source is `{}` (an empty document, or a filter that keeps nothing)
+    let empty_page = r#"{"_scroll_id":"s1","hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"nosrc","_id":"e-7","_score":1.0,"_source":{ }}]}}"#;
     let empty = r#"{"_scroll_id":"s1","hits":{"total":{"value":1,"relation":"eq"},"hits":[]}}"#;
-    let mock = || {
+    let mock = |page: &'static str| {
         RouterMock::builder()
             .route(Route::exact("GET", "/").reply(Reply::ok(info)))
             .route(Route::prefix("POST", "/nosrc/_search").reply(Reply::ok(page)))
@@ -3369,11 +3371,18 @@ async fn hits_without_source_are_refused_unless_allowed() {
     // refused by default, and the error names the search body, not the mapping.
     // L-455b (behaviour change): a body that turns _source off is refused too unless
     // --allowMissingSource: `"_source": false` before the first search, a filter that
-    // leaves no _source (`[]`, `{"excludes":["*"]}`) at the first such hit
+    // leaves no _source (`[]`) at the first such hit.
+    // L-455c (behaviour change): an empty _source counts as missing. A filter that
+    // excludes every field (`{"excludes":["*"]}`, `"exclude":"**"`) is refused before the
+    // first search (it used to write `{}`); otherwise the first hit whose _source is `{}`
+    // stops the run naming its _id and the likely cause (the filter, or a document that is
+    // really empty in the source index, which needs the flag too)
     let stored = r#"{"stored_fields":["x"]}"#;
     let off = r#"{"query":{"match_all":{}},"_source":false}"#;
     let empty_list = r#"{"_source":[]}"#;
     let excl_all = r#"{"_source":{"excludes":["*"]}}"#;
+    let excl_all_str = r#"{"_source":{"includes":["a"],"exclude":"**"}}"#;
+    let incl_none = r#"{"_source":{"includes":["nope"]}}"#;
     #[derive(PartialEq, Debug)]
     enum Want {
         Ok,
@@ -3381,28 +3390,50 @@ async fn hits_without_source_are_refused_unless_allowed() {
         Stored,
         Off,
         Filter,
+        ExcludesAll,
+        EmptyDoc,
+        EmptyFiltered,
     }
-    for (n, (extra, want)) in [
-        (vec![], Want::Mapping),
-        (vec!["--searchBody", stored], Want::Stored),
+    for (n, (extra, want, page)) in [
+        (vec![], Want::Mapping, page),
+        (vec!["--searchBody", stored], Want::Stored, page),
         (
             vec!["--searchBody", stored, "--allowMissingSource"],
             Want::Ok,
+            page,
         ),
-        (vec!["--allowMissingSource"], Want::Ok),
-        (vec!["--searchBody", off], Want::Off),
-        (vec!["--searchBody", off, "--allowMissingSource"], Want::Ok),
-        (vec!["--searchBody", empty_list], Want::Filter),
-        (vec!["--searchBody", excl_all], Want::Filter),
+        (vec!["--allowMissingSource"], Want::Ok, page),
+        (vec!["--searchBody", off], Want::Off, page),
+        (
+            vec!["--searchBody", off, "--allowMissingSource"],
+            Want::Ok,
+            page,
+        ),
+        (vec!["--searchBody", empty_list], Want::Filter, page),
+        (vec!["--searchBody", excl_all], Want::ExcludesAll, page),
+        (vec!["--searchBody", excl_all_str], Want::ExcludesAll, page),
         (
             vec!["--searchBody", excl_all, "--allowMissingSource"],
             Want::Ok,
+            page,
+        ),
+        (vec![], Want::EmptyDoc, empty_page),
+        (vec!["--allowMissingSource"], Want::Ok, empty_page),
+        (
+            vec!["--searchBody", incl_none],
+            Want::EmptyFiltered,
+            empty_page,
+        ),
+        (
+            vec!["--searchBody", incl_none, "--allowMissingSource"],
+            Want::Ok,
+            empty_page,
         ),
     ]
     .into_iter()
     .enumerate()
     {
-        let m = mock().await;
+        let m = mock(page).await;
         let out = dir.path().join(format!("out-{n}.json"));
         let mut args = vec![
             "--input".to_string(),
@@ -3418,7 +3449,11 @@ async fn hits_without_source_are_refused_unless_allowed() {
             assert!(
                 std::fs::read_to_string(&out)
                     .unwrap()
-                    .contains("\"_id\":\"1\"")
+                    .contains(if page == empty_page {
+                        "\"_id\":\"e-7\""
+                    } else {
+                        "\"_id\":\"1\""
+                    })
             );
             continue;
         }
@@ -3462,6 +3497,31 @@ async fn hits_without_source_are_refused_unless_allowed() {
                     "{err}"
                 );
                 assert!(!err.contains("_source.enabled"), "{err}");
+            }
+            Want::ExcludesAll => {
+                assert!(
+                    err.contains("the search body's _source filter excludes every field")
+                        && err.contains("empty _source ({})")
+                        && err.contains("remove the _source filter from the search body"),
+                    "{err}"
+                );
+                assert!(!searched, "refused before the first search");
+            }
+            Want::EmptyDoc => {
+                assert!(
+                    err.contains("document 'e-7' in index 'nosrc' has an empty _source ({})")
+                        && err.contains("the document is empty in the source index"),
+                    "{err}"
+                );
+                assert!(!err.contains("search body"), "{err}");
+            }
+            Want::EmptyFiltered => {
+                assert!(
+                    err.contains("document 'e-7' in index 'nosrc' has an empty _source ({})")
+                        && err
+                            .contains("the search body's _source filter leaves none of its fields"),
+                    "{err}"
+                );
             }
             Want::Ok => unreachable!(),
         }

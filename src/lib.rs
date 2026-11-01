@@ -889,6 +889,17 @@ async fn transfer(
                             "documents cannot be fully dumped: the search body sets \"_source\": false, so every hit would come back without _source (only _id and metadata could be written). Nothing was written; remove \"_source\": false from the search body to keep the documents, or pass --allowMissingSource to dump them without _source"
                         );
                     }
+                    // L-455c (behaviour change): a _source filter that excludes every field
+                    // would write `{}` for every document; refused up front the same way.
+                    let excludes_all = (!cli.allow_missing_source)
+                        .then(|| retrieval::source_filter_excludes_all(&opts.search_body))
+                        .flatten();
+                    if let Some(p) = excludes_all {
+                        sink.abort().await;
+                        anyhow::bail!(
+                            "documents cannot be fully dumped: the search body's _source filter excludes every field (pattern \"{p}\"), so every hit would come back with an empty _source ({{}}) and only _id and metadata could be written. Nothing was written; remove the _source filter from the search body to keep the documents, or pass --allowMissingSource to dump them with an empty _source"
+                        );
+                    }
                     retrieval::set_require_source(!cli.allow_missing_source);
                     retrieval::set_body_drops_source(retrieval::BodySource::of(&opts.search_body));
                     retrieval::dump_data(opts, sink, window).await?

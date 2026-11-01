@@ -114,6 +114,26 @@ pub(crate) fn require_source() -> bool {
     REQUIRE_SOURCE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// L-455c: the pattern of a search body's `_source` filter that excludes every field
+/// (`{"excludes":["*"]}`, `{"exclude":"**"}`, ...): every hit then comes back with an
+/// empty `_source` (`{}`), which is known before the first search.
+pub fn source_filter_excludes_all(body: &sonic_rs::Value) -> Option<String> {
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+    let filter = body.get("_source")?;
+    let all = |v: &sonic_rs::Value| {
+        v.as_str()
+            .filter(|p| !p.is_empty() && p.chars().all(|c| c == '*'))
+            .map(str::to_string)
+    };
+    ["excludes", "exclude"].iter().find_map(|k| {
+        let v = filter.get(*k)?;
+        match v.as_array() {
+            Some(a) => a.iter().find_map(all),
+            None => all(v),
+        }
+    })
+}
+
 pub fn set_body_drops_source(cause: BodySource) {
     BODY_DROPS_SOURCE.store(cause as u8, std::sync::atomic::Ordering::Relaxed);
 }

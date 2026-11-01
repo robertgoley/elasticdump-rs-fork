@@ -472,7 +472,7 @@ async fn l603_slow_but_progressing_response_is_not_cut_off_by_timeout() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn l604_half_closed_sockets_are_retried_or_fail_clearly() {
     use std::time::{Duration, Instant};
-    let body = page("s1", &[hit("1", "{}"), hit("2", "{}")], 2);
+    let body = page("s1", &[hit("1", r#"{"n":1}"#), hit("2", r#"{"n":1}"#)], 2);
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("in.json");
     std::fs::write(&input, format!("{}\n{}\n", hit("1", "{}"), hit("2", "{}"))).unwrap();
@@ -756,14 +756,14 @@ async fn l605_dns_failures_fail_fast_are_bounded_or_retried() {
         .route(
             Route::contains("POST", "/idx/_search").reply(Reply::ok(page(
                 "s1",
-                &[hit("1", "{}")],
+                &[hit("1", r#"{"n":1}"#)],
                 N,
             ))),
         )
         .route(
             Route::exact("POST", "/_search/scroll").replies(
                 (2..=N)
-                    .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), "{}")], N)))
+                    .map(|i| Reply::ok(page("s1", &[hit(&i.to_string(), r#"{"n":1}"#)], N)))
                     .chain([Reply::ok(page("s1", &[], N))]),
             ),
         )
@@ -817,9 +817,9 @@ async fn l606_lost_search_context_says_rerun() {
     let es = r#"{"version":{"number":"8.19.0","build_flavor":"default"},"tagline":"You Know, for Search"}"#;
     for pit in [false, true] {
         let first = if pit {
-            r#"{"pit_id":"p1","hits":{"total":{"value":3,"relation":"eq"},"hits":[{"_index":"idx","_id":"1","_source":{},"sort":[1]}]},"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"timed_out":false}"#.to_string()
+            r#"{"pit_id":"p1","hits":{"total":{"value":3,"relation":"eq"},"hits":[{"_index":"idx","_id":"1","_source":{"n":1},"sort":[1]}]},"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"timed_out":false}"#.to_string()
         } else {
-            page("s1", &[hit("1", "{}")], 3)
+            page("s1", &[hit("1", r#"{"n":1}"#)], 3)
         };
         let m = RouterMock::builder()
             .route(Route::exact("GET", "/").reply(Reply::ok(es)))
@@ -1813,10 +1813,14 @@ async fn l616_bulk_answers_that_do_not_match_are_never_counted_as_written() {
 // page) the consumer sees the earlier pages whole and nothing of the broken one; exit 1.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn l617_malformed_search_page_never_reaches_stdout_partially() {
-    let first = page("s1", &[hit("1", "{}"), hit("2", "{}")], 6);
+    let first = page("s1", &[hit("1", r#"{"n":1}"#), hit("2", r#"{"n":1}"#)], 6);
     let good2 = page(
         "s1",
-        &[hit("3", r#"{"k":"v"}"#), hit("4", "{}"), hit("5", "{}")],
+        &[
+            hit("3", r#"{"k":"v"}"#),
+            hit("4", r#"{"n":1}"#),
+            hit("5", r#"{"n":1}"#),
+        ],
         6,
     );
     let cut = good2[..good2.find(r#""_id":"5""#).unwrap() + 4].to_string();

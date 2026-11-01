@@ -45,7 +45,7 @@ fn scroll() -> Vec<CannedResponse> {
         )
     };
     vec![
-        CannedResponse::ok(page(r#"{"_index":"i","_id":"1","_source":{}}"#)),
+        CannedResponse::ok(page(r#"{"_index":"i","_id":"1","_source":{"n":1}}"#)),
         CannedResponse::ok(page("")),
         CannedResponse::ok(r#"{"succeeded":true,"num_freed":1}"#),
     ]

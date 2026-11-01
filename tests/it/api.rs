@@ -352,8 +352,10 @@ async fn search_body_variants_and_meta_from_fields() {
     ];
     // L-455b: `"_source": []` and `{"excludes":["*"]}` do not leave _source out of the hits
     // (checked on OpenSearch 1.3.20/2.19.7/3.9.0 and Elasticsearch 7.17/8.6/8.19/9.1: the
-    // first returns the whole _source, the second `{}`), so they are not refused; the
-    // dump writes what the cluster returned. `"_source": false` is (the "fields" variant).
+    // first returns the whole _source, the second `{}`). `"_source": []` is not refused.
+    // L-455c (behaviour change): `{"excludes":["*"]}` used to be allowed and wrote `{}`; it
+    // is now refused before the first search, and only --allowMissingSource writes `{}`.
+    // `"_source": false` is refused too (the "fields" variant).
     for (body, whole) in [
         (r#"{"_source":[]}"#, true),
         (r#"{"_source":{"excludes":["*"]}}"#, false),
@@ -363,7 +365,24 @@ async fn search_body_variants_and_meta_from_fields() {
         let v = c.ok("POST", &format!("{src}/_search"), Some(b)).await;
         let hit = &v["hits"]["hits"][0];
         assert!(hit["_source"].is_object(), "{body}: {hit}");
-        let (f, o) = dump(&c, &src, &["--limit", "50", "--searchBody", body]).await;
+        let mut args = vec!["--limit", "50", "--searchBody", body];
+        if !whole {
+            let (f, o) = dump(&c, &src, &args).await;
+            let err = String::from_utf8_lossy(&o.stderr).into_owned();
+            assert_eq!(o.status.code(), Some(1), "{body}: {err}");
+            assert!(
+                err.contains("the search body's _source filter excludes every field")
+                    && err.contains("--allowMissingSource"),
+                "{body}: {err}"
+            );
+            assert!(
+                !f.exists() || lines(&f).is_empty(),
+                "{body}: nothing written"
+            );
+            let _ = std::fs::remove_file(f);
+            args.push("--allowMissingSource");
+        }
+        let (f, o) = dump(&c, &src, &args).await;
         assert_success(&o);
         let docs = parsed(&f);
         assert_eq!(docs.len(), 300, "{body}");
@@ -372,6 +391,45 @@ async fn search_body_variants_and_meta_from_fields() {
             assert_eq!(n, Some(if whole { 4 } else { 0 }), "{body}: {d}");
         }
         let _ = std::fs::remove_file(f);
+    }
+    // L-455c: a document that is really empty in the source index (`{}`) stops the dump
+    // naming its _id, without any search body; --allowMissingSource dumps it as it is.
+    {
+        let empty_idx = unique("api_sbv_empty");
+        c.delete_index(&empty_idx).await;
+        c.ok(
+            "PUT",
+            &format!("{empty_idx}/_doc/full?refresh=true"),
+            Some(serde_json::json!({"n": 1})),
+        )
+        .await;
+        c.ok(
+            "PUT",
+            &format!("{empty_idx}/_doc/hollow?refresh=true"),
+            Some(serde_json::json!({})),
+        )
+        .await;
+        let (f, o) = dump(&c, &empty_idx, &["--limit", "50"]).await;
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert_eq!(o.status.code(), Some(1), "{err}");
+        assert!(
+            err.contains("document 'hollow'")
+                && err.contains("has an empty _source ({})")
+                && err.contains("the document is empty in the source index")
+                && err.contains("--allowMissingSource"),
+            "{err}"
+        );
+        let _ = std::fs::remove_file(f);
+        let (f, o) = dump(&c, &empty_idx, &["--limit", "50", "--allowMissingSource"]).await;
+        assert_success(&o);
+        let docs = parsed(&f);
+        assert_eq!(docs.len(), 2);
+        assert!(
+            docs.iter()
+                .any(|d| d["_id"] == "hollow" && d["_source"] == serde_json::json!({}))
+        );
+        let _ = std::fs::remove_file(f);
+        c.delete_index(&empty_idx).await;
     }
     for (name, body, pred) in &variants {
         // L-455a: stored_fields without _source leaves _source out, which is refused by

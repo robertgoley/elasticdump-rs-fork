@@ -422,10 +422,12 @@ pub struct Cli {
     pub allow_merge: bool,
 
     /// Extension: dump data from indices whose mapping disables _source (documents then
-    /// carry only _id and metadata), or with a --searchBody that turns _source off
+    /// carry only _id and metadata), with a --searchBody that turns _source off
     /// ("_source": false, a _source filter that leaves none, or stored_fields without
-    /// _source). By default "_source": false is refused before the first search, and the
-    /// first hit without _source stops the dump
+    /// _source), or with documents whose _source is empty ({}), including documents that
+    /// are really empty in the source index. By default "_source": false and a filter
+    /// that excludes every field ("excludes": ["*"]) are refused before the first search,
+    /// and the first hit without _source or with an empty _source stops the dump
     #[arg(long = "allowMissingSource")]
     pub allow_missing_source: bool,
 
