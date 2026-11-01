@@ -132,3 +132,13 @@ Rootless podman with the cgroupfs manager accepts `--memory` and `--cpus` on thi
 The peak is recorded as `node.peak_rss_mb`.
 
 Split file names follow Node elasticdump: `<base>.split-<n><ext>[.gz|.zst]`. An output that already ends in `.zst` therefore gets the codec suffix twice, so the matrix names split outputs `*.ndjson`.
+
+## Memory checks (LOAD-005, `memcheck.py`)
+
+`memcheck.py` checks that peak RSS is bounded and flat and that the README memory formula holds. It has three modes:
+
+- `memcheck.py matrix SMALL LARGE`: compares two `matrix.sh` runs with the same flags at two sizes, for example `results/load/<L0 run>` and `results/load/<L1L run>`. Each cell passes when its peak RSS at LARGE is at most `--flat-pct` (10) above SMALL and every peak is at most `--formula-pct` (25) above the README estimate. `--formula old` checks the pre-L-802 formula (x 1.5 + 10 MB).
+- `memcheck.py files`: runs the file-to-file cases in `scenarios/memcheck.toml` (doc sizes about 300 B, 1 KB, 40 KB and 1 MB) at a small and a large document count. It needs no cluster; data goes under `LOAD_WORK` and is deleted afterwards.
+- `memcheck.py plateau -- CMD...` (or `--from SAMPLES`): one long run, sampled every 0.1 s. It passes when the peak after the first half of the run is at most `--flat-pct` above the peak before it, which separates bounded growth from a leak on 10M-doc runs.
+
+Results go to `results/load/<run-id>/memcheck-*.json`; the L-802 summary is `results/local/L-802.json`. Set `MALLOC_ARENA_MAX=2` to compare with glibc limited to two malloc arenas; the files mode records the setting. On this box a 10M-doc run is limited to single cells. The full L1 tier at 10M docs needs a dedicated load host.

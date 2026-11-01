@@ -486,10 +486,19 @@ Each direction resolves its basic-auth username and password on its own (L-645).
 
 ## Memory
 
-Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~1.5 + ~10 MB`. Measured (100k docs,
-~420 B each): 11 MB dumping at `--limit 100`, 25–35 MB at `--limit 5000` (sliced or not), 61 MB restoring and
-74 MB copying at `--limit 5000 --concurrency 4`.
-When the first batch shows that this estimate exceeds the memory available (the cgroup's `memory.max` or
+Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~3 + ~15 MB` (**changed in L-802, from
+× 1.5 + 10 MB, pending lead review**: the old estimate was exceeded by up to 127% by concurrent restores and sliced
+copies at 1M documents; `results/local/L-802.json`). Measured (Elasticsearch 7.17, ~1 KB docs): 24 MB dumping at
+`--limit 5000`, 30–80 MB sliced (`--slices 2`–`16`), 180–330 MB restoring at `--limit 5000 --concurrency 4`–`8`,
+85–160 MB copying. Peak RSS grows slowly with the number of documents in concurrent restores and copies (restore
+`--concurrency 8 --limit 5000`: 196 MB at 100k docs, 268 MB at 1M, 346 MB at 10M with `MALLOC_ARENA_MAX=2`), and
+stops growing on long runs when glibc is limited to two malloc arenas (`MALLOC_ARENA_MAX=2`). With glibc's default
+arenas the same 10M-doc restore reached 537 MB and was still growing slowly, so set `MALLOC_ARENA_MAX=2` for long
+concurrent restores in tight memory (glibc builds; restores and copies ran at the same speed within 10%, sliced
+dumps within this box's noise; musl/Alpine builds were not measured). File-to-file runs stay at 14–40 MB for ~1 KB
+docs at any size up to 10M docs.
+When the first batch shows that the estimate (still computed as × 1.5 + 10 MB in `src/memplan.rs` until the lead
+reviews the change above) exceeds the memory available (the cgroup's `memory.max` or
 `MemAvailable`, whichever is smaller), a warning names the flags to lower; under real cgroup caps of 64–256 MB every
 run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L-635.json`).
 

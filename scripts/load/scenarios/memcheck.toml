@@ -1,0 +1,35 @@
+# LOAD-005 (L-802): file-to-file memory cases for `memcheck.py files`. Each case is
+# generated once at `large` documents; the first `small` documents are the small run.
+# The doc sizes are the ones TST-LOAD-005 names: ~200 B (edgen geo, ~300 B as an
+# elasticdump line), 1 KB (logs), 40 KB (wide with 2450 fields, standing in for Rally
+# pmc, which is not on this box) and 1 MB (huge). Disk: about 2.5 GB at the peak.
+
+[[case]]
+name    = "small-300b"
+profile = "geo"
+small   = 300000
+large   = 3000000
+args    = [["--limit=100"], ["--limit=1000"], ["--limit=5000"]]
+
+[[case]]
+name    = "logs-1kb"
+profile = "logs"
+small   = 300000
+large   = 3000000
+args    = [["--limit=100"], ["--limit=1000"], ["--limit=5000"], ["--limit=5000", "--fsCompress"]]
+
+[[case]]
+name       = "wide-40kb"
+profile    = "wide"
+edgen_args = ["--fields=2450"]
+small      = 6000
+large      = 60000
+args       = [["--limit=100"], ["--limit=1000"]]
+
+[[case]]
+name       = "huge-1mb"
+profile    = "huge"
+edgen_args = ["--huge-min-mb=1", "--huge-max-mb=1"]
+small      = 100
+large      = 1000
+args       = [["--limit=10"], ["--limit=100"]]

@@ -34,3 +34,4 @@
 - 2026-10-31: L-705 (RC behaviour diff) committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-801 (LOAD-004 scenario matrix).
 - 2026-10-31: L-801 LOAD-004 scenario matrix + baselines committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-455c (empty `_source: {}` refused unless --allowMissingSource).
 - 2026-10-31: L-455c empty _source refusal + TESTING-COMPLETED rows committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-802 (LOAD-005 flat-memory runs).
+- 2026-10-31: L-802 LOAD-005 memory checks (memcheck.py, results/local/L-802.json, README memory formula pending lead review) committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-803 (LOAD-006 kill/resume runs).

@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 186 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-455c (`git log -1 --grep '^L-455c'`; the next commit fills in its sha).
+Total: 187 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-802 (`git log -1 --grep '^L-802'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -129,7 +129,7 @@ Total: 186 task commits (including follow-up fixes with a letter suffix). Last u
 | L-431a | `b0f9106` | 2026-10-31 | a TLS client-certificate rejection is never retried (fixes the tls_failures_have_one_clear_message flake) |
 | L-455a | `a74656d` | 2026-10-31 | a missing _source caused by stored_fields in the search body is named as such (still refused by default); was already failing on 38fb47c |
 | L-455b | `f2818bf` | 2026-10-31 | refuse a search body that turns _source off unless --allowMissingSource |
-| L-455c | this commit (`git log --grep '^L-455c'`) | 2026-10-31 | behaviour change: an empty _source ({}) is refused like a missing one unless --allowMissingSource; an excludes-all _source filter is refused before the first search |
+| L-455c | `3c2ebbf` | 2026-10-31 | behaviour change: an empty _source ({}) is refused like a missing one unless --allowMissingSource; an excludes-all _source filter is refused before the first search |
 
 ## Property tests, fuzzing and injection (L-5xx)
 
@@ -234,3 +234,4 @@ Total: 186 task commits (including follow-up fixes with a letter suffix). Last u
 | Task | Commit | Date | Result |
 |---|---|---|---|
 | L-801 | `8cad039` | 2026-10-31 | LOAD-004 scenario matrix with correctness and perf gates (25 cells; five baselines; L1 10M needs a dedicated load host) |
+| L-802 | this commit (`git log --grep '^L-802'`) | 2026-10-31 | LOAD-005 memory checks (scripts/load/memcheck.py matrix/files/plateau): README formula changed to x3 + 15 MB (lead review); concurrent restores grow with doc count and plateau at 10M only with MALLOC_ARENA_MAX=2; full L1 at 10M needs a dedicated load host |

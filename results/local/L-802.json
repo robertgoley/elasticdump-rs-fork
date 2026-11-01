@@ -1,0 +1,1036 @@
+{
+ "task": "L-802",
+ "req": "TST-LOAD-005",
+ "date": "2026-10-31",
+ "engine": "es717-plain (Elasticsearch 7.17, 2 GB heap), place box",
+ "binary": "target/release",
+ "method": "scripts/load/matrix.sh (max RSS from getrusage) at 100k (L0), 300k, 1M (L1L), 2M with MALLOC_ARENA_MAX=2, compared with the L-801 default-arena baselines; scripts/load/memcheck.py files (doc sizes 300 B, 1 KB, 40 KB, 1 MB) with both arena settings; one 10M-doc restore cell (c8 l5000) sampled every 0.1 s; file-to-file 100k..10M (logs, 1 KB)",
+ "formula_old": "(bufferSize + slices + concurrency) x limit x avg_doc x 1.5 + 10 MB",
+ "formula_new": "(bufferSize + slices + concurrency) x limit x avg_doc x 3 + 15 MB (proposed; lead review)",
+ "matrix": [
+  {
+   "cell": "matrix-copy/copy",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 66.9,
+    "300k": 78.5,
+    "1M": 83.8,
+    "2M": 96.0
+   },
+   "peak_mb_default_arenas": {
+    "100k": 71.2,
+    "1M": 86.7
+   },
+   "estimate_old_mb": 57.9,
+   "estimate_new_mb": 110.7,
+   "worst_vs_old_pct": 65.8,
+   "worst_vs_new_pct": -13.3
+  },
+  {
+   "cell": "matrix-copy/copy-pit-s4",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 4,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 96.7,
+    "300k": 107.8,
+    "1M": 122.3,
+    "2M": 139.7
+   },
+   "peak_mb_default_arenas": {
+    "100k": 124.3,
+    "1M": 156.9
+   },
+   "estimate_old_mb": 69.1,
+   "estimate_new_mb": 133.2,
+   "worst_vs_old_pct": 127.1,
+   "worst_vs_new_pct": 17.8
+  },
+  {
+   "cell": "matrix-dump/pit",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 24.1,
+    "1M": 23.7
+   },
+   "peak_mb_default_arenas": {
+    "100k": 26.7,
+    "1M": 34.1
+   },
+   "estimate_old_mb": 57.9,
+   "estimate_new_mb": 110.7,
+   "worst_vs_old_pct": -41.1,
+   "worst_vs_new_pct": -69.2
+  },
+  {
+   "cell": "matrix-dump/pit-s16",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 16,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 61.8,
+    "1M": 78.8
+   },
+   "peak_mb_default_arenas": {
+    "100k": 90.9,
+    "1M": 110.7
+   },
+   "estimate_old_mb": 102.9,
+   "estimate_new_mb": 200.8,
+   "worst_vs_old_pct": 7.6,
+   "worst_vs_new_pct": -44.9
+  },
+  {
+   "cell": "matrix-dump/pit-s2",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 2,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 28.5,
+    "1M": 30.9
+   },
+   "peak_mb_default_arenas": {
+    "100k": 40.7,
+    "1M": 49.8
+   },
+   "estimate_old_mb": 63.5,
+   "estimate_new_mb": 122.0,
+   "worst_vs_old_pct": -21.6,
+   "worst_vs_new_pct": -59.2
+  },
+  {
+   "cell": "matrix-dump/pit-s4",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 4,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 34.4,
+    "1M": 39.8
+   },
+   "peak_mb_default_arenas": {
+    "100k": 62.0,
+    "1M": 70.4
+   },
+   "estimate_old_mb": 69.1,
+   "estimate_new_mb": 133.2,
+   "worst_vs_old_pct": 1.9,
+   "worst_vs_new_pct": -47.1
+  },
+  {
+   "cell": "matrix-dump/pit-s8",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 8,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 48.1,
+    "1M": 52.3
+   },
+   "peak_mb_default_arenas": {
+    "100k": 63.9,
+    "1M": 94.6
+   },
+   "estimate_old_mb": 80.4,
+   "estimate_new_mb": 155.8,
+   "worst_vs_old_pct": 17.7,
+   "worst_vs_new_pct": -39.3
+  },
+  {
+   "cell": "matrix-dump/scroll",
+   "flags": {
+    "limit": 2000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 23.9,
+    "1M": 23.9
+   },
+   "peak_mb_default_arenas": {
+    "100k": 30.8,
+    "1M": 30.7
+   },
+   "estimate_old_mb": 57.9,
+   "estimate_new_mb": 110.7,
+   "worst_vs_old_pct": -46.8,
+   "worst_vs_new_pct": -72.2
+  },
+  {
+   "cell": "matrix-restore/c1-l1000",
+   "flags": {
+    "limit": 1000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 23.8,
+    "300k": 24.2,
+    "1M": 26.6,
+    "2M": 29.1
+   },
+   "peak_mb_default_arenas": {
+    "100k": 23.9,
+    "1M": 25.1
+   },
+   "estimate_old_mb": 33.9,
+   "estimate_new_mb": 62.9,
+   "worst_vs_old_pct": -14.2,
+   "worst_vs_new_pct": -53.7
+  },
+  {
+   "cell": "matrix-restore/c1-l5000",
+   "flags": {
+    "limit": 5000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 65.1,
+    "300k": 75.3,
+    "1M": 88.9,
+    "2M": 90.0
+   },
+   "peak_mb_default_arenas": {
+    "100k": 59.5,
+    "1M": 82.1
+   },
+   "estimate_old_mb": 129.6,
+   "estimate_new_mb": 254.3,
+   "worst_vs_old_pct": -30.6,
+   "worst_vs_new_pct": -64.6
+  },
+  {
+   "cell": "matrix-restore/c4-l1000",
+   "flags": {
+    "limit": 1000,
+    "concurrency": 4,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 39.6,
+    "300k": 46.4,
+    "1M": 50.5,
+    "2M": 54.4
+   },
+   "peak_mb_default_arenas": {
+    "100k": 48.5,
+    "1M": 65.8
+   },
+   "estimate_old_mb": 38.2,
+   "estimate_new_mb": 71.3,
+   "worst_vs_old_pct": 72.3,
+   "worst_vs_new_pct": -7.7
+  },
+  {
+   "cell": "matrix-restore/c4-l5000",
+   "flags": {
+    "limit": 5000,
+    "concurrency": 4,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 135.5,
+    "300k": 157.7,
+    "1M": 181.3,
+    "2M": 209.4
+   },
+   "peak_mb_default_arenas": {
+    "100k": 159.8,
+    "1M": 262.8
+   },
+   "estimate_old_mb": 150.8,
+   "estimate_new_mb": 296.5,
+   "worst_vs_old_pct": 74.3,
+   "worst_vs_new_pct": -11.4
+  },
+  {
+   "cell": "matrix-restore/c8-l1000",
+   "flags": {
+    "limit": 1000,
+    "concurrency": 8,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 58.0,
+    "300k": 63.8,
+    "1M": 79.0,
+    "2M": 80.4
+   },
+   "peak_mb_default_arenas": {
+    "100k": 78.1,
+    "1M": 94.5
+   },
+   "estimate_old_mb": 43.8,
+   "estimate_new_mb": 82.6,
+   "worst_vs_old_pct": 115.8,
+   "worst_vs_new_pct": 14.4
+  },
+  {
+   "cell": "matrix-restore/c8-l5000",
+   "flags": {
+    "limit": 5000,
+    "concurrency": 8,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 196.3,
+    "300k": 238.1,
+    "1M": 268.2,
+    "2M": 306.0
+   },
+   "peak_mb_default_arenas": {
+    "100k": 216.8,
+    "1M": 328.7
+   },
+   "estimate_old_mb": 178.9,
+   "estimate_new_mb": 352.8,
+   "worst_vs_old_pct": 83.7,
+   "worst_vs_new_pct": -6.8
+  },
+  {
+   "cell": "matrix-restore/src",
+   "flags": {
+    "limit": 5000,
+    "concurrency": 1,
+    "slices": 0,
+    "bufferSize": 16
+   },
+   "avg_doc_bytes": 984,
+   "peak_mb_arena2": {
+    "100k": 32.6,
+    "300k": 35.5,
+    "1M": 41.2,
+    "2M": 40.2
+   },
+   "peak_mb_default_arenas": {
+    "100k": 40.0,
+    "1M": 51.0
+   },
+   "estimate_old_mb": 129.6,
+   "estimate_new_mb": 254.3,
+   "worst_vs_old_pct": -60.6,
+   "worst_vs_new_pct": -79.9
+  }
+ ],
+ "restore_10m_c8_l5000": [
+  {
+   "malloc_arena_max": "2",
+   "docs": 10000000,
+   "rc": 0,
+   "count_after": 10000000,
+   "wall_s": 455.2,
+   "peak_mb": 346.3,
+   "peak_by_tenth_mb": [
+    307.9,
+    315.7,
+    330.4,
+    336.8,
+    null,
+    null,
+    null,
+    null,
+    346.3,
+    345.2
+   ],
+   "plateau_growth_pct": 2.8,
+   "plateau_ok": true,
+   "estimate_new_mb": 352.8,
+   "vs_new_pct": -1.9,
+   "note": "no samples between 161 s and 403 s: the run and the sampler both stalled (most likely the box was paused); the wall time includes that gap"
+  },
+  {
+   "malloc_arena_max": "default",
+   "docs": 10000000,
+   "rc": 0,
+   "count_after": 10000000,
+   "wall_s": 205.8,
+   "peak_mb": 537.1,
+   "peak_by_tenth_mb": [
+    384.2,
+    410.4,
+    448.0,
+    453.6,
+    474.7,
+    470.2,
+    484.3,
+    496.0,
+    520.5,
+    537.1
+   ],
+   "plateau_growth_pct": 13.1,
+   "plateau_ok": false,
+   "estimate_new_mb": 352.8,
+   "vs_new_pct": 52.2
+  }
+ ],
+ "file_to_file_logs_100k_to_10m": [
+  {
+   "limit": 1000,
+   "malloc_arena_max": "default",
+   "docs": "100k",
+   "peak_mb": 12.3,
+   "wall_s": 0.27,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "default",
+   "docs": "1m",
+   "peak_mb": 11.9,
+   "wall_s": 2.22,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "default",
+   "docs": "3m",
+   "peak_mb": 13.9,
+   "wall_s": 7.11,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "default",
+   "docs": "10m",
+   "peak_mb": 15.5,
+   "wall_s": 21.28,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "2",
+   "docs": "100k",
+   "peak_mb": 12.1,
+   "wall_s": 0.28,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "2",
+   "docs": "1m",
+   "peak_mb": 13.8,
+   "wall_s": 2.33,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "2",
+   "docs": "3m",
+   "peak_mb": 15.4,
+   "wall_s": 6.68,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "2",
+   "docs": "10m",
+   "peak_mb": 15.9,
+   "wall_s": 21.06,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "1",
+   "docs": "100k",
+   "peak_mb": 12.5,
+   "wall_s": 0.39,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "1",
+   "docs": "1m",
+   "peak_mb": 14.4,
+   "wall_s": 2.59,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "1",
+   "docs": "3m",
+   "peak_mb": 13.8,
+   "wall_s": 7.43,
+   "rc": 0
+  },
+  {
+   "limit": 1000,
+   "malloc_arena_max": "1",
+   "docs": "10m",
+   "peak_mb": 14.4,
+   "wall_s": 21.11,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "default",
+   "docs": "100k",
+   "peak_mb": 23.7,
+   "wall_s": 0.3,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "default",
+   "docs": "1m",
+   "peak_mb": 23.8,
+   "wall_s": 2.37,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "default",
+   "docs": "3m",
+   "peak_mb": 28.4,
+   "wall_s": 6.78,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "default",
+   "docs": "10m",
+   "peak_mb": 42.3,
+   "wall_s": 22.17,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "2",
+   "docs": "100k",
+   "peak_mb": 26.6,
+   "wall_s": 0.31,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "2",
+   "docs": "1m",
+   "peak_mb": 29.5,
+   "wall_s": 2.69,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "2",
+   "docs": "3m",
+   "peak_mb": 35.0,
+   "wall_s": 6.96,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "2",
+   "docs": "10m",
+   "peak_mb": 33.8,
+   "wall_s": 20.7,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "1",
+   "docs": "100k",
+   "peak_mb": 23.5,
+   "wall_s": 0.3,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "1",
+   "docs": "1m",
+   "peak_mb": 23.8,
+   "wall_s": 2.36,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "1",
+   "docs": "3m",
+   "peak_mb": 28.0,
+   "wall_s": 6.6,
+   "rc": 0
+  },
+  {
+   "limit": 5000,
+   "malloc_arena_max": "1",
+   "docs": "10m",
+   "peak_mb": 31.9,
+   "wall_s": 20.47,
+   "rc": 0
+  }
+ ],
+ "files_memcheck": {
+  "arena2": [
+   {
+    "cell": "small-300b --limit=100",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 13.8,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 10.7,
+    "estimate_new_mb": 16.5,
+    "vs_new_pct": -16.4
+   },
+   {
+    "cell": "small-300b --limit=1000",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 13.8,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 17.3,
+    "estimate_new_mb": 29.6,
+    "vs_new_pct": -53.4
+   },
+   {
+    "cell": "small-300b --limit=5000",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 13.8,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 46.5,
+    "estimate_new_mb": 88.0,
+    "vs_new_pct": -84.3
+   },
+   {
+    "cell": "logs-1kb --limit=100",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 13.8,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 12.4,
+    "estimate_new_mb": 19.8,
+    "vs_new_pct": -30.3
+   },
+   {
+    "cell": "logs-1kb --limit=1000",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 16.0,
+    "flat_pct": 16.2,
+    "flat_ok": false,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 34.0,
+    "estimate_new_mb": 62.9,
+    "vs_new_pct": -74.6
+   },
+   {
+    "cell": "logs-1kb --limit=5000",
+    "small_rss_mb": 25.9,
+    "large_rss_mb": 35.8,
+    "flat_pct": 38.2,
+    "flat_ok": false,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 129.8,
+    "estimate_new_mb": 254.5,
+    "vs_new_pct": -85.9
+   },
+   {
+    "cell": "logs-1kb --limit=5000 --fsCompress",
+    "small_rss_mb": 61.4,
+    "large_rss_mb": 76.6,
+    "flat_pct": 24.9,
+    "flat_ok": false,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 129.8,
+    "estimate_new_mb": 254.5,
+    "vs_new_pct": -69.9
+   },
+   {
+    "cell": "wide-40kb --limit=100",
+    "small_rss_mb": 20.2,
+    "large_rss_mb": 21.3,
+    "flat_pct": 5.6,
+    "flat_ok": true,
+    "small_docs": 6000,
+    "large_docs": 60000,
+    "avg_doc_bytes": 39971,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 107.2,
+    "estimate_new_mb": 209.4,
+    "vs_new_pct": -89.8
+   },
+   {
+    "cell": "wide-40kb --limit=1000",
+    "small_rss_mb": 62.8,
+    "large_rss_mb": 68.2,
+    "flat_pct": 8.6,
+    "flat_ok": true,
+    "small_docs": 6000,
+    "large_docs": 60000,
+    "avg_doc_bytes": 39971,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 982.1,
+    "estimate_new_mb": 1959.1,
+    "vs_new_pct": -96.5
+   },
+   {
+    "cell": "huge-1mb --limit=10",
+    "small_rss_mb": 32.4,
+    "large_rss_mb": 38.8,
+    "flat_pct": 19.6,
+    "flat_ok": false,
+    "small_docs": 100,
+    "large_docs": 1000,
+    "avg_doc_bytes": 1048722,
+    "flags": {
+     "limit": 10,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 265.0,
+    "estimate_new_mb": 525.1,
+    "vs_new_pct": -92.6
+   },
+   {
+    "cell": "huge-1mb --limit=100",
+    "small_rss_mb": 109.5,
+    "large_rss_mb": 159.3,
+    "flat_pct": 45.5,
+    "flat_ok": false,
+    "small_docs": 100,
+    "large_docs": 1000,
+    "avg_doc_bytes": 1048722,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 2560.4,
+    "estimate_new_mb": 5115.7,
+    "vs_new_pct": -96.9
+   }
+  ],
+  "default": [
+   {
+    "cell": "small-300b --limit=100",
+    "small_rss_mb": 13.8,
+    "large_rss_mb": 13.9,
+    "flat_pct": 1.3,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 10.7,
+    "estimate_new_mb": 16.5,
+    "vs_new_pct": -15.8
+   },
+   {
+    "cell": "small-300b --limit=1000",
+    "small_rss_mb": 13.9,
+    "large_rss_mb": 13.9,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 17.3,
+    "estimate_new_mb": 29.6,
+    "vs_new_pct": -53.0
+   },
+   {
+    "cell": "small-300b --limit=5000",
+    "small_rss_mb": 13.9,
+    "large_rss_mb": 13.9,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 300,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 46.5,
+    "estimate_new_mb": 88.0,
+    "vs_new_pct": -84.2
+   },
+   {
+    "cell": "logs-1kb --limit=100",
+    "small_rss_mb": 13.9,
+    "large_rss_mb": 13.9,
+    "flat_pct": 0.0,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 12.4,
+    "estimate_new_mb": 19.8,
+    "vs_new_pct": -29.8
+   },
+   {
+    "cell": "logs-1kb --limit=1000",
+    "small_rss_mb": 13.9,
+    "large_rss_mb": 14.6,
+    "flat_pct": 5.1,
+    "flat_ok": true,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 34.0,
+    "estimate_new_mb": 62.9,
+    "vs_new_pct": -76.8
+   },
+   {
+    "cell": "logs-1kb --limit=5000",
+    "small_rss_mb": 23.8,
+    "large_rss_mb": 39.8,
+    "flat_pct": 67.3,
+    "flat_ok": false,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 129.8,
+    "estimate_new_mb": 254.5,
+    "vs_new_pct": -84.4
+   },
+   {
+    "cell": "logs-1kb --limit=5000 --fsCompress",
+    "small_rss_mb": 63.9,
+    "large_rss_mb": 78.4,
+    "flat_pct": 22.6,
+    "flat_ok": false,
+    "small_docs": 300000,
+    "large_docs": 3000000,
+    "avg_doc_bytes": 985,
+    "flags": {
+     "limit": 5000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 129.8,
+    "estimate_new_mb": 254.5,
+    "vs_new_pct": -69.2
+   },
+   {
+    "cell": "wide-40kb --limit=100",
+    "small_rss_mb": 19.9,
+    "large_rss_mb": 19.9,
+    "flat_pct": -0.3,
+    "flat_ok": true,
+    "small_docs": 6000,
+    "large_docs": 60000,
+    "avg_doc_bytes": 39971,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 107.2,
+    "estimate_new_mb": 209.4,
+    "vs_new_pct": -90.5
+   },
+   {
+    "cell": "wide-40kb --limit=1000",
+    "small_rss_mb": 67.0,
+    "large_rss_mb": 87.7,
+    "flat_pct": 30.9,
+    "flat_ok": false,
+    "small_docs": 6000,
+    "large_docs": 60000,
+    "avg_doc_bytes": 39971,
+    "flags": {
+     "limit": 1000,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 982.1,
+    "estimate_new_mb": 1959.1,
+    "vs_new_pct": -95.5
+   },
+   {
+    "cell": "huge-1mb --limit=10",
+    "small_rss_mb": 42.7,
+    "large_rss_mb": 44.6,
+    "flat_pct": 4.3,
+    "flat_ok": true,
+    "small_docs": 100,
+    "large_docs": 1000,
+    "avg_doc_bytes": 1048722,
+    "flags": {
+     "limit": 10,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 265.0,
+    "estimate_new_mb": 525.1,
+    "vs_new_pct": -91.5
+   },
+   {
+    "cell": "huge-1mb --limit=100",
+    "small_rss_mb": 110.8,
+    "large_rss_mb": 189.7,
+    "flat_pct": 71.3,
+    "flat_ok": false,
+    "small_docs": 100,
+    "large_docs": 1000,
+    "avg_doc_bytes": 1048722,
+    "flags": {
+     "limit": 100,
+     "concurrency": 1,
+     "slices": 0,
+     "bufferSize": 16
+    },
+    "estimate_old_mb": 2560.4,
+    "estimate_new_mb": 5115.7,
+    "vs_new_pct": -96.3
+   }
+  ]
+ },
+ "not_done_here": "full L1 tier (10M docs, every cell, 4 GB heap) needs a dedicated load host (Phase B, B3)",
+ "verdict": {
+  "flat_10pct_100k_vs_large": "FAIL as written for concurrent restore/copy, sliced dumps and --limit 5000 file runs: peak RSS grows slowly with the number of documents (c8 l5000 restore: 196/238/268/306/346 MB at 100k/300k/1M/2M/10M with MALLOC_ARENA_MAX=2). Holds for scroll/PIT dumps and small --limit file runs.",
+  "bounded": "with MALLOC_ARENA_MAX=2 the 10M restore plateaus (peak in the second half +2.8% over the first half); with default glibc arenas it is still rising at 10M (+13.1%, 537 MB), so default-arena growth is allocator fragmentation across threads, not bounded within 10M docs",
+  "formula_old": "wrong: up to +127% over the estimate (copy-pit-s4 at 1M, default arenas)",
+  "formula_new": "x3 + 15 MB holds within +25% for every box measurement up to 2M docs with either arena setting (worst +17.8%) and for the 10M restore with MALLOC_ARENA_MAX=2 (-1.9%); NOT for the 10M restore with default arenas (+52%)"
+ }
+}
