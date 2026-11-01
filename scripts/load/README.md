@@ -183,3 +183,26 @@ or a failed dump that leaves its final file is a failure. Non-zero exits are rec
 
 Output: `results/load/<run-id>/faults.json` and a `FAULTS-SUMMARY` line; containers and the work dir are removed
 unless `--keep`. 10M with real flood-stage disk watermarks is Phase B (dedicated host).
+
+## Compression levels (LOAD-008, L-805, `compress.py`)
+
+`python3 scripts/load/compress.py <tier> [--docs N] [--reps 3] [--levels gzip:1,gzip:6,gzip:9,zstd:1,zstd:3,zstd:9,zstd:19]
+[--part-size 64mb] [--slow-reps 1] [--run-id ID] [--keep]`
+
+The script seeds `load-logs` and takes an uncompressed reference dump. Each rep then runs every codec and level, in
+shuffled order with an uncompressed baseline, in two modes:
+
+- **file to file** (`f2f`): no cluster, so the CPU-s above the baseline is the codec's cost.
+- **cluster to file** (`dump`).
+
+zstd levels of 19 and above run `--slow-reps` times, because they compress at about 2 MB/s per core.
+
+Checks:
+
+- **Decoding:** each output decodes with an independent decoder: gzip(1) for gzip, and for zstd the Python zstandard
+  module from the venv at `ZSTD_PYTHON` (default `/workspace/tools/zvenv/bin/python`; create it with
+  `python3 -m venv … && pip install zstandard`).
+- **Read-back:** the tool reads each output back byte for byte, and dumps are digest-equal to the index.
+- **Parts:** for `--fileSize` parts, `cat` of the parts decodes, and the tool reads it back.
+
+Output goes to `results/load/<run-id>/compress.json`. Multi-GB single files at 10M are Phase B.

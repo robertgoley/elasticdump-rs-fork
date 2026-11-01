@@ -527,8 +527,21 @@ run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L
 | copy `--limit 5000 --concurrency 4 --noRefresh` | 1.92 s | 1.13 s | 1.7× | 2.08 / 0.24 |
 
 Restore and copy are bound by the single 512 MB OpenSearch node here; the CPU column (9–11× less) is the
-portable result. gzip level 6 compresses ~80 MB/s per core on this text (zlib-rs backend); level 1 ~500 MB/s;
-zstd level 3 ~480 MB/s (file ~18% larger than gzip -6 on this text; raise `--compressionLevel` for smaller files).
+portable result.
+
+Compression levels at 1M docs (1.01 GB of NDJSON, edgen `logs` profile, es717-plain; medians of 3 runs, zstd 19 one run;
+[`results/local/L-805.md`](results/local/L-805.md)). Per-core speed is the uncompressed MB divided by the CPU-s the codec
+adds over an uncompressed file-to-file run:
+
+| `--compressionType` / `--compressionLevel` | gzip 1 | gzip 6 (default) | gzip 9 | zstd 1 | zstd 3 (default) | zstd 9 | zstd 19 |
+|---|---|---|---|---|---|---|---|
+| ratio | 5.2 | 9.9 | 9.6 | 8.2 | 8.0 | 10.5 | 13.6 |
+| size vs gzip 6 | +90% | – | +3.5% | +21% | +25% | −5% | −27% |
+| MB/s per core | ~1,000 | ~200 | ~120 | ~700–1,200 | ~530–580 | ~100 | ~1.8 |
+
+A 1M-doc dump (about 7 s, bound by the cluster) took no longer with gzip 1/6 or zstd 1/3; gzip 9 and zstd 9 added
+30–40%, and zstd 19 took 9.5 minutes. With the zlib-rs backend, gzip level 9 writes a slightly *larger* file than level
+6, so it isn't worth using. zstd 9 gives the smallest file at a practical speed.
 
 ### Upstream benchmark (Elasticsearch 7.17, pre-rewrite `b32b6e9`)
 
