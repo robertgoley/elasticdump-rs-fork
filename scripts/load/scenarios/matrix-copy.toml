@@ -1,0 +1,21 @@
+# LOAD-004 matrix: cluster -> cluster copy (same engine, new index), gated by
+# `edverify diff` source vs target; the target is deleted after each cell.
+name        = "matrix-copy"
+description = "Copy: cluster -> cluster, scroll and sliced PIT"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+name = "copy"
+kind = "copy"
+args = ["--limit=2000"]
+
+[[step]]
+name = "copy-pit-s4"
+kind = "copy"
+args = ["--limit=2000", "--searchType=pit", "--slices=4"]

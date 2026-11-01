@@ -17,7 +17,7 @@ The runner does the following, in order:
 
 Exit codes: 0 = pass, 1 = fail, 2 = refused (tier does not fit the place), 3 = skipped (resource guard; exit 1 with IT_REQUIRED=1).
 """
-import argparse, base64, datetime, fcntl, glob, json, os, shutil, ssl, subprocess, sys, time, tomllib
+import argparse, base64, datetime, fcntl, glob, json, os, re, shutil, ssl, subprocess, sys, threading, time, tomllib
 import urllib.error, urllib.parse, urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -25,7 +25,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Average uncompressed bytes per document, used for the disk estimate.
 AVG_DOC = {"logs": 1000, "metrics": 400, "nested": 1500, "geo": 300, "wide": 30000,
            "huge": 3 << 20, "edge": 400}
-DUMP_FACTOR = {"none": 1.0, "gzip": 0.2, "zstd": 0.15}
+DUMP_FACTOR = {"none": 1.0, "gzip": 0.2, "fsCompress": 0.2, "zstd": 0.15}
+EXT = {"none": "", "gzip": ".gz", "fsCompress": ".gz", "zstd": ".zst"}
+CFLAGS = {"none": [], "gzip": ["--compressionType=gzip"], "fsCompress": ["--fsCompress"],
+          "zstd": ["--compressionType=zstd"]}
 INDEX_FACTOR = 0.8  # on-disk index size / raw source size (calibrate from seeds[].store_ratio)
 
 
@@ -75,9 +78,18 @@ def fit(tier_name, place_name, tiers, scenario, docs_override):
     if tier is None:
         return False, f"unknown tier {tier_name}", None
     if tier_name not in place["tiers"]:
-        return False, f"tier {tier_name} is not allowed on place '{place_name}' (allowed: {place['tiers']})", None
-    if tier["heap_mb"] > place["max_heap_mb"]:
-        return False, f"heap {tier['heap_mb']} MB > place max {place['max_heap_mb']} MB", None
+        why = f"tier {tier_name} is not allowed on place '{place_name}' (allowed: {place['tiers']})"
+        if tier.get("needs"):
+            why += f"; it needs {tier['needs']}"
+        return False, why, None
+    # A place may cap the heap (place.shared): the run is then a scaled-down one
+    # and its numbers are only comparable with baselines from the same place.
+    heap_mb = min(tier["heap_mb"], place.get("heap_cap_mb", tier["heap_mb"]))
+    if heap_mb > place["max_heap_mb"]:
+        why = f"heap {heap_mb} MB > place max {place['max_heap_mb']} MB"
+        if tier.get("needs"):
+            why += f"; full size needs {tier['needs']}"
+        return False, why, None
     seeds = []
     for s in scenario.get("seed", []):
         n = s["docs"]
@@ -90,18 +102,27 @@ def fit(tier_name, place_name, tiers, scenario, docs_override):
     allowed = tier.get("compress")
     raw = sum(s["docs"] * AVG_DOC.get(s["profile"], 1000) for s in seeds)
     dump_bytes, copies = 0.0, 1  # the source index
+    # Cells clean up after themselves (targets dropped after their verify, a dump
+    # kept only until the next one), so peak disk is the source plus the two
+    # largest dumps and one target -- unless the scenario says keep = true.
+    keep = scenario.get("keep", False)
+    dumps = []
     for st in scenario.get("step", []):
         c = st.get("compress", "none")
         if st["kind"] == "dump":
             if allowed and c not in allowed:
                 return False, f"tier {tier_name} only allows compression {allowed} (step uses {c})", None
-            dump_bytes += raw * DUMP_FACTOR[c]
+            dumps.append(raw * DUMP_FACTOR[c])
         if st["kind"] in ("restore", "copy"):
             copies += 1
+    dump_bytes = sum(dumps) if keep else sum(sorted(dumps)[-2:])
+    if not keep:
+        copies = min(copies, 2)
     need_mb = int((raw * INDEX_FACTOR * copies + dump_bytes) / 1e6) + 500
     if need_mb > place["max_disk_mb"]:
         return False, f"estimated disk {need_mb} MB > place budget {place['max_disk_mb']} MB", None
-    return True, "", dict(seeds=seeds, need_disk_mb=need_mb, heap_mb=tier["heap_mb"], place=place)
+    return True, "", dict(seeds=seeds, need_disk_mb=need_mb, heap_mb=heap_mb, place=place,
+                          scaled=heap_mb < tier["heap_mb"])
 
 
 def meminfo_avail_mb():
@@ -196,6 +217,106 @@ def seed_index(cl, edgen, s, flavour):
                 seconds=round(time.time() - t0, 2), mapping_engine=flavour)
 
 
+def cpu_list(spec):
+    """'0-3,6' -> {0, 1, 2, 3, 6}"""
+    out = set()
+    for part in str(spec).split(","):
+        lo, _, hi = part.partition("-")
+        out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+def raw_member(line, key):
+    """Raw text of a top-level member of a one-line JSON object (no re-serialisation),
+    so a reference built from it is byte-identical to what the tool wrote."""
+    depth, in_str, esc, start, last, cur, vstart = 0, False, False, None, None, None, None
+    for i, ch in enumerate(line):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+                if depth == 1 and vstart is None:
+                    last = line[start + 1:i]
+            continue
+        if ch == '"':
+            in_str, start = True, i
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]" or (ch == "," and depth == 1):
+            if ch != ",":
+                depth -= 1
+            if depth <= 1 and vstart is not None and (ch == "," or depth == 0):
+                return line[vstart:i].strip()
+            if depth == 1 and vstart is not None and ch in "}]":
+                return line[vstart:i + 1].strip()
+        elif ch == ":" and depth == 1:
+            cur = last
+            if cur == key:
+                vstart = i + 1
+    return None
+
+
+class NodeWatch(threading.Thread):
+    """Samples the RSS of this run's engine container (its process tree, read from
+    the host's /proc) every 2 s. Rootless podman with the cgroupfs manager accepts
+    --memory/--cpus but does not enforce them on this box, so a place can set
+    node_rss_mb: above it the container is killed and the run fails."""
+
+    def __init__(self, rid, cap_mb):
+        super().__init__(daemon=True)
+        self.rid, self.cap_mb, self.peak_mb, self.breach = rid, cap_mb, 0, None
+        self.stop = threading.Event()
+
+    def tree_rss_mb(self, root):
+        kids = {}
+        for d in os.listdir("/proc"):
+            if d.isdigit():
+                try:
+                    st = open(f"/proc/{d}/stat").read()
+                    kids.setdefault(int(st.rsplit(")", 1)[1].split()[1]), []).append(int(d))
+                except OSError:
+                    pass
+        total, todo = 0, [root]
+        while todo:
+            pid = todo.pop()
+            todo += kids.get(pid, [])
+            try:
+                for line in open(f"/proc/{pid}/status"):
+                    if line.startswith("VmRSS:"):
+                        total += int(line.split()[1])
+            except OSError:
+                pass
+        return total // 1024
+
+    def run(self):
+        while not self.stop.wait(2):
+            ids = subprocess.run(["podman", "ps", "-q", "--filter", "label=elasticdump-rs-it=1",
+                                  "--filter", f"name={self.rid}"], capture_output=True, text=True).stdout.split()
+            for cid in ids:
+                pid = subprocess.run(["podman", "inspect", "--format", "{{.State.Pid}}", cid],
+                                     capture_output=True, text=True).stdout.strip()
+                if not pid.isdigit() or pid == "0":
+                    continue
+                mb = self.tree_rss_mb(int(pid))
+                self.peak_mb = max(self.peak_mb, mb)
+                if self.cap_mb and mb > self.cap_mb and not self.breach:
+                    self.breach = f"engine RSS {mb} MB > node_rss_mb {self.cap_mb} MB: container killed"
+                    log(self.breach)
+                    subprocess.run(["podman", "kill", cid], capture_output=True)
+
+
+def open_text(path):
+    if path.endswith(".gz"):
+        import gzip
+        return gzip.open(path, "rt", encoding="utf-8")
+    if path.endswith(".zst"):
+        raise RuntimeError("verify = 'source' needs an uncompressed (or gzip) full dump before it")
+    return open(path, encoding="utf-8")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tier")
@@ -221,7 +342,8 @@ def main():
     log(f"fit: tier={a.tier} place={a.place} engine={engine} est_disk={plan['need_disk_mb']}MB heap={plan['heap_mb']}MB")
     if a.dry_run:
         print(json.dumps(dict(scenario=scenario["name"], tier=a.tier, place=a.place, engine=engine,
-                              seeds=plan["seeds"], need_disk_mb=plan["need_disk_mb"]), indent=1))
+                              seeds=plan["seeds"], need_disk_mb=plan["need_disk_mb"], heap_mb=plan["heap_mb"],
+                              scaled=plan["scaled"]), indent=1))
         return 0
 
     # Guards: lock, memory and disk (TST-INF-007).
@@ -246,8 +368,25 @@ def main():
 
     edgen, edverify, tool = tool_path("edgen"), tool_path("edverify"), tool_path("elasticdump-rs")
     os.makedirs(work, mode=0o700, exist_ok=True)
-    it_dir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "elasticdump-rs-load")
-    env = dict(os.environ, IT_DIR=it_dir, IT_LOCK_HELD="1")
+    place = plan["place"]
+    # place.cpus: CPU affinity for this process and everything it starts (the engine
+    # container inherits it through podman), the one CPU cap that holds on this box.
+    if place.get("cpus") is not None:
+        os.sched_setaffinity(0, cpu_list(place["cpus"]))
+    rid = f"load{os.getpid()}"
+    # place.data_on_work: the engine's data dir lives under the work dir (LOAD_WORK),
+    # not in podman's container storage, and goes with it.
+    if place.get("data_on_work"):
+        it_dir = os.path.join(work, "it")
+    else:
+        it_dir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "elasticdump-rs-load")
+    env = dict(os.environ, IT_DIR=it_dir, IT_LOCK_HELD="1", RUN_ID=rid)
+    if place.get("data_on_work"):
+        env["IT_ES_DATA_MOUNT"] = "1"
+    if place.get("container_cpus"):
+        env["IT_CONTAINER_CPUS"] = str(place["container_cpus"])
+    if place.get("lean_jvm"):
+        env["IT_LEAN_JVM"] = "1"
     for line in subprocess.run([os.path.join(ROOT, "scripts/it/matrix.sh"), engine],
                                check=True, capture_output=True, text=True).stdout.splitlines():
         k, v = line.split("=", 1)
@@ -258,7 +397,8 @@ def main():
 
     result = dict(schema="edrs-load/v1", run_id=run_id, scenario=scenario["name"], tier=a.tier,
                   place=a.place, engine=engine, up_profile=up_profile,
-                  image=env.get("ES_IMAGE") or env.get("OS_IMAGE"), heap=heap,
+                  image=env.get("ES_IMAGE") or env.get("OS_IMAGE"), heap=heap, scaled=plan["scaled"],
+                  cpus=sorted(os.sched_getaffinity(0)),
                   git=subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
                                      capture_output=True, text=True).stdout.strip(),
                   tool=subprocess.run([tool, "--version"], capture_output=True, text=True).stdout.strip(),
@@ -267,7 +407,9 @@ def main():
     resdir = os.path.join(ROOT, "results", "load", run_id)
     os.makedirs(resdir, exist_ok=True)
     rc = 1
+    watch = NodeWatch(rid, place.get("node_rss_mb"))
     try:
+        watch.start()
         log(f"provisioning {engine} ({up_profile}, heap {heap})")
         subprocess.run([os.path.join(ROOT, "scripts/it/up.sh"), up_profile], env=env, check=True,
                        stdout=subprocess.DEVNULL)
@@ -293,7 +435,8 @@ def main():
 
         def verify(name, a_src, b_src, extra=()):
             rep = os.path.join(resdir, f"verify-{name}.json")
-            p = subprocess.run([edverify, "diff", "--a", a_src, "--b", b_src, "--index-as", "x",
+            b_src = [b_src] if isinstance(b_src, str) else list(b_src)
+            p = subprocess.run([edverify, "diff", "--a", a_src, "--b", *b_src, "--index-as", "x",
                                 "--out", rep, *tls_edv, *extra], env=tenv, capture_output=True, text=True)
             v = json.load(open(rep)) if os.path.exists(rep) else {}
             ok = p.returncode == 0
@@ -327,35 +470,106 @@ def main():
                         wall_s=m.get("wall_s"), max_rss_kb=rss, docs_per_s=m.get("docs_per_s"),
                         retries=m.get("retries"))
 
+        keep = a.keep or scenario.get("keep", False)
+
+        def drop(files):
+            for f in files or ():
+                if not keep and os.path.exists(f):
+                    os.remove(f)
+
+        def check_node():
+            if watch.breach:
+                raise RuntimeError(watch.breach)
+
         for s in result["seeds"]:
             idx, src = s["index"], f"{url}/{s['index']}"
-            dumped = None
+            dumped = None  # files of the last cluster-verified dump (input for restore / sourceOnly)
             for st in scenario.get("step", []):
-                kind, extra = st["kind"], st.get("args", [])
+                check_node()
+                kind, extra = st["kind"], list(st.get("args", []))
+                name = f"{st.get('name', kind)}-{idx}"
                 if kind == "dump":
-                    c = st.get("compress", "none")
-                    f = os.path.join(work, idx + ".ndjson" + {"none": "", "gzip": ".gz", "zstd": ".zst"}[c])
-                    cflags = {"none": [], "gzip": ["--compressionType=gzip"], "zstd": ["--compressionType=zstd"]}[c]
-                    r = run_tool(f"dump-{idx}", ["--input", src, "--output", f, "--type=data", *cflags, *extra],
-                                 s["stored"], [f])
-                    r["verify"] = verify(f"dump-{idx}", src, f)
-                    dumped = f
+                    c, mode, split = st.get("compress", "none"), st.get("verify", "cluster"), st.get("split", False)
+                    base = os.path.join(work, name + ".ndjson")
+                    f = base if split else base + EXT[c]
+                    cflags = CFLAGS[c] + ([f"--compressionLevel={st['level']}"] if "level" in st else [])
+                    docs, ref, ref_idx, ref_file = s["stored"], src, None, None
+                    if mode == "query":
+                        # Correctness gate for a filtered dump: the engine's own _reindex of
+                        # the same query is the reference set.
+                        ref_idx = f"{idx}-ref-{st.get('name', 'query')}"
+                        cl.req("POST", "/_reindex?refresh=true&wait_for_completion=true",
+                               {"source": {"index": idx, **st["query"]}, "dest": {"index": ref_idx}})
+                        docs = cl.req("GET", f"/{ref_idx}/_count")["count"]
+                        ref = f"{url}/{ref_idx}"
+                        extra.append("--searchBody=" + json.dumps(st["query"], separators=(",", ":")))
+                    elif mode == "source":
+                        # --sourceOnly lines carry no _index/_id: the reference is the raw
+                        # _source of every line of the last cluster-verified dump.
+                        if not dumped:
+                            raise RuntimeError(f"{name}: verify = 'source' needs an earlier full dump step")
+                        ref_file = os.path.join(work, name + ".ref.ndjson")
+                        with open(ref_file, "w", encoding="utf-8") as out:
+                            for df in dumped:
+                                with open_text(df) as fin:
+                                    for line in fin:
+                                        if line.strip():
+                                            out.write(raw_member(line.strip(), "_source") + "\n")
+                        ref = ref_file
+                        if "--sourceOnly" not in extra:
+                            extra.append("--sourceOnly")
+                    elif mode != "cluster":
+                        raise RuntimeError(f"{name}: unknown verify mode {mode}")
+                    r = run_tool(name, ["--input", src, "--output", f, "--type=data", *cflags, *extra],
+                                 docs, [] if split else [f])
+                    if split:
+                        pat = re.compile(re.escape(name) + r"\.split-(\d+)\.ndjson")
+                        files = sorted((p for p in glob.glob(os.path.join(work, name + ".split-*"))
+                                        if pat.match(os.path.basename(p))),
+                                       key=lambda p: int(pat.match(os.path.basename(p)).group(1)))
+                        r["parts"] = len(files)
+                        r["bytes_out"] = sum(os.path.getsize(p) for p in files)
+                        if len(files) < st.get("min_parts", 2):
+                            result["failures"].append(f"{name}: {len(files)} part(s) < min_parts {st.get('min_parts', 2)}")
+                    else:
+                        files = [f]
+                    r["verify"] = verify(name, ref, files)
+                    if ref_idx:
+                        r["reference_docs"] = docs
+                        cl.req("DELETE", "/" + ref_idx, ok404=True)
+                    if mode == "cluster":
+                        if dumped:
+                            drop(dumped)
+                        dumped = files
+                    else:
+                        drop(files + ([ref_file] if ref_file else []))
                 elif kind in ("restore", "copy"):
-                    dst = f"{idx}-{kind}"
+                    dst = f"{idx}-{st.get('name', kind)}"
                     m = json.loads(subprocess.run([edgen, "mapping", "--profile", s["profile"], "--engine", flavour],
                                                   check=True, capture_output=True).stdout)
                     cl.req("PUT", "/" + dst, m)
-                    expected.add(dst)
-                    inp = dumped if kind == "restore" else src
-                    if inp is None:
-                        raise RuntimeError("restore step needs an earlier dump step")
-                    r = run_tool(f"{kind}-{idx}", ["--input", inp, "--output", f"{url}/{dst}", "--type=data", *extra],
+                    if kind == "restore":
+                        if not dumped:
+                            raise RuntimeError("restore step needs an earlier dump step")
+                        if len(dumped) != 1:
+                            raise RuntimeError("restore step needs an unsplit dump")
+                        inp = dumped[0]
+                    else:
+                        inp = src
+                    r = run_tool(name, ["--input", inp, "--output", f"{url}/{dst}", "--type=data", *extra],
                                  s["stored"])
                     cl.req("POST", f"/{dst}/_refresh")
-                    r["verify"] = verify(f"{kind}-{idx}", src, f"{url}/{dst}")
+                    r["verify"] = verify(name, src, f"{url}/{dst}")
+                    if keep:
+                        expected.add(dst)
+                    else:  # one target at a time: keeps the disk peak to source + one copy
+                        cl.req("DELETE", "/" + dst, ok404=True)
                 else:
                     raise RuntimeError(f"unknown step kind {kind}")
+                r["cell"] = st.get("name", kind)
                 result["steps"].append(r)
+            drop(dumped)
+        check_node()
 
         # LOAD-017 leak check
         deadline, scroll, pit = time.time() + 15, None, None
@@ -378,6 +592,9 @@ def main():
         result["failures"].append(f"error: {e}")
         rc = 1
     finally:
+        watch.stop.set()
+        result["node"] = dict(peak_rss_mb=watch.peak_mb, node_rss_mb=place.get("node_rss_mb"),
+                              container_cpus=env.get("IT_CONTAINER_CPUS"), breach=watch.breach)
         result["finished"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
         result["pass"] = rc == 0
         out = os.path.join(resdir, scenario["name"] + ".json")

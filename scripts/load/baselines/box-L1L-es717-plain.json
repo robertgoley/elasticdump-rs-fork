@@ -1,0 +1,161 @@
+{
+ "schema": "edrs-load-baseline/v1",
+ "tier": "L1L",
+ "place": "box",
+ "engine": "es717-plain",
+ "git": "3e26331",
+ "recorded": "2026-10-31T21:48:36-04:00",
+ "note": "perf baseline for this place/tier/engine only; scaled runs are not comparable with full-size ones",
+ "cells": {
+  "matrix-dump/scroll": {
+   "docs_per_s": 129262.5,
+   "wall_s": 7.736,
+   "max_rss_kb": 31476,
+   "docs": 1000000
+  },
+  "matrix-dump/pit": {
+   "docs_per_s": 119931.4,
+   "wall_s": 8.338,
+   "max_rss_kb": 34908,
+   "docs": 1000000
+  },
+  "matrix-dump/pit-s2": {
+   "docs_per_s": 211776.0,
+   "wall_s": 4.722,
+   "max_rss_kb": 50972,
+   "docs": 1000000
+  },
+  "matrix-dump/pit-s4": {
+   "docs_per_s": 382809.9,
+   "wall_s": 2.612,
+   "max_rss_kb": 72040,
+   "docs": 1000000
+  },
+  "matrix-dump/pit-s8": {
+   "docs_per_s": 381826.6,
+   "wall_s": 2.619,
+   "max_rss_kb": 96908,
+   "docs": 1000000
+  },
+  "matrix-dump/pit-s16": {
+   "docs_per_s": 518153.8,
+   "wall_s": 1.93,
+   "max_rss_kb": 113392,
+   "docs": 1000000
+  },
+  "matrix-restore/src": {
+   "docs_per_s": 119472.5,
+   "wall_s": 8.37,
+   "max_rss_kb": 52224,
+   "docs": 1000000
+  },
+  "matrix-restore/c1-l1000": {
+   "docs_per_s": 14447.3,
+   "wall_s": 69.217,
+   "max_rss_kb": 25688,
+   "docs": 1000000
+  },
+  "matrix-restore/c1-l5000": {
+   "docs_per_s": 17279.5,
+   "wall_s": 57.872,
+   "max_rss_kb": 84084,
+   "docs": 1000000
+  },
+  "matrix-restore/c4-l1000": {
+   "docs_per_s": 40487.6,
+   "wall_s": 24.699,
+   "max_rss_kb": 67340,
+   "docs": 1000000
+  },
+  "matrix-restore/c4-l5000": {
+   "docs_per_s": 47097.1,
+   "wall_s": 21.233,
+   "max_rss_kb": 269100,
+   "docs": 1000000
+  },
+  "matrix-restore/c8-l1000": {
+   "docs_per_s": 56926.5,
+   "wall_s": 17.567,
+   "max_rss_kb": 96748,
+   "docs": 1000000
+  },
+  "matrix-restore/c8-l5000": {
+   "docs_per_s": 65651.6,
+   "wall_s": 15.232,
+   "max_rss_kb": 336572,
+   "docs": 1000000
+  },
+  "matrix-copy/copy": {
+   "docs_per_s": 15506.9,
+   "wall_s": 64.487,
+   "max_rss_kb": 88812,
+   "docs": 1000000
+  },
+  "matrix-copy/copy-pit-s4": {
+   "docs_per_s": 16383.2,
+   "wall_s": 61.038,
+   "max_rss_kb": 160648,
+   "docs": 1000000
+  },
+  "matrix-compress/fscompress": {
+   "docs_per_s": 142190.4,
+   "wall_s": 7.033,
+   "max_rss_kb": 38764,
+   "docs": 1000000
+  },
+  "matrix-compress/zstd-1": {
+   "docs_per_s": 145737.4,
+   "wall_s": 6.862,
+   "max_rss_kb": 33624,
+   "docs": 1000000
+  },
+  "matrix-compress/zstd-3": {
+   "docs_per_s": 148554.2,
+   "wall_s": 6.732,
+   "max_rss_kb": 44496,
+   "docs": 1000000
+  },
+  "matrix-compress/zstd-9": {
+   "docs_per_s": 93017.0,
+   "wall_s": 10.751,
+   "max_rss_kb": 85960,
+   "docs": 1000000
+  },
+  "matrix-split/filesize": {
+   "docs_per_s": 134379.0,
+   "wall_s": 7.442,
+   "max_rss_kb": 42616,
+   "docs": 1000000
+  },
+  "matrix-split/maxrows": {
+   "docs_per_s": 148582.3,
+   "wall_s": 6.73,
+   "max_rss_kb": 40960,
+   "docs": 1000000
+  },
+  "matrix-split/filesize-zstd": {
+   "docs_per_s": 135633.2,
+   "wall_s": 7.373,
+   "max_rss_kb": 45328,
+   "docs": 1000000
+  },
+  "matrix-filter/full": {
+   "docs_per_s": 136384.6,
+   "wall_s": 7.332,
+   "max_rss_kb": 38124,
+   "docs": 1000000
+  },
+  "matrix-filter/sourceonly": {
+   "docs_per_s": 140244.2,
+   "wall_s": 7.13,
+   "max_rss_kb": 32056,
+   "docs": 1000000
+  },
+  "matrix-filter/range": {
+   "docs_per_s": 55967.5,
+   "wall_s": 15.189,
+   "max_rss_kb": 29452,
+   "docs": 850076
+  }
+ }
+}

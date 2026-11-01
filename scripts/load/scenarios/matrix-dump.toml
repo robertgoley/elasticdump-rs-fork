@@ -1,0 +1,42 @@
+# LOAD-004 matrix: dump search modes. Each cell dumps the whole index to NDJSON and
+# is gated by `edverify diff` against the cluster digest; the previous cell's dump
+# is deleted when the next one is verified.
+name        = "matrix-dump"
+description = "Dump: scroll, PIT unsliced, PIT slices 2/4/8/16"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+name = "scroll"
+kind = "dump"
+args = ["--limit=2000", "--searchType=scroll"]
+
+[[step]]
+name = "pit"
+kind = "dump"
+args = ["--limit=2000", "--searchType=pit"]
+
+[[step]]
+name = "pit-s2"
+kind = "dump"
+args = ["--limit=2000", "--searchType=pit", "--slices=2"]
+
+[[step]]
+name = "pit-s4"
+kind = "dump"
+args = ["--limit=2000", "--searchType=pit", "--slices=4"]
+
+[[step]]
+name = "pit-s8"
+kind = "dump"
+args = ["--limit=2000", "--searchType=pit", "--slices=8"]
+
+[[step]]
+name = "pit-s16"
+kind = "dump"
+args = ["--limit=2000", "--searchType=pit", "--slices=16"]

@@ -32,3 +32,4 @@
 - 2026-10-31: L-642b (same-target check for host-only --output) committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-704 (SUP-010 reproducible builds).
 - 2026-10-31: L-704 (reproducible-build check) committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-705 (SUP-016 RC behaviour diff).
 - 2026-10-31: L-705 (RC behaviour diff) committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-801 (LOAD-004 scenario matrix).
+- 2026-10-31: L-801 LOAD-004 scenario matrix + baselines committed and pushed to `main`; plan/PROGRESS.md copies and handoff/SHA256SUMS updated; RESUME-FOR-GROK-BOT.md: next L-455c (empty `_source: {}` refused unless --allowMissingSource).

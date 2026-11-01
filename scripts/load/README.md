@@ -61,3 +61,74 @@ LOAD_PLACE=runner scripts/load/run.sh L1R dump-restore-logs
 - no unexpected non-system indices.
 
 **Results.** Output is written to `results/load/<run-id>/<scenario>.json` (schema `edrs-load/v1`), alongside the metrics and verify reports. Credentials reach the tools through environment variables only, never through argv.
+
+## matrix.sh: the LOAD-004 scenario matrix
+
+`matrix.sh` runs every scenario listed in `scenarios/matrix.toml` at one tier and place. It gates each cell, which is one step of one scenario.
+
+```
+LOAD_WORK=/workspace/logs/l801/work scripts/load/matrix.sh L0 --place box
+scripts/load/matrix.sh L1L --place box                    # full L1-lite (1M docs, 2 GB heap)
+scripts/load/matrix.sh L0 --place shared                  # scaled down while other agents use the box
+scripts/load/matrix.sh L0 --place box --write-baseline    # record the perf baseline
+scripts/load/matrix.sh L0 --only matrix-split --docs 5000 # smoke (never compared or recorded)
+```
+
+| Scenario | Cells |
+|---|---|
+| `matrix-dump` | `scroll`, `pit`, `pit-s2`, `pit-s4`, `pit-s8`, `pit-s16` |
+| `matrix-restore` | `c{1,4,8}-l{1000,5000}` (`--concurrency` x `--limit`), from one verified dump (`src`) |
+| `matrix-copy` | `copy` (scroll), `copy-pit-s4` (cluster -> cluster) |
+| `matrix-compress` | `fscompress` (gzip), `zstd-1`, `zstd-3`, `zstd-9` (`--compressionLevel`) |
+| `matrix-split` | `filesize` (`--fileSize=20mb`), `maxrows` (`--maxRows=25000`), `filesize-zstd` |
+| `matrix-filter` | `full`, `sourceonly` (`--sourceOnly`), `range` (`--searchBody` range on `http.response.status_code`) |
+
+**Correctness gate.** Every cell is checked with `edverify diff`, and the tool must exit 0. Every cell must also pass the scenario's write-count, RSS-budget and leak checks. What a cell is compared against depends on its type:
+
+| Cell type | Compared against |
+|---|---|
+| Dump | The cluster digest. |
+| Split dump | The cluster digest, over all parts together. The cell also needs at least `min_parts` parts. |
+| `verify = "source"` | The raw `_source` of every line of the scenario's last full dump. |
+| `verify = "query"` | An index built by the engine's own `_reindex` with the same query. `Total Writes` must equal that index's count, and the index is deleted afterwards. |
+| Restore and copy | The source index. The target index is deleted after its check. |
+
+**Perf baseline.** Each run's docs/s and tool max RSS are compared with `baselines/<place>-<tier>-<engine>.json`. A cell fails if it is more than `threshold_pct` (30) worse; the threshold is wide because the shared box is noisy. Baselines are only comparable within the same place, tier and engine. A cell that has no baseline entry is reported as `no-baseline`.
+
+The run writes `results/load/<run-id>/matrix.json` (git-ignored).
+
+### Sizes and where they run
+
+| Tier | Docs | Heap | Where it runs |
+|---|---|---|---|
+| L0 | 100k | 1 GB (768 MB on `shared`) | Everywhere. Full size on this box: place `box`. |
+| L1L | 1M | 2 GB | Full L1-lite. On this box with place `box`; needs about 6 GB of free RAM. Also runs on `big`. |
+| L1S | 250k | 768 MB | L1-lite scaled down, for place `shared` only (when other agents need the box). |
+| L1 | 10M | 4 GB | Phase B, on a dedicated load host (`big`). The memory guard needs about 10 GB free, which this box does not have. |
+
+Committed baselines:
+
+- `baselines/box-L0-es717-plain.json` and `baselines/box-L1L-es717-plain.json` are full size.
+- `baselines/shared-L0-es717-plain.json` and `baselines/shared-L1S-es717-plain.json` are scaled down.
+- `baselines/shared-L1L-es717-plain.json` has the full 1M docs, with the heap capped at 768 MB.
+
+All 25 cells were correct in every committed baseline run. One outlier showed up: a single shared L1L run took 157 s for `zstd-9`, where the box run and the shared rerun took 10-11 s (an offline file-to-file run takes 10.5 s). It did not reproduce, so the committed value is from the rerun. If a regression shows up on one cell, rerun that scenario with `--only` before treating it as real.
+
+A tier that a place cannot hold is refused with exit 2, and the message says what the tier needs.
+
+### Place `shared`: the scaled-down fallback while other agents use the box
+
+The `shared` place keeps the run to about half the box:
+
+- **CPU.** `cpus = "0-3"` pins `run.py` to 4 of the 8 CPUs, and everything it starts inherits that affinity: the tools, `edverify`, and the engine container (through podman). `IT_CONTAINER_CPUS=2` is passed as well.
+- **Memory.** The heap is capped at 768 MB and the JVM runs lean.
+- **Disk.** `data_on_work = true` mounts the engine's data dir under `LOAD_WORK` (`IT_ES_DATA_MOUNT=1` in `up.sh`), so all load data lives in the run's work dir and is deleted with it; place `box` does the same. This applies to the official Elasticsearch images, which is the matrix default (`es717-plain`); other engines keep their data in podman's container storage.
+
+Rootless podman with the cgroupfs manager accepts `--memory` and `--cpus` on this box but does not enforce them; inside the container, `memory.max` reads `max` and `nproc` reads 8. Two mechanisms therefore enforce the limits instead:
+
+- **CPU:** the affinity above.
+- **Memory:** a watchdog in `run.py` samples the engine's process-tree RSS from the host's `/proc` every 2 s. If it exceeds `node_rss_mb` (1800), the watchdog kills the container and fails the run.
+
+The peak is recorded as `node.peak_rss_mb`.
+
+Split file names follow Node elasticdump: `<base>.split-<n><ext>[.gz|.zst]`. An output that already ends in `.zst` therefore gets the codec suffix twice, so the matrix names split outputs `*.ndjson`.

@@ -1,0 +1,47 @@
+# LOAD-004 matrix: restore --concurrency {1,4,8} x --limit {1000,5000} from one
+# verified dump. Each cell restores into its own index, is gated by `edverify diff`
+# against the source index, and the target is deleted before the next cell.
+name        = "matrix-restore"
+description = "Restore: concurrency 1/4/8 x limit 1000/5000"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+name = "src"
+kind = "dump"
+args = ["--limit=5000"]
+
+[[step]]
+name = "c1-l1000"
+kind = "restore"
+args = ["--concurrency=1", "--limit=1000"]
+
+[[step]]
+name = "c1-l5000"
+kind = "restore"
+args = ["--concurrency=1", "--limit=5000"]
+
+[[step]]
+name = "c4-l1000"
+kind = "restore"
+args = ["--concurrency=4", "--limit=1000"]
+
+[[step]]
+name = "c4-l5000"
+kind = "restore"
+args = ["--concurrency=4", "--limit=5000"]
+
+[[step]]
+name = "c8-l1000"
+kind = "restore"
+args = ["--concurrency=8", "--limit=1000"]
+
+[[step]]
+name = "c8-l5000"
+kind = "restore"
+args = ["--concurrency=8", "--limit=5000"]

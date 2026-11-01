@@ -7,7 +7,21 @@ max_heap_mb   = 4096
 container_mem = "6g"
 tool_mem_mb   = 1024   # the tool's max RSS must stay under this (asserted)
 max_disk_mb   = 25000  # total budget including dataset cache
-tiers         = ["L0", "L1R", "L1"]
+data_on_work  = true   # engine data under LOAD_WORK, deleted with the run (official ES images)
+tiers         = ["L0", "L1S", "L1L", "L1R", "L1"]
+
+[place.shared]     # this dev box while other agents share it (L-801): ~half the box
+max_heap_mb   = 768
+heap_cap_mb   = 768    # every tier runs scaled down to this heap here (result.scaled)
+container_mem = "1536m"  # passed to podman, not enforced here (cgroupfs): node_rss_mb is
+node_rss_mb   = 1800     # the enforced cap (run.py watchdog kills the engine above it)
+container_cpus = 2
+cpus          = "0-3"  # affinity for run.py, the tools and the engine: 4 of 8 CPUs
+lean_jvm      = true
+data_on_work  = true   # engine data under LOAD_WORK, deleted with the run
+tool_mem_mb   = 512
+max_disk_mb   = 12000
+tiers         = ["L0", "L1S", "L1L"]
 
 [place.runner]     # hosted CI runner (~14 GB disk, 7 GB RAM)
 max_heap_mb   = 2048
@@ -21,12 +35,23 @@ max_heap_mb   = 16384
 container_mem = "32g"
 tool_mem_mb   = 2048
 max_disk_mb   = 500000
-tiers         = ["L0", "L1R", "L1", "L2"]
+tiers         = ["L0", "L1S", "L1L", "L1R", "L1", "L2"]
 
 [tier.L0]
 docs      = 100000
 edge_docs = 10000
 heap_mb   = 1024
+
+[tier.L1S]         # L1-lite scaled down for the shared box (L-801): a quarter of the docs
+docs      = 250000
+edge_docs = 10000
+heap_mb   = 768
+
+[tier.L1L]         # L1-lite (TASKS-LOCAL L1L class): 1M docs, 2 GB heap
+docs      = 1000000
+edge_docs = 10000
+heap_mb   = 2048
+needs     = "an L1L host: >= 9 GB RAM and >= 20 GB disk free (place box when idle, or big)"
 
 [tier.L1R]         # reduced L1 for hosted runners: zstd only, no dataset cache
 docs      = 5000000
@@ -38,6 +63,7 @@ compress  = ["zstd"]
 docs      = 10000000
 edge_docs = 10000
 heap_mb   = 4096
+needs     = "a dedicated load host (place big, Phase B)"
 
 [tier.L2]
 docs      = 100000000

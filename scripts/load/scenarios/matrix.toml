@@ -1,0 +1,31 @@
+# LOAD-004 scenario matrix (L-801). scripts/load/matrix.py runs the scenarios below
+# with run.py and gates every cell twice:
+#   correctness - the cell's edverify diff (plus Total Writes, Failed Writes = 0,
+#                 tool RSS budget, leak check), always;
+#   performance - docs/s and tool max RSS against the committed baseline for the
+#                 same place/tier/engine in scripts/load/baselines/.
+name      = "LOAD-004"
+scenarios = ["matrix-dump", "matrix-restore", "matrix-copy", "matrix-compress",
+             "matrix-split", "matrix-filter"]
+threshold_pct = 30   # perf regression threshold; the shared box is noisy
+
+# Where each size runs. L0 and L1L run full size on the dev box (place box); place
+# shared and tier L1S are the scaled-down fallback for when other agents need the box.
+[[size]]
+tier   = "L0"
+places = ["shared", "box", "runner", "big"]
+
+[[size]]
+tier   = "L1S"
+places = ["shared", "box", "big"]
+note   = "L1-lite scaled down (250k docs, 768 MB heap) for the shared box"
+
+[[size]]
+tier   = "L1L"
+places = ["box", "big", "shared"]
+note   = "full L1-lite (1M docs, 2 GB heap) needs about 6 GB free RAM: place box when free, else big; on place shared it runs the full 1M docs with the heap capped at 768 MB (scaled)"
+
+[[size]]
+tier   = "L1"
+places = ["big"]
+note   = "10M docs, 4 GB heap: Phase B; needs about 10 GB free RAM (more than the box has free) -> dedicated load host"

@@ -1,0 +1,34 @@
+# LOAD-004 matrix: split dumps. The gate digests every part together against the
+# cluster and requires at least min_parts parts (sizes are set so that L0, 100k
+# logs docs of ~1 KB, splits into 4-5 parts).
+name        = "matrix-split"
+description = "Dump: --fileSize, --maxRows, --fileSize with zstd"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+name      = "filesize"
+kind      = "dump"
+split     = true
+min_parts = 3
+args      = ["--limit=2000", "--fileSize=20mb"]
+
+[[step]]
+name      = "maxrows"
+kind      = "dump"
+split     = true
+min_parts = 4
+args      = ["--limit=2000", "--maxRows=25000"]
+
+[[step]]
+name      = "filesize-zstd"
+kind      = "dump"
+compress  = "zstd"
+split     = true
+min_parts = 3
+args      = ["--limit=2000", "--fileSize=20mb"]

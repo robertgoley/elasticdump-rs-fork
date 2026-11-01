@@ -1,0 +1,33 @@
+# LOAD-004 matrix: projections and filters.
+#  - full:       plain dump, gated against the cluster; the reference for sourceonly.
+#  - sourceonly: --sourceOnly; gated against the raw _source of every line of "full".
+#  - range:      --searchBody range query; gated against the engine's own _reindex of
+#                the same query (reference index deleted afterwards), and Total Writes
+#                must equal that reference count.
+name        = "matrix-filter"
+description = "Dump: --sourceOnly, --searchBody range filter"
+engine      = "es717-plain"
+
+[[seed]]
+index   = "load-logs"
+profile = "logs"
+seed    = 1
+docs    = "tier"
+
+[[step]]
+name = "full"
+kind = "dump"
+args = ["--limit=2000"]
+
+[[step]]
+name   = "sourceonly"
+kind   = "dump"
+verify = "source"
+args   = ["--limit=2000"]
+
+[[step]]
+name   = "range"
+kind   = "dump"
+verify = "query"
+args   = ["--limit=2000"]
+query  = { query = { range = { "http.response.status_code" = { gte = 200, lt = 300 } } } }

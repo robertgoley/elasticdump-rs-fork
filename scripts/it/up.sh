@@ -105,7 +105,7 @@ fi
 es_data_dir() {
   local d="$IT_DIR/es-data-$1"
   mkdir -p "$d"
-  podman unshare chown -R 1001:0 "$d"
+  podman unshare chown -R "${2:-1001}:0" "$d"
   echo "$d"
 }
 
@@ -171,8 +171,14 @@ case "$PROFILE" in
     PORT="${PORT:-19202}"
     if [[ $ES_OFFICIAL == 1 ]]; then
       NAME="it-es-plain-${RUN_ID}"
+      # IT_ES_DATA_MOUNT=1 (load runs): data on a host dir under $IT_DIR, not in the
+      # container's storage, so a load run's disk use stays under its work dir.
+      OFF_MOUNTS=()
+      if [[ "${IT_ES_DATA_MOUNT:-0}" == 1 ]]; then
+        OFF_MOUNTS=(-v "$(es_data_dir "$NAME" 1000):/usr/share/elasticsearch/data:Z")
+      fi
       engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
-        -p "127.0.0.1:${PORT}:9200" \
+        -p "127.0.0.1:${PORT}:9200" "${OFF_MOUNTS[@]}" \
         -e discovery.type=single-node \
         -e xpack.security.enabled=false \
         -e xpack.ml.enabled=false \
