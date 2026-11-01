@@ -352,12 +352,13 @@ pub struct Cli {
     #[arg(long = "maxRows")]
     pub max_rows: Option<u64>,
 
-    /// gzip file output
+    /// gzip file output (off by default; gzip is the default codec)
     #[arg(long = "fsCompress", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub fs_compress: Option<bool>,
 
     /// Output compression codec: gzip (same as --fsCompress) or zstd
-    /// (extension). Input compression is always auto-detected.
+    /// (extension, used only when given explicitly). Input compression is
+    /// always auto-detected.
     #[arg(long = "compressionType", value_enum)]
     pub compression_type: Option<CompressionType>,
 

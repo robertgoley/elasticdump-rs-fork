@@ -1153,3 +1153,63 @@ pub async fn run() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod compression_default_tests {
+    //! D-2: gzip stays the compression default (`--fsCompress`, Node parity);
+    //! zstd is only ever chosen by an explicit `--compressionType zstd`.
+    use super::*;
+    use crate::pipeline::file_sink::Codec;
+
+    fn codec(extra: &[&str]) -> Option<Codec> {
+        let mut v = vec!["elasticdump-rs", "--input", "http://localhost:9200/i"];
+        v.extend_from_slice(&["--output", "dump.json"]);
+        v.extend_from_slice(extra);
+        let cli = Cli::try_parse_from(v).unwrap();
+        let out = Endpoint::File(std::path::PathBuf::from("dump.json"));
+        file_options(&cli, &out).unwrap().codec
+    }
+
+    #[test]
+    fn no_flag_is_uncompressed() {
+        assert_eq!(codec(&[]), None);
+        assert_eq!(codec(&["--fsCompress", "false"]), None);
+    }
+
+    #[test]
+    fn fs_compress_and_level_mean_gzip_never_zstd() {
+        assert_eq!(codec(&["--fsCompress"]), Some(Codec::Gzip(6)));
+        assert_eq!(codec(&["--fsCompress", "true"]), Some(Codec::Gzip(6)));
+        assert_eq!(
+            codec(&["--fsCompress", "--compressionLevel", "-1"]),
+            Some(Codec::Gzip(6))
+        );
+        assert_eq!(
+            codec(&["--fsCompress", "--compressionLevel", "9"]),
+            Some(Codec::Gzip(9))
+        );
+        assert_eq!(codec(&["--compressionType", "gzip"]), Some(Codec::Gzip(6)));
+        // a level alone selects nothing (warned), in particular not zstd
+        assert_eq!(codec(&["--compressionLevel", "3"]), None);
+    }
+
+    #[test]
+    fn zstd_only_when_asked() {
+        assert_eq!(codec(&["--compressionType", "zstd"]), Some(Codec::Zstd(3)));
+        assert_eq!(
+            codec(&["--fsCompress", "--compressionType", "zstd"]),
+            Some(Codec::Zstd(3))
+        );
+    }
+
+    #[test]
+    fn help_says_gzip_default_zstd_opt_in() {
+        use clap::CommandFactory;
+        let help = Cli::command().render_long_help().to_string();
+        // clap wraps long lines: compare with whitespace collapsed
+        let help = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(help.contains("--fsCompress"), "{help}");
+        assert!(help.contains("off by default"), "{help}");
+        assert!(help.contains("only when given explicitly"), "{help}");
+    }
+}

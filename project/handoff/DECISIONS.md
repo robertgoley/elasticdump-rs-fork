@@ -27,4 +27,4 @@ _Owner column re-labelled 2026-10-31 for the Grok 4.7 / OpenCode agent split (im
 - The default image's 5 no-fix High CVEs (libc6 CVE-2026-19499, CVE-2026-5435, CVE-2026-84243; libgcc-s1 CVE-2026-102010, CVE-2026-95619) are accepted until upstream fixes them; `make scan` ignores only those, only while not-fixed/wont-fix.
 - License: the project stays MIT; Apache-2.0 only for the 12 fixtures copied from elasticsearch-dump.
 - TESTING-TODO, not now: l638 `--intervalCap 1` timing on a stable machine (do not widen the limit); full arm64 image build (low priority).
-- Usage: past 90% weekly usage is OK if every task completes before 100% (start a task only if usage + 1.5 × estimate < 98%).
+- Usage: Default: stop at 90% weekly usage and message the user. Above 90% only with explicit user approval for that session/task (granted 2026-11-01 for D-2/L-811, finishing before 100%); then start a task only if usage + 1.5 × estimate < 98%.

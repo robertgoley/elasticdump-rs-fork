@@ -66,7 +66,7 @@ Other common forms:
 ```bash
 elasticdump-rs --input=http://os:9200/src --output=http://os:9200/dst --limit 1000 --concurrency 4  # copy
 elasticdump-rs --input=http://os:9200/src --output=dump.json --fileSize=500mb --fsCompress           # gzip parts
-elasticdump-rs --input=http://os:9200/src --output=dump.json --compressionType zstd                 # zstd (preferred)
+elasticdump-rs --input=http://os:9200/src --output=dump.json --compressionType zstd                 # zstd (opt-in)   
 elasticdump-rs --input=dump.json.zst --output=http://os:9200/dst                                     # auto-detected
 elasticdump-rs --input=http://os:9200/src --output=$ --searchBody=@query.json | jq .                # stdout
 elasticdump-rs --input=http://os:9200/src --output=d.json --searchAfter --pit --slices 4            # sliced PIT
@@ -141,7 +141,7 @@ for every place the tool changes what is loaded, and for the tested versions, se
 ## Intentional differences from Node elasticdump
 
 * **zstd**: `--compressionType zstd` writes `.zst` files/parts that Node cannot read. Default output stays uncompressed;
-  `--fsCompress` keeps meaning gzip.
+  `--fsCompress` keeps meaning gzip, and gzip stays the default codec (D-2); zstd is used only when asked for.
 * **Compressed input is auto-detected** (gzip or zstd magic bytes) with or without `--fsCompress`. Decoding streams
   (memory stays bounded by `--maxDocMb`, also for 1000:1 and 30000:1 bombs); zstd frames that declare a window over
   128 MiB (`zstd --long=28` or more) are refused with a hint. Truncated input, trailing garbage and corrupt frames stop
