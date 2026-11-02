@@ -389,6 +389,15 @@ dynamically.
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
 never enters a build layer.
 
+**Offline build (L-808i).** The host fetches the crates and the container build runs offline: `scripts/build-image.sh` and
+every `make image*` target first run `scripts/vendor-crates.sh`, which runs `cargo vendor --locked` on the host into
+the gitignored `.vendor/` (about 270 MB, refreshed on each build; `rm -rf .vendor` removes it). The builder copies it
+in and runs `cargo build --locked --offline` from the vendored sources, in a `RUN --network=none` step, so the build
+needs no DNS or crates.io access (the old `could not resolve host index.crates.io` failure). The host therefore needs
+`cargo` (the script stops early with a clear message without it). Behind a proxy, only the host's cargo has to reach
+the registry (`HTTPS_PROXY`/`CARGO_HTTP_PROXY` or a mirror in the host's cargo config); the container tool still
+pulls the base images, and the Alpine stages still run `apk`, with its normal network.
+
 Every image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,

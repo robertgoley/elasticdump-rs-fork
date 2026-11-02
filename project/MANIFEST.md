@@ -53,3 +53,4 @@
 - 2026-11-01: L-808g mimalloc start-up reads confirmed by the owner in scripts/sup/rc-signoff.txt and trace-allow.txt; L-808f placeholders filled with 78a29f6; handoff/SHA256SUMS updated.
 - 2026-11-01: L-805a slow compression level and --overwrite leftover warnings (src/lib.rs, src/pipeline/file_sink.rs, tests/cli_contract.rs, README, results/local/L-805a.md); L-808g placeholders filled with d138b07; handoff/SHA256SUMS updated.
 - 2026-11-01: L-808h image job skipped on Dependabot PRs (.github/workflows/security.yml, results/local/L-808h.md); L-805a placeholders filled with ee1384e; handoff/SHA256SUMS updated.
+- 2026-11-01: L-808i offline image build (scripts/vendor-crates.sh, scripts/build-image.sh, Dockerfile, Makefile, .dockerignore, .gitignore, README, results/local/L-808i.md); L-808h placeholders filled with 8a4a06c; handoff/SHA256SUMS updated.

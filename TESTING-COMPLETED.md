@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 205 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808h (`git log -1 --grep '^L-808h'`; the next commit fills in its sha).
+Total: 206 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808i (`git log -1 --grep '^L-808i'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -252,4 +252,5 @@ Total: 205 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808f | 78a29f6 | 2026-11-01 | CI: `scripts/third-party-notices.py --check` added to security.yml (dependencies job); passes locally, fails (rc 1) on a stale file. |
 | L-808g | d138b07 | 2026-11-01 | rc-signoff/trace-allow: the 2 mimalloc start-up reads confirmed by the owner (read-only allocator topology/THP probes); trace.sh plain passes. |
 | L-805a | ee1384e | 2026-11-01 | Warnings (not errors) for gzip level 9 and zstd 19+ (README table numbers) and, with `--overwrite`, a note that killed-run leftovers are not removed; 2 unit + 2 contract tests; README/help updated; defaults unchanged. |
-| L-808h | this commit | 2026-11-01 | security.yml `image` job skipped cleanly on Dependabot PRs; missing-secret hard failure kept elsewhere; actionlint clean; no repo settings or secrets touched. |
+| L-808h | 8a4a06c | 2026-11-01 | security.yml `image` job skipped cleanly on Dependabot PRs; missing-secret hard failure kept elsewhere; actionlint clean; no repo settings or secrets touched. |
+| L-808i | this commit | 2026-11-01 | Offline container build: host-vendored crates, `RUN --network=none` cargo step; glibc and alpine images built and test-image.sh passes for both; README updated. |

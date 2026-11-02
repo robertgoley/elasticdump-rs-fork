@@ -34,20 +34,26 @@ ARG CARGO_BUILD_JOBS=2
 # (official rust images already use it; Alpine-packaged cargo defaults to ~/.cargo).
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
     CARGO_HOME=/usr/local/cargo \
+    CARGO_NET_OFFLINE=true \
     CARGO_TERM_COLOR=never
 WORKDIR /src
 # Alpine builders (the Alpine variants) need libc headers
 # and a CA bundle; Debian/DHI builders already have both.
 RUN if command -v apk >/dev/null 2>&1; then apk add --no-cache musl-dev ca-certificates; fi
+# Offline build (L-808i): every crate comes from .vendor/, fetched on the HOST by
+# scripts/vendor-crates.sh (run by scripts/build-image.sh and the Makefile image targets).
+# The builder needs no DNS or registry access; the cargo step runs with --network=none.
+COPY .vendor ./.vendor
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # Cargo.toml declares the test targets; their sources must exist to load it.
 COPY tests ./tests
 # Workspace members (test-only tools; not built into the image).
 COPY tools ./tools
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=edrs-registry \
-    --mount=type=cache,target=/src/target,id=edrs-target \
-    cargo build --locked --release --bin elasticdump-rs \
+RUN --network=none --mount=type=cache,target=/src/target,id=edrs-target \
+    test -f .vendor/config.toml \
+      || { echo "no .vendor/: run scripts/vendor-crates.sh on the host first (or use scripts/build-image.sh / make image)" >&2; exit 1; } \
+ && cargo build --locked --offline --release --config .vendor/config.toml --bin elasticdump-rs \
  && install -D -m 0755 target/release/elasticdump-rs /out/elasticdump-rs \
  && /out/elasticdump-rs --version
 # CA bundle for runtimes that lack one (runtime-shell copies it only when missing).

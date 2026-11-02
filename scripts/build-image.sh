@@ -21,6 +21,11 @@
 # --dry-run   print the commands without running them.
 # dhi.io bases need a pull login first: podman login dhi.io
 #
+# Offline build (L-808i): crates are fetched on the HOST (scripts/vendor-crates.sh into the
+# gitignored .vendor/, so the host needs cargo) and the builder's cargo step runs with
+# --network=none. Only the host needs registry access (or a proxy). Remove .vendor/ with
+# `rm -rf .vendor` when done; it is refreshed on every build.
+#
 # Environment: CONTAINER (podman | docker; default podman if installed). `both` and --push of a
 # manifest list need podman.
 set -euo pipefail
@@ -82,6 +87,8 @@ if [[ ${#tags[@]} -eq 0 ]]; then
 fi
 
 run() { printf '+'; printf ' %q' "$@"; printf '\n'; [[ $dry == 1 ]] || "$@"; }
+
+run scripts/vendor-crates.sh
 
 args=(build --target "$target"
   --build-arg "BUILDER_IMAGE=$builder_image" --build-arg "BUILDER_TAG=$builder_tag"

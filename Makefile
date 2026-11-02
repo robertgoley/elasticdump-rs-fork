@@ -7,6 +7,7 @@
 #   make image-dhi-debian      # dhi.io Debian 13 -dev runtime with a shell (:<ver>-debian-dev)
 #   make image-public          # public Debian 13 bases, no login (:<ver>-debian-public)
 #   make image-alpine          # public Alpine/musl bases, no login (:<ver>-alpine-public)
+#   make vendor                # fetch crates on the host into .vendor/ (needs cargo; image targets run it)
 #   make test-image            # SUP-017 for IMAGE_VARIANT: non-root, --read-only + /data, binary set, base digest
 #   make sbom scan             # syft SBOM + grype/trivy scan of the IMAGE_VARIANT image
 REGISTRY   ?= localhost
@@ -61,40 +62,44 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_ARGS = --build-arg VERSION=$(IMAGE_TAG) --build-arg VCS_REF=$(VCS_REF) \
              --build-arg BUILD_DATE=$(BUILD_DATE) --build-arg CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS)
 
-.PHONY: help image image-dhi-alpine image-dhi-debian image-public image-alpine test-image save sbom scan print
+.PHONY: help vendor image image-dhi-alpine image-dhi-debian image-public image-alpine test-image save sbom scan print
 help:
-	@sed -n '1,12p' Makefile
+	@sed -n '1,13p' Makefile
 
 print:
 	@echo "IMAGE=$(IMAGE) VARIANT_IMAGE=$(VARIANT_IMAGE) CONTAINER=$(CONTAINER)"
 	@echo "builder=$(BUILDER_IMAGE):$(BUILDER_TAG) base=$(BASE_IMAGE):$(BASE_TAG)"
 
+# Crates are fetched on the host (needs cargo); the image build itself is offline (L-808i).
+vendor:
+	scripts/vendor-crates.sh
+
 # shell-less static base: the default `runtime` stage (COPY only)
-image:
+image: vendor
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime \
 	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) --build-arg BUILDER_TAG=$(BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg BASE_TAG=$(BASE_TAG) \
 	  -t $(IMAGE) -t $(REGISTRY)/$(IMAGE_NAME):latest .
 
-image-dhi-alpine:
+image-dhi-alpine: vendor
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_ALPINE_BASE_TAG) \
 	  -t $(IMAGE)$(SUFFIX_dhi-alpine) .
 
-image-dhi-debian:
+image-dhi-debian: vendor
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_DEBIAN_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_DEBIAN_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_DEBIAN_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_DEBIAN_BASE_TAG) \
 	  -t $(IMAGE)$(SUFFIX_dhi-debian) .
 
-image-public:
+image-public: vendor
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(PUBLIC_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(PUBLIC_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(PUBLIC_BASE_IMAGE) --build-arg BASE_TAG=$(PUBLIC_BASE_TAG) \
 	  -t $(IMAGE)$(SUFFIX_public) .
 
-image-alpine:
+image-alpine: vendor
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(ALPINE_BASE_TAG) \

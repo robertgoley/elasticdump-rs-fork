@@ -1,4 +1,5 @@
-# Only Cargo.toml, Cargo.lock, src/, tests/ and tools/ (workspace members) are needed to build.
+# Only Cargo.toml, Cargo.lock, src/, tests/, tools/ (workspace members) and the host-vendored
+# crates in .vendor/ (L-808i) are needed to build.
 target/
 **/target/
 .git/
@@ -21,3 +22,8 @@ Dockerfile
 Makefile
 .dockerignore
 docker-compose.yaml
+# Host-vendored crates (scripts/vendor-crates.sh): the offline image build needs all of it,
+# including crate files the patterns above would drop (e.g. cc's src/target/, *.json checksums).
+!.vendor/
+!.vendor/**
+.vendor/vendor.log
