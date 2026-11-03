@@ -38,6 +38,7 @@ What Node elasticdump does that this Rust version does not yet do, as of `main` 
 | `--esCompress` | Gzip responses only | Also gzips bulk bodies | – | Some proxies reject gzipped requests. |
 | `--debug` log format | Node format | Different format | – | Log parsers may need changes. |
 | `--heapSnapshot`, `--jsonLines`, `--support-big-int` | Node options | Accepted and ignored | – | Not applicable; big ints are always lossless. |
+| Credential hygiene (Grok Bot, 2026-11-02) | Password in argv/URL is visible in `ps` | Same; env `ELASTICDUMP_*_PASSWORD` and `--httpAuthFile` are safe | S | Warn on stderr when a password comes from argv/URL; optional `--password-file`/stdin; `PR_SET_DUMPABLE=0` + `RLIMIT_CORE=0`; reject CR/LF in credentials. See security/findings/2026-11-02-secret-exposure.md |
 
 ## Deferred options
 

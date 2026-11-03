@@ -603,3 +603,54 @@ async fn guards_header_injection_is_a_usage_error() {
     }
     assert_eq!(mock.request_count(), 0, "{:#?}", mock.requests());
 }
+
+/// TST-INJ-012 (Grok Bot, 2026-11-02): CR/LF in --params / --input-params keys or values
+/// is percent-encoded into the query string as data (the mock keeps the raw encoded query); no extra header or request line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guards_params_crlf_is_encoded_not_injected() {
+    for (flag, p, k, v) in [
+        (
+            "--params",
+            r#"{"a":"b\r\nX-Evil: 1"}"#,
+            "a",
+            "b%0D%0AX-Evil%3A+1",
+        ),
+        (
+            "--input-params",
+            r#"{"a\r\nX-Evil: 2":"b"}"#,
+            "a%0D%0AX-Evil%3A+2",
+            "b",
+        ),
+    ] {
+        let mock = MockEs::serve(scroll(&[])).await;
+        let _ = run(vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+            flag.into(),
+            p.into(),
+        ])
+        .await;
+        let reqs = mock.recorded();
+        assert!(!reqs.is_empty(), "{p}: nothing sent");
+        for r in &reqs {
+            assert!(
+                !r.headers
+                    .iter()
+                    .any(|(h, _)| h.eq_ignore_ascii_case("x-evil")),
+                "{p}: injected header: {:?}",
+                r.headers
+            );
+        }
+        let search = reqs
+            .iter()
+            .find(|r| r.path.ends_with("/_search"))
+            .expect("search");
+        assert!(
+            search.query.iter().any(|(qk, qv)| qk == k && qv == v),
+            "{p}: payload not carried as query data: {:?}",
+            search.query
+        );
+    }
+}

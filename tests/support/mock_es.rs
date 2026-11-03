@@ -63,6 +63,12 @@ impl MockEs {
         self.inner.requests().iter().map(|r| r.raw_head()).collect()
     }
 
+    /// Parsed requests (method, path, decoded query, headers) received so far.
+    #[allow(dead_code)]
+    pub fn recorded(&self) -> Vec<super::router_mock::Recorded> {
+        self.inner.requests()
+    }
+
     /// Requests that match no row of the endpoint inventory (TST-API-001).
     pub fn unlisted_requests(&self) -> Vec<String> {
         endpoint_guard(&self.inner)
