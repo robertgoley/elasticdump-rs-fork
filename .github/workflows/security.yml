@@ -231,3 +231,23 @@ jobs:
         env:
           RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
         run: scripts/sup/secret-scan.sh $RANGE
+
+  # Workflow static analysis (Grok Bot, 2026-11-02; same command as scripts/lint-workflows.sh).
+  # Pinned zizmor release binary, SHA-256 checked (F-01 style); --offline = no GitHub API token.
+  zizmor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with: { persist-credentials: false }
+      - name: install zizmor 1.31.1 (checksum-verified)
+        env:
+          ZIZMOR_URL: https://github.com/zizmorcore/zizmor/releases/download/v1.31.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          ZIZMOR_SHA256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o zizmor.tgz "$ZIZMOR_URL"
+          echo "$ZIZMOR_SHA256  zizmor.tgz" | sha256sum -c -
+          tar -xzf zizmor.tgz zizmor
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: zizmor --offline --min-severity low .github/workflows/
