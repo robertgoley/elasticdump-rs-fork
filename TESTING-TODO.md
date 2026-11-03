@@ -39,16 +39,13 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 ### Own code and history
 | Test | What it checks |
 |---|---|
-| Commit provenance audit | Author, committer and signature of every commit; flag any not made by the owner or the owner's agents. Enable signed commits and branch protection on `main` going forward. |
 | Upstream line-origin review | `git blame` surviving upstream lines back to their original authors; focused manual review of any that touch networking, file paths, credentials, process spawning or `build.rs`. |
-| Hidden-code scans | Bidirectional Unicode and invisible characters (Trojan Source), look-alike identifiers, long base64 or hex blobs, and tests or goldens that quietly assert insecure behaviour; a Semgrep ruleset for Rust covers most of this. |
 | Mutation testing of security guards | `cargo-mutants` on credential redaction, the injection guards and TLS, proving the tests catch any weakening. |
 
 ### Dependencies
 | Test | What it checks |
 |---|---|
 | Published crate vs tagged source | Diff each vendored `.crate` against its tagged repository; malicious code often exists only in the published package (as in the xz backdoor). |
-| Build scripts and proc macros | Inventory every crate with a `build.rs` or proc macro (code that runs at build time), review each, and build offline in a sandbox that only allows writes under `target/`. |
 | Maintainer and typosquat review | `cargo-supply-chain` owner lists: recent owner changes, new maintainers, odd release timing, and names one letter off a popular crate. |
 | Full cargo vet coverage | Replace exemptions with real audits or imported audits (Mozilla, Google, Bytecode Alliance); diff-audit every version bump, including the open Dependabot branches. |
 | Vendored, pinned builds | Build only from vendored sources with checksums, never fresh registry fetches; fail the build on an unexpected `Cargo.lock` change. |
@@ -65,7 +62,6 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 ### Tooling and CI
 | Test | What it checks |
 |---|---|
-| Workflow hardening review | Every GitHub Actions step pinned to a full commit SHA and checked with zizmor; least-privilege tokens; no `pull_request_target`. |
 | Toolchain integrity | Checksums of the Rust toolchain, cargo plugins, gitleaks and the scanners themselves, since a compromised tool can hide anything. |
 
 ## 3. Tests that come with unbuilt features

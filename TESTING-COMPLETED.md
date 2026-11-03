@@ -254,3 +254,14 @@ Total: 206 task commits (including follow-up fixes with a letter suffix). Last u
 | L-805a | ee1384e | 2026-11-01 | Warnings (not errors) for gzip level 9 and zstd 19+ (README table numbers) and, with `--overwrite`, a note that killed-run leftovers are not removed; 2 unit + 2 contract tests; README/help updated; defaults unchanged. |
 | L-808h | 8a4a06c | 2026-11-01 | security.yml `image` job skipped cleanly on Dependabot PRs; missing-secret hard failure kept elsewhere; actionlint clean; no repo settings or secrets touched. |
 | L-808i | this commit | 2026-11-01 | Offline container build: host-vendored crates, `RUN --network=none` cargo step; glibc and alpine images built and test-image.sh passes for both; README updated. |
+
+## Supply-chain scans (Grok Bot)
+
+Run 2026-11-02 at 37fa3ac (read-only). Moved from TESTING-TODO §2.
+
+| Test | Result | Findings |
+|---|---|---|
+| Commit provenance audit | 0 unknown authors; 2/351 signed (web-flow); no branch protection on main | [security/findings/2026-11-02-commit-provenance.md](security/findings/2026-11-02-commit-provenance.md) |
+| Hidden-code scans | 0 suspicious; vendor hits are ZWJ/LRM in emoji/RTL test strings and URL test vectors | [security/findings/2026-11-02-hidden-code-scan.md](security/findings/2026-11-02-hidden-code-scan.md) |
+| Build scripts and proc macros | 63 build-time crates; rustc probes, cc (ring, mimalloc, zstd), no network or exfil | [security/findings/2026-11-02-build-scripts-proc-macros.md](security/findings/2026-11-02-build-scripts-proc-macros.md) |
+| Workflow hardening review | all 72 actions SHA-pinned, contents: read, no pull_request_target, secrets via env only | [security/findings/2026-11-02-workflow-hardening.md](security/findings/2026-11-02-workflow-hardening.md) |
