@@ -385,7 +385,7 @@ use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for tha
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
-`dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
+**Prerequisites:** podman (or docker with the buildx plugin) and host cargo >= 1.85 (crates are vendored on the host). `scripts/build-image.sh` checks these and the dhi.io login up front and stops with a clear message. `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
 never enters a build layer.
 

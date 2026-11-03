@@ -19,7 +19,8 @@
 # --push      push the tags after the build. Registry auth comes only from the container tool's
 #             existing login (`podman login <registry>`); this script never reads or takes credentials.
 # --dry-run   print the commands without running them.
-# dhi.io bases need a pull login first: podman login dhi.io
+# Prerequisites: podman (or docker with buildx), host cargo >= 1.85, and for dhi.io bases a pull
+# login first: podman login dhi.io (checked up front; or use make image-public for public bases).
 #
 # Offline build (L-808i): crates are fetched on the HOST (scripts/vendor-crates.sh into the
 # gitignored .vendor/, so the host needs cargo) and the builder's cargo step runs with
@@ -87,6 +88,33 @@ if [[ ${#tags[@]} -eq 0 ]]; then
 fi
 
 run() { printf '+'; printf ' %q' "$@"; printf '\n'; [[ $dry == 1 ]] || "$@"; }
+
+# Preflight (fail early with a clear message instead of deep inside the build).
+preflight() {
+  command -v "${C%% *}" >/dev/null 2>&1 || die "container tool '$C' not found; install podman (preferred) or docker, or set CONTAINER="
+  command -v cargo >/dev/null 2>&1 || die "cargo not found on the host: the offline build vendors crates on the host (install Rust >= 1.85 via rustup)"
+  local cv; cv=$(cargo --version | sed -n 's/^cargo 1\.\([0-9]*\).*/\1/p')
+  [[ -z "$cv" || "$cv" -ge 85 ]] || die "host cargo is 1.$cv; Cargo.lock v4 / rust-version need cargo >= 1.85 (rustup update)"
+  if [[ "$C" == *docker* ]]; then
+    export DOCKER_BUILDKIT=1   # RUN --network=none / --mount need BuildKit
+    docker buildx version >/dev/null 2>&1 || die "docker needs the buildx (BuildKit) plugin for this Dockerfile; install docker-buildx or use podman"
+    [[ $multi == 0 ]] || die "--platform both needs podman"
+  fi
+  local img
+  for img in "$builder_image:$builder_tag" "$base_image:$base_tag"; do
+    $C image inspect "$img" >/dev/null 2>&1 && continue
+    echo "pulling $img"
+    if ! $C pull ${platforms:+--platform "${platforms%%,*}"} "$img" >/dev/null 2>/tmp/build-image-pull.$$; then
+      if grep -qiE 'auth|denied|unauthorized|credential' /tmp/build-image-pull.$$; then
+        rm -f /tmp/build-image-pull.$$
+        die "cannot pull ${img%%@*}: not logged in to ${img%%/*}. Run '$C login ${img%%/*}' (Docker account) first, or build from public bases with 'make image-public'"
+      fi
+      cat /tmp/build-image-pull.$$ >&2; rm -f /tmp/build-image-pull.$$; die "cannot pull $img (network/proxy?)"
+    fi
+    rm -f /tmp/build-image-pull.$$
+  done
+}
+[[ $dry == 1 ]] || preflight
 
 run scripts/vendor-crates.sh
 
