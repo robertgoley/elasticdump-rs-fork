@@ -1,25 +1,46 @@
 #!/usr/bin/env bash
-# Fetch every crate in Cargo.lock on the HOST into .vendor/ so the image build needs no
-# network (L-808i). scripts/build-image.sh and the Makefile image targets run this first;
-# the Dockerfile builds with `cargo build --offline` from .vendor/ under `RUN --network=none`.
+# Fetch every crate in Cargo.lock into .vendor/ so the image build itself needs no network
+# (L-808i). scripts/build-image.sh and the Makefile image targets run this first; the Dockerfile
+# builds with `cargo build --offline` from .vendor/ under `RUN --network=none`.
 #
 #   scripts/vendor-crates.sh        # writes .vendor/crates/ and .vendor/config.toml
 #
-# Needs cargo on the host. Only this step uses the network (crates.io, or a proxy / mirror set
-# up in the host's cargo config or CARGO_HTTP_PROXY / HTTPS_PROXY), so proxy users only need
-# host cargo to reach the registry. .vendor/ is gitignored; it is refreshed on every run (cargo
-# vendor drops crates no longer in Cargo.lock) and can be removed with `rm -rf .vendor`.
+# By default `cargo vendor` runs INSIDE a container (podman, or docker) from the pinned Rust
+# builder image (BUILDER_IMAGE:BUILDER_TAG in the Makefile), with the repo mounted, so the host
+# needs only the container tool, no Rust. Overrides:
+#   VENDOR_ON_HOST=1     use the host's cargo instead (>= 1.85)
+#   VENDOR_IMAGE=img:tag use another image that has cargo
+#   CONTAINER=podman|docker
+# Only this step uses the network (crates.io; HTTPS_PROXY / HTTP_PROXY / NO_PROXY /
+# CARGO_HTTP_PROXY are passed into the container when set). .vendor/ is gitignored; it is refreshed
+# on every run and can be removed with `rm -rf .vendor`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-command -v cargo >/dev/null 2>&1 || {
-  echo "vendor-crates.sh: cargo not found on the host. The image build fetches crates on the host" >&2
-  echo "  (the container build is offline); install Rust (https://rustup.rs) and retry." >&2
-  exit 2
-}
+die() { echo "vendor-crates.sh: $*" >&2; exit 2; }
+VENDOR_CMD=(cargo vendor --locked --versioned-dirs .vendor/crates)
+if [[ "${VENDOR_ON_HOST:-0}" == 1 ]]; then
+  command -v cargo >/dev/null 2>&1 || die "VENDOR_ON_HOST=1 but cargo is not on the host"
+  run_vendor() { "${VENDOR_CMD[@]}"; }
+else
+  C="${CONTAINER:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docker)}"
+  command -v "${C%% *}" >/dev/null 2>&1 \
+    || die "container tool '$C' not found; install podman (or docker), or set VENDOR_ON_HOST=1 to use host cargo"
+  mk() { sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" Makefile | head -1; }
+  img="${VENDOR_IMAGE:-$(mk BUILDER_IMAGE):$(mk BUILDER_TAG)}"
+  [[ "$img" != ":" ]] || die "could not read BUILDER_IMAGE/BUILDER_TAG from the Makefile; set VENDOR_IMAGE"
+  copts=(run --rm -v "$PWD:/src:Z" -w /src -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=never)
+  # Files in .vendor/ stay owned by the invoking user.
+  if [[ "$C" == *podman* ]]; then copts+=(--userns=keep-id); else copts+=(--user "$(id -u):$(id -g)"); fi
+  for v in HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy CARGO_HTTP_PROXY; do
+    [[ -n "${!v:-}" ]] && copts+=(-e "$v")
+  done
+  run_vendor() { $C "${copts[@]}" --entrypoint cargo "$img" "${VENDOR_CMD[@]:1}"; }
+  echo "vendoring crates in a container ($C, ${img%%@*})" >&2
+fi
 mkdir -p .vendor
 # --locked: Cargo.lock is not changed. --versioned-dirs: name-version dirs, stable across runs.
 # Covers the whole workspace (., tools/edverify, tools/edgen) so Cargo.toml resolves offline.
-cargo vendor --locked --versioned-dirs .vendor/crates > .vendor/config.toml.tmp 2>.vendor/vendor.log \
+run_vendor > .vendor/config.toml.tmp 2>.vendor/vendor.log \
   || { cat .vendor/vendor.log >&2; exit 1; }
 # cargo vendor prints the source replacement with a host path; the build uses /src/.vendor.
 cat > .vendor/config.toml <<'C'

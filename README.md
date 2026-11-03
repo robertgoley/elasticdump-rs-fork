@@ -385,17 +385,17 @@ use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for tha
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
-**Prerequisites:** podman (or docker with the buildx plugin) and host cargo >= 1.85 (crates are vendored on the host). `scripts/build-image.sh` checks these and the dhi.io login up front and stops with a clear message. `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
+**Prerequisites:** podman (or docker with the buildx plugin). No Rust is needed on the host: crates are vendored inside a container from the pinned builder image (`VENDOR_ON_HOST=1` uses host cargo >= 1.85 instead). `scripts/build-image.sh` checks these and the dhi.io login up front and stops with a clear message. `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
 never enters a build layer.
 
-**Offline build (L-808i).** The host fetches the crates and the container build runs offline: `scripts/build-image.sh` and
-every `make image*` target first run `scripts/vendor-crates.sh`, which runs `cargo vendor --locked` on the host into
-the gitignored `.vendor/` (about 270 MB, refreshed on each build; `rm -rf .vendor` removes it). The builder copies it
-in and runs `cargo build --locked --offline` from the vendored sources, in a `RUN --network=none` step, so the build
-needs no DNS or crates.io access (the old `could not resolve host index.crates.io` failure). The host therefore needs
-`cargo` (the script stops early with a clear message without it). Behind a proxy, only the host's cargo has to reach
-the registry (`HTTPS_PROXY`/`CARGO_HTTP_PROXY` or a mirror in the host's cargo config); the container tool still
+**Offline build (L-808i).** Crates are fetched first and the image build runs offline: `scripts/build-image.sh` and
+every `make image*` target first run `scripts/vendor-crates.sh`, which runs `cargo vendor --locked` inside a throwaway
+container from the pinned builder image (repo mounted at `/src`, files stay owned by you) into the gitignored `.vendor/`
+(about 270 MB, refreshed on each build; `rm -rf .vendor` removes it). The builder copies it in and runs
+`cargo build --locked --offline` from the vendored sources, in a `RUN --network=none` step, so the build needs no DNS or
+crates.io access. The host needs no Rust (`VENDOR_ON_HOST=1` uses host cargo instead). Behind a proxy, `HTTPS_PROXY`,
+`HTTP_PROXY`, `NO_PROXY` and `CARGO_HTTP_PROXY` are passed into the vendoring container; the container tool still
 pulls the base images, and the Alpine stages still run `apk`, with its normal network.
 
 Every image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid

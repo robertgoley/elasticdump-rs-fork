@@ -72,7 +72,7 @@ print:
 
 # Crates are fetched on the host (needs cargo); the image build itself is offline (L-808i).
 vendor:
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 
 # Same prerequisite checks as scripts/build-image.sh (container tool, host cargo, buildx, base pulls/login).
 preflight = CONTAINER="$(CONTAINER)" scripts/build-image.sh --preflight $(1):$(2) --preflight $(3):$(4)
@@ -80,7 +80,7 @@ preflight = CONTAINER="$(CONTAINER)" scripts/build-image.sh --preflight $(1):$(2
 # shell-less static base: the default `runtime` stage (COPY only)
 image:
 	@$(call preflight,$(BUILDER_IMAGE),$(BUILDER_TAG),$(BASE_IMAGE),$(BASE_TAG))
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime \
 	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) --build-arg BUILDER_TAG=$(BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg BASE_TAG=$(BASE_TAG) \
@@ -88,7 +88,7 @@ image:
 
 image-dhi-alpine:
 	@$(call preflight,$(DHI_ALPINE_BUILDER_IMAGE),$(DHI_ALPINE_BUILDER_TAG),$(DHI_ALPINE_BASE_IMAGE),$(DHI_ALPINE_BASE_TAG))
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_ALPINE_BASE_TAG) \
@@ -96,7 +96,7 @@ image-dhi-alpine:
 
 image-dhi-debian:
 	@$(call preflight,$(DHI_DEBIAN_BUILDER_IMAGE),$(DHI_DEBIAN_BUILDER_TAG),$(DHI_DEBIAN_BASE_IMAGE),$(DHI_DEBIAN_BASE_TAG))
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_DEBIAN_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_DEBIAN_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_DEBIAN_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_DEBIAN_BASE_TAG) \
@@ -104,7 +104,7 @@ image-dhi-debian:
 
 image-public:
 	@$(call preflight,$(PUBLIC_BUILDER_IMAGE),$(PUBLIC_BUILDER_TAG),$(PUBLIC_BASE_IMAGE),$(PUBLIC_BASE_TAG))
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(PUBLIC_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(PUBLIC_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(PUBLIC_BASE_IMAGE) --build-arg BASE_TAG=$(PUBLIC_BASE_TAG) \
@@ -112,7 +112,7 @@ image-public:
 
 image-alpine:
 	@$(call preflight,$(ALPINE_BUILDER_IMAGE),$(ALPINE_BUILDER_TAG),$(ALPINE_BASE_IMAGE),$(ALPINE_BASE_TAG))
-	scripts/vendor-crates.sh
+	CONTAINER="$(CONTAINER)" scripts/vendor-crates.sh
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(ALPINE_BASE_TAG) \
