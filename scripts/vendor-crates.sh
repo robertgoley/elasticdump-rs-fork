@@ -35,12 +35,14 @@ else
   # The cargo registry cache lives in a named volume (VENDOR_CACHE_VOLUME) so reruns only fetch
   # crates that changed; `podman volume rm elasticdump-rs-cargo-cache` clears it.
   vol="${VENDOR_CACHE_VOLUME:-elasticdump-rs-cargo-cache}"
-  volopt=""; [[ "$C" == *podman* ]] && volopt=":U"   # podman: chown the cache to the keep-id user
+  volopt=""; [[ "$C" == *podman* ]] && volopt=":U"   # podman: chown the cache volume to the container user
   copts=(run --rm --network="${VENDOR_NETWORK:-host}" -v "$PWD:/src:Z" -v "$vol:/cargo-home${volopt:-}"
          -w /src -e CARGO_HOME=/cargo-home -e CARGO_TERM_COLOR=never)
   # Files in .vendor/ stay owned by the invoking user.
   if [[ "$C" == *podman* ]]; then
-    copts+=(--userns=keep-id)
+    # Rootless podman: container root is the invoking user, so .vendor/ stays owned by you.
+    # (--userns=keep-id is not used: with --network=host crun cannot mount sysfs under it.)
+    :
   else
     copts+=(--user "$(id -u):$(id -g)")
     # docker creates named volumes root-owned; make the cache writable once.
