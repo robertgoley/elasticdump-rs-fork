@@ -23,7 +23,11 @@ SUFFIX_dhi-alpine := -alpine
 SUFFIX_dhi-debian := -debian-dev
 SUFFIX_public     := -debian-public
 SUFFIX_alpine     := -alpine-public
-VARIANT_IMAGE := $(IMAGE)$(SUFFIX_$(IMAGE_VARIANT))
+# Full repo:tag for the built image (any image target): ELASTICDUMP_IMAGE=registry/repo:tag
+# (environment or make variable). When set it replaces the default tags below.
+ELASTICDUMP_IMAGE ?=
+VARIANT_IMAGE := $(if $(ELASTICDUMP_IMAGE),$(ELASTICDUMP_IMAGE),$(IMAGE)$(SUFFIX_$(IMAGE_VARIANT)))
+imgtags = $(if $(ELASTICDUMP_IMAGE),-t $(ELASTICDUMP_IMAGE),$(1))
 
 CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
@@ -84,7 +88,7 @@ image:
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime \
 	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) --build-arg BUILDER_TAG=$(BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE) --build-arg BASE_TAG=$(BASE_TAG) \
-	  -t $(IMAGE) -t $(REGISTRY)/$(IMAGE_NAME):latest .
+	  $(call imgtags,-t $(IMAGE) -t $(REGISTRY)/$(IMAGE_NAME):latest) .
 
 image-dhi-alpine:
 	@$(call preflight,$(DHI_ALPINE_BUILDER_IMAGE),$(DHI_ALPINE_BUILDER_TAG),$(DHI_ALPINE_BASE_IMAGE),$(DHI_ALPINE_BASE_TAG))
@@ -92,7 +96,7 @@ image-dhi-alpine:
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_ALPINE_BASE_TAG) \
-	  -t $(IMAGE)$(SUFFIX_dhi-alpine) .
+	  $(call imgtags,-t $(IMAGE)$(SUFFIX_dhi-alpine)) .
 
 image-dhi-debian:
 	@$(call preflight,$(DHI_DEBIAN_BUILDER_IMAGE),$(DHI_DEBIAN_BUILDER_TAG),$(DHI_DEBIAN_BASE_IMAGE),$(DHI_DEBIAN_BASE_TAG))
@@ -100,7 +104,7 @@ image-dhi-debian:
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(DHI_DEBIAN_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(DHI_DEBIAN_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(DHI_DEBIAN_BASE_IMAGE) --build-arg BASE_TAG=$(DHI_DEBIAN_BASE_TAG) \
-	  -t $(IMAGE)$(SUFFIX_dhi-debian) .
+	  $(call imgtags,-t $(IMAGE)$(SUFFIX_dhi-debian)) .
 
 image-public:
 	@$(call preflight,$(PUBLIC_BUILDER_IMAGE),$(PUBLIC_BUILDER_TAG),$(PUBLIC_BASE_IMAGE),$(PUBLIC_BASE_TAG))
@@ -108,7 +112,7 @@ image-public:
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(PUBLIC_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(PUBLIC_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(PUBLIC_BASE_IMAGE) --build-arg BASE_TAG=$(PUBLIC_BASE_TAG) \
-	  -t $(IMAGE)$(SUFFIX_public) .
+	  $(call imgtags,-t $(IMAGE)$(SUFFIX_public)) .
 
 image-alpine:
 	@$(call preflight,$(ALPINE_BUILDER_IMAGE),$(ALPINE_BUILDER_TAG),$(ALPINE_BASE_IMAGE),$(ALPINE_BASE_TAG))
@@ -116,7 +120,7 @@ image-alpine:
 	$(CONTAINER) build $(BUILD_ARGS) --target runtime-shell \
 	  --build-arg BUILDER_IMAGE=$(ALPINE_BUILDER_IMAGE) --build-arg BUILDER_TAG=$(ALPINE_BUILDER_TAG) \
 	  --build-arg BASE_IMAGE=$(ALPINE_BASE_IMAGE) --build-arg BASE_TAG=$(ALPINE_BASE_TAG) \
-	  -t $(IMAGE)$(SUFFIX_alpine) .
+	  $(call imgtags,-t $(IMAGE)$(SUFFIX_alpine)) .
 
 test-image:
 	CONTAINER=$(CONTAINER) scripts/test-image.sh $(VARIANT_IMAGE) $(IMAGE_VARIANT)

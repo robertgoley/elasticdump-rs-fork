@@ -2,7 +2,8 @@
 # Build the elasticdump-rs container image (L-808b). Local build only unless --push is given.
 #
 #   scripts/build-image.sh [--variant glibc|alpine] [--platform linux/amd64|linux/arm64|both]
-#                          [--tag REF]... [--name REPO] [--jobs N] [--push] [--dry-run] [--help]
+#                          [--imagename REF] [--tag REF]... [--name REPO] [--jobs N] [--push]
+#                          [--dry-run] [--help]
 #
 # Variants (pins: Makefile; stages: Dockerfile):
 #   glibc   (default) dhi.io/rust:*-debian13-dev builder -> dhi.io/static:*-glibc-debian13 runtime,
@@ -15,7 +16,9 @@
 # --platform  linux/amd64 | linux/arm64 | both (default: the host's platform). A foreign platform
 #             runs the Rust build under emulation (qemu-user-static / binfmt_misc on the host) and
 #             is slow; `both` builds a manifest list (podman build --manifest).
-# --tag REF   full image reference, repeatable; replaces the default tags.
+# --imagename REF  full repository and tag for the image, e.g. registry.example.com/team/elasticdump-rs:1.2.3;
+#             replaces the default tags. Same as the ELASTICDUMP_IMAGE environment variable (the option wins).
+# --tag REF   additional full image reference, repeatable; with no --imagename it replaces the default tags.
 # --push      push the tags after the build. Registry auth comes only from the container tool's
 #             existing login (`podman login <registry>`); this script never reads or takes credentials.
 # --dry-run   print the commands without running them.
@@ -30,7 +33,7 @@
 # --network=none. Only the host needs registry access (or a proxy). Remove .vendor/ with
 # `rm -rf .vendor` when done; it is refreshed on every build.
 #
-# Environment: CONTAINER (podman | docker; default podman if installed). `both` and --push of a
+# Environment: ELASTICDUMP_IMAGE (as --imagename); CONTAINER (podman | docker; default podman if installed). `both` and --push of a
 # manifest list need podman.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -39,13 +42,15 @@ usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "build-image.sh: $*" >&2; exit 2; }
 
 variant=glibc; platform=""; name=localhost/elasticdump-rs; jobs=2; push=0; dry=0
-tags=(); pf_images=()
+tags=(); pf_images=(); imagename="${ELASTICDUMP_IMAGE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --variant) [[ $# -ge 2 ]] || die "--variant needs a value"; variant="$2"; shift 2 ;;
     --variant=*) variant="${1#*=}"; shift ;;
     --platform) [[ $# -ge 2 ]] || die "--platform needs a value"; platform="$2"; shift 2 ;;
     --platform=*) platform="${1#*=}"; shift ;;
+    --imagename) [[ $# -ge 2 ]] || die "--imagename needs a value"; imagename="$2"; shift 2 ;;
+    --imagename=*) imagename="${1#*=}"; shift ;;
     --tag) [[ $# -ge 2 ]] || die "--tag needs a value"; tags+=("$2"); shift 2 ;;
     --tag=*) tags+=("${1#*=}"); shift ;;
     --name) [[ $# -ge 2 ]] || die "--name needs a value"; name="$2"; shift 2 ;;
@@ -87,6 +92,13 @@ if [[ $multi == 1 && "$C" != podman ]]; then die "--platform both needs podman (
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 [[ -n "$version" ]] || die "no version in Cargo.toml"
+if [[ -n "$imagename" ]]; then
+  # repo[:tag]; a bare repo gets :<version>. Reject whitespace and anything podman would misparse.
+  [[ "$imagename" =~ ^[a-z0-9][a-z0-9._/:@-]*$ && "$imagename" != *//* ]] \
+    || die "--imagename/ELASTICDUMP_IMAGE '$imagename' is not a valid image reference (lowercase repo[:tag])"
+  last="${imagename##*/}"; [[ "$last" == *:* || "$last" == *@* ]] || imagename="$imagename:$version"
+  tags=("$imagename" ${tags[@]+"${tags[@]}"})
+fi
 if [[ ${#tags[@]} -eq 0 ]]; then
   if [[ "$variant" == glibc ]]; then tags=("$name:$version" "$name:latest"); else tags=("$name:$version-alpine"); fi
 fi

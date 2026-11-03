@@ -385,6 +385,8 @@ use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for tha
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
+**Image name:** set the full repository and tag of the built image with `scripts/build-image.sh --imagename registry.example.com/team/elasticdump-rs:1.2.3`, or with the `ELASTICDUMP_IMAGE` environment variable, which also works for every `make image*` target (`ELASTICDUMP_IMAGE=registry.example.com/team/elasticdump-rs:1.2.3 make image-dhi-debian`). It replaces the default tags; the script adds `:<version>` to a bare repository name.
+
 **Prerequisites:** podman (or docker with the buildx plugin). No Rust is needed on the host: crates are vendored inside a container from the pinned builder image (`VENDOR_ON_HOST=1` uses host cargo >= 1.85 instead). `scripts/build-image.sh` checks these and the dhi.io login up front and stops with a clear message. `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
 never enters a build layer.
