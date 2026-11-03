@@ -25,7 +25,6 @@ Every test idea that is **not** part of the other agent's task plan. The delegat
 |---|---|
 | Hostile cluster proxy | A proxy that mutates every response: gzip and zstd decompression bombs in `Content-Encoding`, endless chunked bodies, huge headers, redirects to other hosts or `file://`; credentials are never sent across a redirect. |
 | Header and request injection | CR/LF in `--headers` and `--params`, and request smuggling attempts through a reverse proxy. |
-| Secret exposure on the host | Whether passwords passed as flags show in `/proc/<pid>/cmdline` or `ps`, core dumps or temp files; decide whether to warn or offer an env-only mode. |
 | Sanitizer and Miri runs | Miri on code next to `unsafe`, ThreadSanitizer and UndefinedBehaviorSanitizer runs of the test suite (only AddressSanitizer via fuzzing so far). |
 | Mutation testing (`cargo-mutants`) | Deliberately breaks the code to measure whether the tests notice; the main check on AI-written test strength. |
 | Differential fuzzing against Node | Same generated clusters and files through both tools, outputs diffed automatically, beyond the fixed interop corpus. |
@@ -46,15 +45,12 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 | Test | What it checks |
 |---|---|
 | Published crate vs tagged source | Diff each vendored `.crate` against its tagged repository; malicious code often exists only in the published package (as in the xz backdoor). |
-| Maintainer and typosquat review | `cargo-supply-chain` owner lists: recent owner changes, new maintainers, odd release timing, and names one letter off a popular crate. |
 | Full cargo vet coverage | Replace exemptions with real audits or imported audits (Mozilla, Google, Bytecode Alliance); diff-audit every version bump, including the open Dependabot branches. |
 | Vendored, pinned builds | Build only from vendored sources with checksums, never fresh registry fetches; fail the build on an unexpected `Cargo.lock` change. |
-| C code verification | Check bundled libzstd and any other C sources byte for byte against signed upstream release tarballs. |
 
 ### Binary behaviour
 | Test | What it checks |
 |---|---|
-| Binary inspection | Strings, symbols and linked libraries of the release binary for unexpected URLs, IPs, domains, shell commands or crypto. |
 | Wider runtime monitoring | Egress and syscall tests across every CLI option; eBPF tracing of all network, file and process activity (extends B12); runs with the clock moved months ahead and unusual environment variables to catch time- or environment-triggered behaviour. |
 | Container image checks | Layer-by-layer scan of built images for unexpected files (Syft, Grype, Trivy) and comparison against the dhi.io base image digests. |
 | Independent rebuild and signing | Rebuild on a second machine (B11), match hashes, then sign releases with cosign and provenance attestations. |
@@ -62,7 +58,6 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 ### Tooling and CI
 | Test | What it checks |
 |---|---|
-| Toolchain integrity | Checksums of the Rust toolchain, cargo plugins, gitleaks and the scanners themselves, since a compromised tool can hide anything. |
 
 ## 3. Tests that come with unbuilt features
 
