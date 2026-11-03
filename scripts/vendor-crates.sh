@@ -11,6 +11,8 @@
 #   VENDOR_ON_HOST=1     use the host's cargo instead (>= 1.85)
 #   VENDOR_IMAGE=img:tag use another image that has cargo
 #   CONTAINER=podman|docker
+#   VENDOR_NETWORK=...   container network for the fetch (default host; DNS must work there)
+#   VENDOR_CACHE_VOLUME  named volume for the cargo cache (default elasticdump-rs-cargo-cache)
 # Only this step uses the network (crates.io; HTTPS_PROXY / HTTP_PROXY / NO_PROXY /
 # CARGO_HTTP_PROXY are passed into the container when set). .vendor/ is gitignored; it is refreshed
 # on every run and can be removed with `rm -rf .vendor`.
@@ -28,9 +30,22 @@ else
   mk() { sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" Makefile | head -1; }
   img="${VENDOR_IMAGE:-$(mk BUILDER_IMAGE):$(mk BUILDER_TAG)}"
   [[ "$img" != ":" ]] || die "could not read BUILDER_IMAGE/BUILDER_TAG from the Makefile; set VENDOR_IMAGE"
-  copts=(run --rm -v "$PWD:/src:Z" -w /src -e CARGO_HOME=/tmp/cargo-home -e CARGO_TERM_COLOR=never)
+  # --network=host: use the host's resolver/proxy setup (default container DNS fails on hosts whose
+  # resolv.conf points at systemd-resolved 127.0.0.53, e.g. Ubuntu). VENDOR_NETWORK overrides it.
+  # The cargo registry cache lives in a named volume (VENDOR_CACHE_VOLUME) so reruns only fetch
+  # crates that changed; `podman volume rm elasticdump-rs-cargo-cache` clears it.
+  vol="${VENDOR_CACHE_VOLUME:-elasticdump-rs-cargo-cache}"
+  volopt=""; [[ "$C" == *podman* ]] && volopt=":U"   # podman: chown the cache to the keep-id user
+  copts=(run --rm --network="${VENDOR_NETWORK:-host}" -v "$PWD:/src:Z" -v "$vol:/cargo-home${volopt:-}"
+         -w /src -e CARGO_HOME=/cargo-home -e CARGO_TERM_COLOR=never)
   # Files in .vendor/ stay owned by the invoking user.
-  if [[ "$C" == *podman* ]]; then copts+=(--userns=keep-id); else copts+=(--user "$(id -u):$(id -g)"); fi
+  if [[ "$C" == *podman* ]]; then
+    copts+=(--userns=keep-id)
+  else
+    copts+=(--user "$(id -u):$(id -g)")
+    # docker creates named volumes root-owned; make the cache writable once.
+    docker run --rm -v "$vol:/cargo-home" --entrypoint /bin/sh "$img" -c "chown $(id -u):$(id -g) /cargo-home" >/dev/null 2>&1 || true
+  fi
   for v in HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy CARGO_HTTP_PROXY; do
     [[ -n "${!v:-}" ]] && copts+=(-e "$v")
   done
