@@ -19,6 +19,8 @@
 # --push      push the tags after the build. Registry auth comes only from the container tool's
 #             existing login (`podman login <registry>`); this script never reads or takes credentials.
 # --dry-run   print the commands without running them.
+# --preflight IMG  (repeatable) only run the prerequisite checks for these base images, then exit
+#             (used by the Makefile image targets).
 # Prerequisites: podman (or docker with buildx), host cargo >= 1.85, and for dhi.io bases a pull
 # login first: podman login dhi.io (checked up front; or use make image-public for public bases).
 #
@@ -36,7 +38,7 @@ usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "build-image.sh: $*" >&2; exit 2; }
 
 variant=glibc; platform=""; name=localhost/elasticdump-rs; jobs=2; push=0; dry=0
-tags=()
+tags=(); pf_images=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --variant) [[ $# -ge 2 ]] || die "--variant needs a value"; variant="$2"; shift 2 ;;
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --name=*) name="${1#*=}"; shift ;;
     --jobs) [[ $# -ge 2 ]] || die "--jobs needs a value"; jobs="$2"; shift 2 ;;
     --jobs=*) jobs="${1#*=}"; shift ;;
+    --preflight) [[ $# -ge 2 ]] || die "--preflight needs an image"; pf_images+=("$2"); shift 2 ;;
     --push) push=1; shift ;;
     --dry-run) dry=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -100,8 +103,9 @@ preflight() {
     docker buildx version >/dev/null 2>&1 || die "docker needs the buildx (BuildKit) plugin for this Dockerfile; install docker-buildx or use podman"
     [[ $multi == 0 ]] || die "--platform both needs podman"
   fi
-  local img
-  for img in "$builder_image:$builder_tag" "$base_image:$base_tag"; do
+  local img imgs=("$builder_image:$builder_tag" "$base_image:$base_tag")
+  [[ ${#pf_images[@]} -eq 0 ]] || imgs=("${pf_images[@]}")
+  for img in "${imgs[@]}"; do
     $C image inspect "$img" >/dev/null 2>&1 && continue
     echo "pulling $img"
     if ! $C pull ${platforms:+--platform "${platforms%%,*}"} "$img" >/dev/null 2>/tmp/build-image-pull.$$; then
@@ -114,6 +118,7 @@ preflight() {
     rm -f /tmp/build-image-pull.$$
   done
 }
+if [[ ${#pf_images[@]} -gt 0 ]]; then preflight; echo "preflight ok: ${pf_images[*]}"; exit 0; fi
 [[ $dry == 1 ]] || preflight
 
 run scripts/vendor-crates.sh
