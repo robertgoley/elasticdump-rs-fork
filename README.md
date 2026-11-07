@@ -350,33 +350,53 @@ load the other's dumps.
 multielasticdump --input=https://src:9200 --output=/data/logs \
   --match='^logs-(?P<group>[a-z]+)-' --layout=group --compression=zstd3 --parallel=4
 
+# Data streams logs-* with the templates and policies they need, data in 1 GB parts
+multielasticdump --input=https://src:9200 --output=/data/ds --matchType=datastream --match='^logs-' \
+  --types=data,component_template,index_template,policy --fileSize=1gb
+
 # Load it all back (any layout; uses /data/logs/multielasticdump.json when present)
 multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 --parallel=4
 ```
 
 - Selection: `--match` (unanchored regex, default all), `--exclude`. Indices starting with `.` are left out unless
   `--includeHidden` is set or `--match` starts with `^\.`. Closed indices are skipped on dump.
+  `--matchType index,alias,datastream` (default `index`, any combination) says what `--match` is tested against:
+  `alias` selects every index behind a matching alias (and takes the `--layout group` capture from the alias name);
+  `datastream` dumps each matching data stream as one unit and leaves its backing `.ds-*` indices out.
 - Layout: `flat` (`DIR/INDEX.*`, as `oslogs.py`), `index` (`DIR/INDEX/`) or `group` (`DIR/GROUP/`, from the `group`
   named capture of `--match` or its first capture group).
-- Files per index: `INDEX.settings.json`, `INDEX.mapping.json`, optional `INDEX.alias.json`, and
-  `INDEX.data.json.gz` / `.zst` / `.json` (`--compression gzip|zstd1|zstd3|none`, default gzip).
-  `--types` picks items (dump default `settings,mapping,data`, load default `settings,mapping,alias,data`);
-  `--ignoreType` removes some.
-- Dump checks: the record count of each data file against the source `_count` (an empty file for a non-empty index
-  fails it). `multielasticdump.json` records each index's directory, types, records and status; `--resume` skips
-  indices already done.
-- Load (as `oslogs.py restore`): an index that already exists fails (or is skipped with `--skipExisting`); settings
-  first, with `--lifecycle drop` (default: `--excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference`)
-  or `convert` (`--convertIlmToIsm`, which does not rewrite `index.lifecycle` settings, so use `drop` for OpenSearch);
-  then the mapping (PUT `_mapping` directly if that run fails), aliases, data, and a `_refresh` + `_count` check
-  against the file's record count. `--prefix`/`--suffix` rename targets.
+- Files per index: `INDEX.settings.json`, optional `INDEX.analyzer.json`, `INDEX.mapping.json`, optional
+  `INDEX.alias.json`, and `INDEX.data.json.gz` / `.zst` / `.json` (`--compression gzip|zstd1|zstd3|none`, default
+  gzip). `--fileSize=1gb` or `--maxRows=N` splits each data file into `INDEX.data.split-0.json.gz`, `-1`, ... (as
+  `elasticdump-rs` names parts); load finds the parts, loads them in order and checks their summed record count.
+  A data stream gets `STREAM.datastream.json` (its `GET _data_stream` description) and its data file.
+- Cluster-wide types, dumped once per run into `DIR/_cluster/TYPE.json`: `policy`, `component_template`,
+  `index_template`, `template`, `script`. Load applies them before any index, in that order (policies before the
+  templates that name them, component templates before the index templates built from them).
+- `--types` picks items (dump default `settings,mapping,data`; load default every per-index type plus every
+  cluster-wide file present, missing files skipped; `all` selects everything); `--ignoreType` removes some.
+- Dump checks: the record count of each data file (or the parts together) against the source `_count` (an empty
+  file for a non-empty index fails it). `multielasticdump.json` records each index's directory, types, data file or
+  parts, records and status, and each cluster-wide file; `--resume` skips indices already done.
+- Load (as `oslogs.py restore`): an index or data stream that already exists fails (or is skipped with
+  `--skipExisting`, which also creates cluster-wide items only where missing); settings first, with `--lifecycle drop`
+  (default: `--excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference`, also applied to
+  templates) or `convert` (`--convertIlmToIsm` for policies, which does not rewrite `index.lifecycle` settings, so use
+  `drop` for OpenSearch); the analyzer only when settings were not loaded (the settings already carry
+  `index.analysis`); then the mapping (PUT `_mapping` directly if that run fails), aliases, data, and a `_refresh` +
+  `_count` check against the file's record count. Data streams load with `--bulkAction=create` into the stream name,
+  which needs its index template on the target (dump it with `--types=data,index_template,component_template`).
+  `--prefix`/`--suffix` rename targets (indices and streams, not cluster-wide items).
+- `--parallel` (default 2) indices at a time, started in name order (`--order desc` reverses it); `--interval=MS` (default 0) is the least time between starting one
+  index and the next, as Node's `--interval`.
 - Data runs get `--limit=5000 --scrollTime=10m --retryAttempts=5 --retryDelay=2000 --timeout=300000 --maxResponseMb=0`
   (`--noDefaultDataFlags` drops them); anything after `--` is passed to every data run. Credentials:
   `ELASTICDUMP_INPUT_USERNAME`/`_PASSWORD` and `ELASTICDUMP_OUTPUT_USERNAME`/`_PASSWORD`, or `--httpAuthFile`.
-- Per-run logs go to `--logDir` (default a temp dir); a failure prints the last lines. `--dryRun` lists what would
-  run. Exit status: 0 all done, 1 any index failed or nothing matched, 2 usage error, 130 interrupted.
-- Not in this tool (Node `multielasticdump`): `--matchType alias,datastream`, templates/analyzers/policies,
-  `--interval`, split-part loads, `--ignoreChildError` (failures never stop other indices).
+- Per-run logs go to `--logDir` (default a temp dir; one log per data part); a failure prints the last lines.
+  `--dryRun` lists what would run. Exit status: 0 all done, 1 any item failed or nothing matched, 2 usage error,
+  130 interrupted.
+- Not in this tool (Node `multielasticdump`): `--ignoreChildError` (failures never stop other indices),
+  Node's per-type `--ignore*` flag names (use `--ignoreType`). Cluster-wide items are not filtered by `--match`.
 - Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers).
 
 ## Renaming indices

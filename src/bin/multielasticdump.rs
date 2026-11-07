@@ -8,6 +8,10 @@
 //! `elasticdump-rs` processes, at most `--parallel` indices at a time; one index failing does not
 //! stop the others. A manifest (`multielasticdump.json`) records what was dumped.
 //!
+//! `--matchType` also selects indices by alias or whole data streams; cluster-wide templates,
+//! policies and stored scripts go to `DIR/_cluster/` and load before any index; `--fileSize` /
+//! `--maxRows` split data files into parts that load in order.
+//!
 //! Credentials: use `ELASTICDUMP_INPUT_*` / `ELASTICDUMP_OUTPUT_*` environment variables or
 //! `--httpAuthFile`; children inherit them. `user:pass@` in a URL works but puts the password on
 //! every child's command line (visible in `ps`).
@@ -111,7 +115,38 @@ const DATA_FLAGS: &[&str] = &[
 ];
 
 /// Per-index item types, in the order they are dumped and loaded.
-pub const TYPE_ORDER: &[&str] = &["settings", "mapping", "alias", "data"];
+pub const TYPE_ORDER: &[&str] = &["settings", "analyzer", "mapping", "alias", "data"];
+
+/// Cluster-scoped types, dumped once per run into `DIR/_cluster/TYPE.json` and loaded before
+/// any index, in this order (policies before the templates that name them, component templates
+/// before the index templates composed of them).
+pub const CLUSTER_TYPES: &[&str] = &[
+    "policy",
+    "component_template",
+    "index_template",
+    "template",
+    "script",
+];
+
+/// Subdirectory of the dump root for cluster-scoped files. Index names cannot start with `_`,
+/// so it never collides with an index directory.
+pub const CLUSTER_DIR: &str = "_cluster";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Order {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MatchType {
+    /// --match is tested against index names
+    Index,
+    /// --match is tested against alias names; every index behind a matching alias is selected
+    Alias,
+    /// --match is tested against data stream names; each matching stream is dumped as one unit
+    Datastream,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -125,6 +160,9 @@ pub const TYPE_ORDER: &[&str] = &["settings", "mapping", "alias", "data"];
       # break out by month: /backup/2026.10/logs-app-2026.10.31.*\n  \
       multielasticdump --input https://os:9200 --output /backup --layout group \\\n    \
       --match '^logs-.*-(?P<group>\\d{4}\\.\\d{2})\\.\\d{2}$'\n  \
+      # data streams plus the templates and policies they need, 1 GB data parts\n  \
+      multielasticdump --input https://es:9200 --output /backup --matchType datastream \\\n    \
+      --match '^logs-' --types data,index_template,component_template,policy --fileSize 1gb\n  \
       # load everything back (ELASTICDUMP_OUTPUT_* credentials), 4 indices at a time\n  \
       multielasticdump --direction load --input /backup --output https://os2:9200 --parallel 4\n\n\
       Extra arguments after `--` are passed to every elasticdump-rs data run."
@@ -139,10 +177,18 @@ pub struct Args {
     /// dump: output directory (created if missing); load: cluster base URL
     #[arg(long)]
     pub output: String,
-    /// Regex an index name must match (unanchored; use ^...$ for whole names)
+    /// Regex a name must match (unanchored; use ^...$ for whole names)
     #[arg(long = "match", default_value = "^.*$")]
     pub match_re: String,
-    /// Regex of index names to leave out
+    /// What --match is tested against (dump), comma separated: index, alias, datastream
+    #[arg(
+        long = "matchType",
+        value_enum,
+        value_delimiter = ',',
+        default_value = "index"
+    )]
+    pub match_type: Vec<MatchType>,
+    /// Regex of names to leave out (tested against the same names as --match)
     #[arg(long)]
     pub exclude: Option<String>,
     /// Also select hidden/system indices (names starting with '.'); off by default
@@ -151,9 +197,11 @@ pub struct Args {
     /// Directory layout for each index's files (dump); load finds files in any layout
     #[arg(long, value_enum, default_value = "flat")]
     pub layout: Layout,
-    /// Item types per index, comma separated: settings, mapping, alias, data.
+    /// Item types, comma separated. Per index: settings, analyzer, mapping, alias, data.
+    /// Cluster-wide, once per run: policy, component_template, index_template, template,
+    /// script. `all` selects every type.
     /// Default: dump settings,mapping,data (as oslogs.py); load settings,mapping,alias,data
-    /// (an index without an alias file just skips that step)
+    /// plus every cluster-wide file present (a missing file just skips that step)
     #[arg(long, value_delimiter = ',')]
     pub types: Vec<String>,
     /// Types to skip (Node multielasticdump --ignoreType), comma separated
@@ -162,9 +210,22 @@ pub struct Args {
     /// How many indices to process at once
     #[arg(long, default_value_t = 2)]
     pub parallel: usize,
+    /// Order in which indices are started, by name (Node --order)
+    #[arg(long, value_enum, default_value = "asc")]
+    pub order: Order,
+    /// Minimum milliseconds between starting one index and the next (Node --interval)
+    #[arg(long, default_value_t = 0)]
+    pub interval: u64,
     /// Data-file compression (dump). Load detects it from each file name
     #[arg(long, value_enum, default_value = "gzip")]
     pub compression: Compression,
+    /// Dump: split each data file into parts of about this size (elasticdump --fileSize,
+    /// e.g. 500mb, 2gb). Parts are INDEX.data.split-N.json[.gz|.zst]
+    #[arg(long = "fileSize", conflicts_with = "max_rows")]
+    pub file_size: Option<String>,
+    /// Dump: split each data file into parts of at most this many records (--maxRows)
+    #[arg(long = "maxRows")]
+    pub max_rows: Option<u64>,
     /// Lifecycle settings on load: drop them, or convert ILM to ISM
     #[arg(long, value_enum, default_value = "drop")]
     pub lifecycle: Lifecycle,
@@ -175,6 +236,7 @@ pub struct Args {
     #[arg(long, default_value = "")]
     pub suffix: String,
     /// Load: skip an index that already exists on the target instead of failing it
+    /// (cluster-wide items are created only if missing)
     #[arg(long = "skipExisting", alias = "skip-existing")]
     pub skip_existing: bool,
     /// Dump: skip indices the manifest already records as done (files still present)
@@ -203,9 +265,22 @@ pub struct Args {
     pub extra: Vec<String>,
 }
 
+impl Args {
+    /// Whether data files are written in parts (`--fileSize`/`--maxRows` here or after `--`).
+    pub fn splits(&self) -> bool {
+        self.file_size.is_some()
+            || self.max_rows.is_some()
+            || self.extra.iter().any(|a| {
+                ["--fileSize", "--maxRows"]
+                    .iter()
+                    .any(|f| a == f || a.starts_with(&format!("{f}=")))
+            })
+    }
+}
+
 // ----------------------------------------------------------------------------- selection
 
-/// Index-name selection: `--match`, `--exclude`, hidden indices, and the break-out group.
+/// Name selection: `--match`, `--exclude`, hidden indices, and the break-out group.
 pub struct Selector {
     include: Regex,
     exclude: Option<Regex>,
@@ -248,6 +323,71 @@ impl Selector {
     }
 }
 
+/// What one dump job covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetKind {
+    Index,
+    DataStream,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+    /// Index or data stream name.
+    pub name: String,
+    pub kind: TargetKind,
+    /// The name --match was tested against (the alias for --matchType alias); the group comes
+    /// from it.
+    pub matched: String,
+}
+
+/// The dump jobs for a cluster's indices, aliases and data streams. Backing indices of a
+/// selected data stream are left to the stream; an index reached twice is dumped once.
+pub fn select_targets(
+    sel: &Selector,
+    match_types: &[MatchType],
+    indices: &[String],
+    aliases: &[(String, String)],
+    streams: &[(String, Vec<String>)],
+) -> Vec<Target> {
+    let mut out: Vec<Target> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut backing = std::collections::BTreeSet::new();
+    if match_types.contains(&MatchType::Datastream) {
+        for (name, members) in streams {
+            if sel.selects(name) && seen.insert(name.clone()) {
+                backing.extend(members.iter().cloned());
+                out.push(Target {
+                    name: name.clone(),
+                    kind: TargetKind::DataStream,
+                    matched: name.clone(),
+                });
+            }
+        }
+    }
+    let open: std::collections::BTreeSet<&str> = indices.iter().map(String::as_str).collect();
+    let mut add = |index: &str, matched: &str, out: &mut Vec<Target>| {
+        if !backing.contains(index) && open.contains(index) && seen.insert(index.to_string()) {
+            out.push(Target {
+                name: index.to_string(),
+                kind: TargetKind::Index,
+                matched: matched.to_string(),
+            });
+        }
+    };
+    if match_types.contains(&MatchType::Index) {
+        for i in indices.iter().filter(|i| sel.selects(i)) {
+            add(i, i, &mut out);
+        }
+    }
+    if match_types.contains(&MatchType::Alias) {
+        for (alias, index) in aliases.iter().filter(|(a, _)| sel.selects(a)) {
+            add(index, alias, &mut out);
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// A group value as one safe directory name.
 pub fn sanitize_dir(raw: &str) -> String {
     let s: String = raw
@@ -280,16 +420,15 @@ pub fn check_index_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// The directory (relative to the dump root) that holds one index's files.
-pub fn rel_dir(layout: Layout, sel: &Selector, index: &str) -> Result<PathBuf> {
+/// The directory (relative to the dump root) that holds one index's files. `matched` is the
+/// name the group capture is taken from (the index itself, or the alias that selected it).
+pub fn rel_dir(layout: Layout, sel: &Selector, index: &str, matched: &str) -> Result<PathBuf> {
     Ok(match layout {
         Layout::Flat => PathBuf::new(),
         Layout::Index => PathBuf::from(sanitize_dir(index)),
-        Layout::Group => {
-            PathBuf::from(sel.group(index).ok_or_else(|| {
-                anyhow!("--layout group: --match has no capture group for {index}")
-            })?)
-        }
+        Layout::Group => PathBuf::from(sel.group(matched).ok_or_else(|| {
+            anyhow!("--layout group: --match has no capture group for {matched}")
+        })?),
     })
 }
 
@@ -301,18 +440,83 @@ pub fn item_file(index: &str, kind: &str, compression: Compression) -> String {
     }
 }
 
-pub fn resolve_types(types: &[String], ignore: &[String]) -> Result<Vec<&'static str>> {
-    for t in types.iter().chain(ignore) {
-        if !TYPE_ORDER.contains(&t.trim()) {
-            bail!("unknown type '{t}' (supported: settings, mapping, alias, data)");
+/// What a data-file name says: the index, the codec, and the part number of a split dump
+/// (`INDEX.data.split-N.json[.gz|.zst]`, as elasticdump-rs names parts).
+pub fn parse_data_file(name: &str) -> Option<(String, Compression, Option<u64>)> {
+    let c = Compression::of_file(name).or_else(|| {
+        [Compression::Gzip, Compression::Zstd3, Compression::None]
+            .into_iter()
+            .find(|c| name.ends_with(&format!(".{}", c.suffix())))
+    })?;
+    let stem = name.strip_suffix(&format!(".{}", c.suffix()))?;
+    if let Some(index) = stem.strip_suffix(".data") {
+        return Some((index.to_string(), c, None));
+    }
+    let (head, n) = stem.rsplit_once(".data.split-")?;
+    let part: u64 = n
+        .parse()
+        .ok()
+        .filter(|_| n.bytes().all(|b| b.is_ascii_digit()))?;
+    Some((head.to_string(), c, Some(part)))
+}
+
+/// A split dump's part files for one index in `dir`, in part order. Errors on a gap or on parts
+/// in more than one codec.
+pub fn data_parts(dir: &Path, index: &str) -> Result<Vec<PathBuf>> {
+    let mut parts: Vec<(u64, Compression, PathBuf)> = Vec::new();
+    for ent in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
+        let ent = ent?;
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if let Some((i, c, Some(n))) = parse_data_file(&name) {
+            if i == index && ent.file_type()?.is_file() {
+                parts.push((n, c, ent.path()));
+            }
         }
     }
-    let out: Vec<&'static str> = TYPE_ORDER
-        .iter()
-        .copied()
-        .filter(|t| types.iter().any(|x| x.trim() == *t) && !ignore.iter().any(|x| x.trim() == *t))
-        .collect();
-    if out.is_empty() {
+    parts.sort_by_key(|p| p.0);
+    if parts.windows(2).any(|w| w[0].1.suffix() != w[1].1.suffix()) {
+        bail!(
+            "{index}: data parts in more than one codec in {}",
+            dir.display()
+        );
+    }
+    for (want, (n, _, _)) in parts.iter().enumerate() {
+        if *n != want as u64 {
+            bail!("{index}: data part {want} is missing in {}", dir.display());
+        }
+    }
+    Ok(parts.into_iter().map(|p| p.2).collect())
+}
+
+/// Per-index and cluster-wide types to process, in processing order.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Types {
+    pub index: Vec<&'static str>,
+    pub cluster: Vec<&'static str>,
+}
+
+pub fn resolve_types(types: &[String], ignore: &[String]) -> Result<Types> {
+    let known = |t: &str| TYPE_ORDER.contains(&t) || CLUSTER_TYPES.contains(&t);
+    let in_types = types.iter().map(|t| (t, true));
+    for (t, allow_all) in in_types.chain(ignore.iter().map(|t| (t, false))) {
+        let t = t.trim();
+        if !(known(t) || allow_all && t == "all") {
+            bail!(
+                "unknown type '{t}' (supported: {}, {}, all)",
+                TYPE_ORDER.join(", "),
+                CLUSTER_TYPES.join(", ")
+            );
+        }
+    }
+    let all = types.iter().any(|x| x.trim() == "all");
+    let wanted = |t: &&str| {
+        (all || types.iter().any(|x| x.trim() == *t)) && !ignore.iter().any(|x| x.trim() == *t)
+    };
+    let out = Types {
+        index: TYPE_ORDER.iter().copied().filter(wanted).collect(),
+        cluster: CLUSTER_TYPES.iter().copied().filter(wanted).collect(),
+    };
+    if out.index.is_empty() && out.cluster.is_empty() {
         bail!("no types left to process");
     }
     Ok(out)
@@ -324,15 +528,30 @@ pub fn resolve_types(types: &[String], ignore: &[String]) -> Result<Vec<&'static
 pub struct IndexEntry {
     /// Directory relative to the dump root ("" for flat).
     pub dir: String,
+    /// "datastream" for a data stream; absent for an index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     pub types: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_file: Option<String>,
+    /// Split dumps: the part files, in load order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub data_parts: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub records: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_count: Option<u64>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// One cluster-scoped file (`_cluster/TYPE.json`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ClusterEntry {
+    pub file: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -348,6 +567,8 @@ pub struct Manifest {
     pub layout: Option<Layout>,
     #[serde(default)]
     pub compression: Option<Compression>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cluster: BTreeMap<String, ClusterEntry>,
     pub indices: BTreeMap<String, IndexEntry>,
 }
 
@@ -377,12 +598,16 @@ impl Manifest {
 pub struct Found {
     pub index: String,
     pub dir: PathBuf,
-    pub data: Option<PathBuf>,
+    /// Data files in load order: one file, or the parts of a split dump; empty for none.
+    pub data: Vec<PathBuf>,
     pub records_hint: Option<u64>,
+    /// A data stream (written with `--bulkAction=create` to the stream name).
+    pub datastream: bool,
 }
 
 /// Indices in a dump directory: from the manifest when there is one, else every
-/// `INDEX.settings.json` / `INDEX.mapping.json` / `INDEX.data.json*` up to two levels down.
+/// `INDEX.settings.json` / `INDEX.mapping.json` / `INDEX.data*.json*` / `INDEX.datastream.json`
+/// up to two levels down (the `_cluster` directory excepted).
 pub fn discover(root: &Path) -> Result<Vec<Found>> {
     let mut out: BTreeMap<String, Found> = BTreeMap::new();
     if let Some(m) = Manifest::load(root)? {
@@ -396,11 +621,19 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
             }
             check_index_name(name)?;
             let dir = root.join(&e.dir);
-            let data = e
-                .data_file
-                .as_ref()
-                .map(|f| dir.join(f))
-                .filter(|p| p.is_file());
+            let data: Vec<PathBuf> = if e.data_parts.is_empty() {
+                e.data_file
+                    .iter()
+                    .map(|f| dir.join(f))
+                    .filter(|p| p.is_file())
+                    .collect()
+            } else {
+                let parts: Vec<PathBuf> = e.data_parts.iter().map(|f| dir.join(f)).collect();
+                if let Some(p) = parts.iter().find(|p| !p.is_file()) {
+                    bail!("{name}: data part {} is missing", p.display());
+                }
+                parts
+            };
             out.insert(
                 name.clone(),
                 Found {
@@ -408,6 +641,7 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
                     dir,
                     data,
                     records_hint: e.records,
+                    datastream: e.kind.as_deref() == Some("datastream"),
                 },
             );
         }
@@ -420,21 +654,23 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
             let path = ent.path();
             let name = ent.file_name().to_string_lossy().into_owned();
             if ent.file_type()?.is_dir() {
-                if depth < 2 {
+                if depth < 2 && !(depth == 0 && name == CLUSTER_DIR) {
                     dirs.push((path, depth + 1));
                 }
                 continue;
             }
-            let index = ["settings.json", "mapping.json", "alias.json"]
-                .iter()
-                .find_map(|k| name.strip_suffix(&format!(".{k}")))
-                .map(str::to_string)
-                .or_else(|| {
-                    Compression::of_file(&name).and_then(|c| {
-                        name.strip_suffix(&format!(".data.{}", c.suffix()))
-                            .map(str::to_string)
-                    })
-                });
+            let data = parse_data_file(&name);
+            let index = [
+                "settings.json",
+                "analyzer.json",
+                "mapping.json",
+                "alias.json",
+                "datastream.json",
+            ]
+            .iter()
+            .find_map(|k| name.strip_suffix(&format!(".{k}")))
+            .map(str::to_string)
+            .or_else(|| data.as_ref().map(|d| d.0.clone()));
             let Some(index) = index else { continue };
             if check_index_name(&index).is_err() {
                 continue;
@@ -444,18 +680,45 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
                 .or_insert_with(|| Found {
                     index: index.clone(),
                     dir: d.clone(),
-                    data: None,
+                    data: Vec::new(),
                     records_hint: None,
+                    datastream: false,
                 });
-            if Compression::of_file(&name).is_some() && fs::metadata(&path)?.len() > 0 {
-                if let Some(prev) = &entry.data {
-                    bail!(
-                        "{index}: more than one data file ({} and {name})",
-                        prev.display()
-                    );
-                }
-                entry.data = Some(path);
+            if name.ends_with(".datastream.json") {
+                entry.datastream = true;
             }
+            if let Some((_, _, part)) = data {
+                if fs::metadata(&path)?.len() > 0 || part.is_some() {
+                    entry.data.push(path);
+                }
+            }
+        }
+    }
+    // Settle each index's data files: one single file, or a gap-free run of parts.
+    for f in out.values_mut() {
+        let (parts, singles): (Vec<PathBuf>, Vec<PathBuf>) = std::mem::take(&mut f.data)
+            .into_iter()
+            .partition(|p| is_part(p));
+        match (singles.len(), parts.is_empty()) {
+            (0, _) => {
+                f.data = if parts.is_empty() {
+                    parts
+                } else {
+                    data_parts(&f.dir, &f.index)?
+                }
+            }
+            (1, true) => f.data = singles,
+            (1, false) => bail!(
+                "{}: both a single data file ({}) and split parts",
+                f.index,
+                singles[0].display()
+            ),
+            _ => bail!(
+                "{}: more than one data file ({} and {})",
+                f.index,
+                singles[0].display(),
+                singles[1].display()
+            ),
         }
     }
     let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -474,6 +737,11 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
     Ok(found)
 }
 
+fn is_part(p: &Path) -> bool {
+    parse_data_file(&p.file_name().unwrap_or_default().to_string_lossy())
+        .is_some_and(|d| d.2.is_some())
+}
+
 // ----------------------------------------------------------------------------- data files
 
 /// Records (lines) in a data file, decompressing by its name.
@@ -483,7 +751,7 @@ pub fn count_records(path: &Path) -> Result<u64> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut r: Box<dyn Read> = match Compression::of_file(&name) {
+    let mut r: Box<dyn Read> = match parse_data_file(&name).map(|d| d.1) {
         Some(Compression::Gzip) => Box::new(flate2::read::MultiGzDecoder::new(f)),
         Some(Compression::Zstd1 | Compression::Zstd3) => {
             Box::new(zstd::stream::read::Decoder::new(f)?)
@@ -692,6 +960,83 @@ impl Cluster {
         Ok(out)
     }
 
+    /// (alias, index) pairs, sorted.
+    pub async fn list_aliases(&self) -> Result<Vec<(String, String)>> {
+        let v = self
+            .ok_json(
+                Method::GET,
+                &["_cat", "aliases"],
+                &[("format", "json"), ("h", "alias,index")],
+                Body::Empty,
+            )
+            .await?;
+        let mut out: Vec<(String, String)> = v
+            .as_array()
+            .ok_or_else(|| anyhow!("unexpected _cat/aliases response"))?
+            .iter()
+            .filter_map(|row| {
+                let a = row.get("alias")?.as_str()?;
+                let i = row.get("index")?.as_str()?;
+                Some((a.to_string(), i.to_string()))
+            })
+            .collect();
+        out.sort();
+        Ok(out)
+    }
+
+    /// Data streams and their backing indices, sorted by name.
+    pub async fn list_data_streams(&self) -> Result<Vec<(String, Vec<String>)>> {
+        let v = self
+            .ok_json(Method::GET, &["_data_stream"], &[], Body::Empty)
+            .await
+            .context("--matchType datastream: listing data streams (needs Elasticsearch 7.9+ or OpenSearch 1.0+)")?;
+        let mut out: Vec<(String, Vec<String>)> = v
+            .get("data_streams")
+            .and_then(|d| d.as_array())
+            .ok_or_else(|| anyhow!("unexpected _data_stream response"))?
+            .iter()
+            .filter_map(|ds| {
+                let name = ds.get("name")?.as_str()?.to_string();
+                let members = ds
+                    .get("indices")
+                    .and_then(|i| i.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|i| i.get("index_name")?.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some((name, members))
+            })
+            .collect();
+        out.sort();
+        Ok(out)
+    }
+
+    /// One data stream's description (`GET _data_stream/NAME`), or None if there is none.
+    pub async fn data_stream(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        let (status, bytes) = self
+            .call(Method::GET, &["_data_stream", name], &[], Body::Empty)
+            .await?;
+        match status {
+            200..=299 => {
+                let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+                Ok(v.get("data_streams")
+                    .and_then(|d| d.as_array())
+                    .and_then(|a| {
+                        a.iter()
+                            .find(|d| d.get("name").and_then(|n| n.as_str()) == Some(name))
+                    })
+                    .cloned())
+            }
+            404 => Ok(None),
+            s => bail!(
+                "GET /_data_stream/{name} -> HTTP {s}: {}",
+                String::from_utf8_lossy(&bytes[..bytes.len().min(500)])
+            ),
+        }
+    }
+
     pub async fn exists(&self, index: &str) -> Result<bool> {
         let (status, bytes) = self
             .call(Method::GET, &[index, "_settings"], &[], Body::Empty)
@@ -747,10 +1092,23 @@ impl Runner {
         output: &str,
         extra: &[String],
     ) -> Result<()> {
+        self.run_as(index, kind, kind, input, output, extra)
+    }
+
+    /// Like `run`, logging to LOGDIR/INDEX.LABEL.log (one log per data part).
+    pub fn run_as(
+        &self,
+        index: &str,
+        kind: &str,
+        label: &str,
+        input: &str,
+        output: &str,
+        extra: &[String],
+    ) -> Result<()> {
         if self.cancelled.load(Ordering::SeqCst) {
             bail!("interrupted");
         }
-        let log_path = self.log_dir.join(format!("{index}.{kind}.log"));
+        let log_path = self.log_dir.join(format!("{index}.{label}.log"));
         let log = fs::File::create(&log_path)
             .with_context(|| format!("create {}", log_path.display()))?;
         let mut cmd = Command::new(&self.bin);
@@ -823,9 +1181,67 @@ pub enum Outcome {
 
 struct Ctx {
     args: Args,
-    types: Vec<&'static str>,
+    types: Types,
     sel: Selector,
     runner: Runner,
+    pacer: Pacer,
+}
+
+/// `--interval`: a minimum gap between job starts, shared by all workers.
+pub struct Pacer {
+    gap: Duration,
+    next: tokio::sync::Mutex<Option<tokio::time::Instant>>,
+}
+
+impl Pacer {
+    pub fn new(gap: Duration) -> Self {
+        Self {
+            gap,
+            next: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    pub async fn wait(&self) {
+        if self.gap.is_zero() {
+            return;
+        }
+        let mut next = self.next.lock().await;
+        if let Some(at) = *next {
+            tokio::time::sleep_until(at).await;
+        }
+        *next = Some(tokio::time::Instant::now() + self.gap);
+    }
+}
+
+const LIFECYCLE_DROP: &str =
+    "--excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference";
+
+fn strings(flags: &[&str]) -> Vec<String> {
+    flags.iter().map(|s| s.to_string()).collect()
+}
+
+/// Remove this index's earlier data files (single or split) before a new data dump, so stale
+/// parts from a larger earlier dump are not counted or loaded. Only files named exactly as
+/// this tool names them are touched.
+fn remove_data_files(dir: &Path, index: &str) -> Result<()> {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for ent in rd {
+        let ent = ent?;
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if parse_data_file(&name).is_some_and(|d| d.0 == index) && ent.file_type()?.is_file() {
+            fs::remove_file(ent.path())
+                .with_context(|| format!("remove stale {}", ent.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn file_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 async fn dump_one(
@@ -833,22 +1249,35 @@ async fn dump_one(
     cluster: &Cluster,
     root: &Path,
     manifest: &Mutex<Manifest>,
-    index: &str,
+    target: &Target,
 ) -> Outcome {
-    let rel = match rel_dir(ctx.args.layout, &ctx.sel, index) {
+    ctx.pacer.wait().await;
+    let index = target.name.as_str();
+    let ds = target.kind == TargetKind::DataStream;
+    let kinds: Vec<&str> = ctx
+        .types
+        .index
+        .iter()
+        .copied()
+        .filter(|k| !ds || *k == "data")
+        .collect();
+    if kinds.is_empty() {
+        return Outcome::Skipped(
+            "data stream: only its data is dumped (its settings and mappings come from its index template); add data to --types".into(),
+        );
+    }
+    let rel = match rel_dir(ctx.args.layout, &ctx.sel, index, &target.matched) {
         Ok(r) => r,
         Err(e) => return Outcome::Failed(format!("{e:#}")),
     };
     let dir = root.join(&rel);
     let comp = ctx.args.compression;
+    let split = ctx.args.splits();
     let mut entry = IndexEntry {
         dir: rel.to_string_lossy().into_owned(),
+        kind: ds.then(|| "datastream".to_string()),
         group: (ctx.args.layout == Layout::Group).then(|| rel.to_string_lossy().into_owned()),
-        types: ctx.types.iter().map(|t| t.to_string()).collect(),
-        data_file: ctx
-            .types
-            .contains(&"data")
-            .then(|| item_file(index, "data", comp)),
+        types: kinds.iter().map(|t| t.to_string()).collect(),
         status: "running".into(),
         ..Default::default()
     };
@@ -856,25 +1285,60 @@ async fn dump_one(
         fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let source = cluster.index_url(index);
         entry.source_count = cluster.count(index, false).await.ok();
-        for kind in &ctx.types {
-            let file = dir.join(item_file(index, kind, comp));
-            let out = file.to_string_lossy().into_owned();
-            let extra: Vec<String> = if *kind == "data" {
-                comp.flags().iter().map(|s| s.to_string()).chain(ctx.runner.data_flags.iter().cloned()).collect()
+        if ds {
+            let info = cluster
+                .data_stream(index)
+                .await?
+                .ok_or_else(|| anyhow!("data stream {index} disappeared"))?;
+            let marker = dir.join(format!("{index}.datastream.json"));
+            fs::write(&marker, serde_json::to_vec_pretty(&info)?)
+                .with_context(|| format!("write {}", marker.display()))?;
+        }
+        for kind in &kinds {
+            let (out, extra) = if *kind == "data" {
+                remove_data_files(&dir, index)?;
+                let mut extra = strings(comp.flags());
+                if let Some(s) = &ctx.args.file_size {
+                    extra.push(format!("--fileSize={s}"));
+                }
+                if let Some(n) = ctx.args.max_rows {
+                    extra.push(format!("--maxRows={n}"));
+                }
+                extra.extend(ctx.runner.data_flags.iter().cloned());
+                // elasticdump-rs adds the codec extension to each part itself.
+                let name = if split {
+                    item_file(index, "data", Compression::None)
+                } else {
+                    item_file(index, "data", comp)
+                };
+                (dir.join(name), extra)
             } else {
-                vec![]
+                (dir.join(item_file(index, kind, comp)), vec![])
             };
-            let (i, k) = (index.to_string(), kind.to_string());
+            let o = out.to_string_lossy().into_owned();
             let runner = &ctx.runner;
-            tokio::task::block_in_place(|| runner.run(&i, &k, &source, &out, &extra))?;
-            if *kind != "data" && !nonempty(&file) {
+            tokio::task::block_in_place(|| runner.run(index, kind, &source, &o, &extra))?;
+            if !matches!(*kind, "data" | "analyzer") && !nonempty(&out) {
                 bail!("{kind} export is empty");
             }
         }
         let mut summary = String::new();
-        if ctx.types.contains(&"data") {
-            let file = dir.join(item_file(index, "data", comp));
-            let records = if file.exists() { count_records(&file)? } else { 0 };
+        if kinds.contains(&"data") {
+            let files: Vec<PathBuf> = if split {
+                data_parts(&dir, index)?
+            } else {
+                let f = dir.join(item_file(index, "data", comp));
+                if f.exists() { vec![f] } else { vec![] }
+            };
+            let mut records = 0;
+            for f in &files {
+                records += count_records(f)?;
+            }
+            if split {
+                entry.data_parts = files.iter().map(|f| file_name(f)).collect();
+            } else {
+                entry.data_file = Some(item_file(index, "data", comp));
+            }
             entry.records = Some(records);
             if let Some(src) = entry.source_count {
                 if records == 0 && src > 0 {
@@ -884,7 +1348,14 @@ async fn dump_one(
                     eprintln!("warning: {index}: {records} records written, the index reported {src} before the dump (still being written to?)");
                 }
             }
-            summary = format!(" ({records} records)");
+            summary = if split {
+                format!(" ({records} records in {} parts)", files.len())
+            } else {
+                format!(" ({records} records)")
+            };
+        }
+        if ds {
+            summary.push_str(" [data stream]");
         }
         Ok(format!("{}{summary}", dir.display()))
     }
@@ -908,7 +1379,110 @@ async fn dump_one(
     outcome
 }
 
+/// Flags for a cluster-scoped run.
+fn cluster_flags(args: &Args, kind: &str, load: bool) -> Vec<String> {
+    let mut v = vec![];
+    if load {
+        match (kind, args.lifecycle) {
+            ("policy", Lifecycle::Convert) => v.push("--convertIlmToIsm".to_string()),
+            ("template" | "index_template" | "component_template", Lifecycle::Drop) => {
+                v.push(LIFECYCLE_DROP.to_string())
+            }
+            _ => {}
+        }
+        if args.skip_existing {
+            v.push("--skip-existing".to_string());
+        }
+    }
+    v
+}
+
+/// Dump every selected cluster-scoped type once, to `ROOT/_cluster/TYPE.json`.
+async fn dump_cluster(
+    ctx: &Ctx,
+    cluster: &Cluster,
+    root: &Path,
+    manifest: &Mutex<Manifest>,
+) -> Vec<(String, Outcome)> {
+    let dir = root.join(CLUSTER_DIR);
+    let mut out = vec![];
+    for kind in &ctx.types.cluster {
+        let name = format!("{CLUSTER_DIR}/{kind}");
+        let file = dir.join(format!("{kind}.json"));
+        let res = fs::create_dir_all(&dir)
+            .with_context(|| format!("create {}", dir.display()))
+            .and_then(|_| {
+                let o = file.to_string_lossy().into_owned();
+                tokio::task::block_in_place(|| {
+                    ctx.runner
+                        .run(CLUSTER_DIR, kind, &cluster.child_base, &o, &[])
+                })
+            });
+        let entry = ClusterEntry {
+            file: format!("{kind}.json"),
+            status: if res.is_ok() { "done" } else { "failed" }.into(),
+            error: res.as_ref().err().map(|e| format!("{e:#}")),
+        };
+        out.push((
+            name,
+            match res {
+                Ok(()) => Outcome::Done(file.display().to_string()),
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            },
+        ));
+        let mut m = manifest.lock().unwrap();
+        m.cluster.insert(kind.to_string(), entry);
+        if let Err(e) = m.save(root) {
+            eprintln!("warning: could not write the manifest: {e:#}");
+        }
+    }
+    out
+}
+
+/// Load the cluster-scoped files present under `ROOT/_cluster`, in CLUSTER_TYPES order.
+async fn load_cluster(ctx: &Ctx, cluster: &Cluster, root: &Path) -> Vec<(String, Outcome)> {
+    let dir = root.join(CLUSTER_DIR);
+    let recorded = Manifest::load(root).ok().flatten().map(|m| m.cluster);
+    let mut out = vec![];
+    for kind in &ctx.types.cluster {
+        let name = format!("{CLUSTER_DIR}/{kind}");
+        if recorded
+            .as_ref()
+            .and_then(|c| c.get(*kind))
+            .is_some_and(|e| e.status != "done")
+        {
+            out.push((
+                name,
+                Outcome::Skipped("recorded as failed in the manifest".into()),
+            ));
+            continue;
+        }
+        let file = dir.join(format!("{kind}.json"));
+        if !nonempty(&file) {
+            if !ctx.args.types.is_empty() {
+                out.push((name, Outcome::Skipped(format!("no {}", file.display()))));
+            }
+            continue;
+        }
+        let input = file.to_string_lossy().into_owned();
+        let extra = cluster_flags(&ctx.args, kind, true);
+        let r = tokio::task::block_in_place(|| {
+            ctx.runner
+                .run(CLUSTER_DIR, kind, &input, &cluster.child_base, &extra)
+        });
+        out.push((
+            name,
+            match r {
+                Ok(()) => Outcome::Done(format!("from {}", file.display())),
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            },
+        ));
+    }
+    out
+}
+
 async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
+    ctx.pacer.wait().await;
     let target = format!("{}{}{}", ctx.args.prefix, f.index, ctx.args.suffix);
     let res: Result<Option<String>> = async {
         check_index_name(&target)?;
@@ -916,64 +1490,112 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             if ctx.args.skip_existing {
                 return Ok(None);
             }
-            bail!("index {target} already exists on the target (use --skipExisting to skip it)");
+            bail!("{target} already exists on the target (use --skipExisting to skip it)");
         }
         let url = cluster.index_url(&target);
         let mut records = None;
-        for kind in &ctx.types {
-            let (file, extra): (PathBuf, Vec<String>) = match *kind {
-                "data" => {
-                    let Some(data) = &f.data else {
-                        if f.records_hint.unwrap_or(0) == 0 && nonempty(&f.dir.join(format!("{}.settings.json", f.index))) {
-                            eprintln!("note: {}: no data file (empty index); loading metadata only", f.index);
-                            continue;
-                        }
-                        bail!("missing data file for {} in {}", f.index, f.dir.display());
-                    };
-                    let name = data.file_name().unwrap().to_string_lossy().into_owned();
-                    let c = Compression::of_file(&name).unwrap_or(Compression::None);
-                    records = Some(count_records(data)?);
-                    (data.clone(), c.flags().iter().map(|s| s.to_string()).chain(ctx.runner.data_flags.iter().cloned()).collect())
-                }
-                k => {
-                    let p = f.dir.join(item_file(&f.index, k, Compression::None));
-                    if !nonempty(&p) {
-                        if k == "alias" {
-                            continue;
-                        }
-                        bail!("missing {k} file {}", p.display());
+        let mut settings_applied = false;
+        let kinds: Vec<&str> = ctx
+            .types
+            .index
+            .iter()
+            .copied()
+            .filter(|k| !f.datastream || *k == "data")
+            .collect();
+        for kind in kinds {
+            if kind == "data" {
+                if f.data.is_empty() {
+                    let meta_only =
+                        f.datastream || nonempty(&f.dir.join(format!("{}.settings.json", f.index)));
+                    if f.records_hint.unwrap_or(0) == 0 && meta_only {
+                        eprintln!(
+                            "note: {}: no data file (empty index); loading metadata only",
+                            f.index
+                        );
+                        continue;
                     }
-                    let extra = if k == "settings" {
-                        match ctx.args.lifecycle {
-                            Lifecycle::Drop => vec!["--excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference".into()],
-                            Lifecycle::Convert => vec!["--convertIlmToIsm".into()],
-                        }
+                    bail!("missing data file for {} in {}", f.index, f.dir.display());
+                }
+                let mut total = 0;
+                for (n, part) in f.data.iter().enumerate() {
+                    let c = parse_data_file(&file_name(part)).map_or(Compression::None, |d| d.1);
+                    total += count_records(part)?;
+                    let mut extra = strings(c.flags());
+                    extra.extend(ctx.runner.data_flags.iter().cloned());
+                    if f.datastream && !extra.iter().any(|a| a.starts_with("--bulkAction")) {
+                        // A data stream only accepts create.
+                        extra.push("--bulkAction=create".into());
+                    }
+                    let label = if f.data.len() > 1 {
+                        format!("data.part-{n}")
                     } else {
-                        vec![]
+                        "data".into()
                     };
-                    (p, extra)
+                    let input = part.to_string_lossy().into_owned();
+                    let runner = &ctx.runner;
+                    tokio::task::block_in_place(|| {
+                        runner.run_as(&f.index, "data", &label, &input, &url, &extra)
+                    })
+                    .with_context(|| {
+                        if f.data.len() > 1 {
+                            format!("part {n} ({})", part.display())
+                        } else {
+                            String::new()
+                        }
+                    })?;
                 }
+                records = Some(total);
+                continue;
+            }
+            if kind == "analyzer" && settings_applied {
+                // The settings file already carries index.analysis.
+                continue;
+            }
+            let p = f.dir.join(item_file(&f.index, kind, Compression::None));
+            if !nonempty(&p) {
+                if matches!(kind, "alias" | "analyzer") {
+                    continue;
+                }
+                bail!("missing {kind} file {}", p.display());
+            }
+            let extra = if kind == "settings" {
+                match ctx.args.lifecycle {
+                    Lifecycle::Drop => vec![LIFECYCLE_DROP.to_string()],
+                    Lifecycle::Convert => vec!["--convertIlmToIsm".into()],
+                }
+            } else {
+                vec![]
             };
-            let input = file.to_string_lossy().into_owned();
-            let (i, k) = (f.index.clone(), kind.to_string());
+            let input = p.to_string_lossy().into_owned();
             let runner = &ctx.runner;
-            let r = tokio::task::block_in_place(|| runner.run(&i, &k, &input, &url, &extra));
-            if let Err(e) = r {
-                if *kind == "mapping" {
-                    eprintln!("note: {target}: mapping via elasticdump-rs failed, applying it directly");
-                    let text = fs::read_to_string(&file)?;
-                    cluster.put_mapping(&target, &mappings_body(&text)?).await.with_context(|| format!("{e:#}"))?;
-                } else {
-                    return Err(e);
+            let r =
+                tokio::task::block_in_place(|| runner.run(&f.index, kind, &input, &url, &extra));
+            match r {
+                Ok(()) => settings_applied |= kind == "settings",
+                Err(e) if kind == "mapping" => {
+                    eprintln!(
+                        "note: {target}: mapping via elasticdump-rs failed, applying it directly"
+                    );
+                    let text = fs::read_to_string(&p)?;
+                    cluster
+                        .put_mapping(&target, &mappings_body(&text)?)
+                        .await
+                        .with_context(|| format!("{e:#}"))?;
                 }
+                Err(e) => return Err(e),
             }
         }
         if let Some(want) = records {
             let got = cluster.count(&target, true).await?;
             if got != want {
-                bail!("restored {target} has {got} documents, the backup file has {want} records");
+                bail!("restored {target} has {got} documents, the backup has {want} records");
             }
-            return Ok(Some(format!("{target} docs={got}")));
+            let parts = if f.data.len() > 1 {
+                format!(" from {} parts", f.data.len())
+            } else {
+                String::new()
+            };
+            return Ok(Some(format!("{target} docs={got}{parts}")));
         }
         Ok(Some(target.clone()))
     }
@@ -989,13 +1611,19 @@ async fn run(args: Args) -> Result<i32> {
     if args.parallel == 0 {
         bail!("--parallel must be at least 1");
     }
-    let default_types: Vec<String> = match args.direction {
+    if args.direction == Direction::Load && (args.file_size.is_some() || args.max_rows.is_some()) {
+        bail!("--fileSize/--maxRows apply to dumps; load finds split parts on its own");
+    }
+    let mut default_types: Vec<String> = match args.direction {
         Direction::Dump => vec!["settings", "mapping", "data"],
-        Direction::Load => vec!["settings", "mapping", "alias", "data"],
+        Direction::Load => vec!["settings", "analyzer", "mapping", "alias", "data"],
     }
     .into_iter()
     .map(String::from)
     .collect();
+    if args.direction == Direction::Load {
+        default_types.extend(CLUSTER_TYPES.iter().map(|s| s.to_string()));
+    }
     let types = resolve_types(
         if args.types.is_empty() {
             &default_types
@@ -1036,7 +1664,7 @@ async fn run(args: Args) -> Result<i32> {
     let mut data_flags: Vec<String> = if args.no_default_data_flags {
         vec![]
     } else {
-        DATA_FLAGS.iter().map(|s| s.to_string()).collect()
+        strings(DATA_FLAGS)
     };
     data_flags.extend(args.extra.iter().cloned());
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -1056,15 +1684,19 @@ async fn run(args: Args) -> Result<i32> {
         data_flags,
         cancelled: cancelled.clone(),
     };
+    let pacer = Pacer::new(Duration::from_millis(args.interval));
     let ctx = Arc::new(Ctx {
         args,
         types,
         sel,
         runner,
+        pacer,
     });
     let started = Instant::now();
     let sem = Arc::new(tokio::sync::Semaphore::new(ctx.args.parallel));
     let mut set = tokio::task::JoinSet::new();
+    // Cluster-scoped results, reported with the per-index ones.
+    let mut early: Vec<(String, Outcome)> = vec![];
 
     match ctx.args.direction {
         Direction::Dump => {
@@ -1073,36 +1705,95 @@ async fn run(args: Args) -> Result<i32> {
                 "ELASTICDUMP_INPUT",
                 &ctx.args,
             )?);
-            let all = cluster.list_indices().await?;
+            let mt = &ctx.args.match_type;
             let mut selected = vec![];
-            for name in all.iter().filter(|n| ctx.sel.selects(n)) {
-                check_index_name(name)?;
-                selected.push(name.clone());
+            let mut total = 0;
+            if !ctx.types.index.is_empty() {
+                let indices = cluster.list_indices().await?;
+                let aliases = if mt.contains(&MatchType::Alias) {
+                    cluster.list_aliases().await?
+                } else {
+                    vec![]
+                };
+                let streams = if mt.contains(&MatchType::Datastream) {
+                    cluster.list_data_streams().await?
+                } else {
+                    vec![]
+                };
+                total = indices.len() + streams.len();
+                selected = select_targets(&ctx.sel, mt, &indices, &aliases, &streams);
+                if ctx.args.order == Order::Desc {
+                    selected.reverse();
+                }
+                for t in &selected {
+                    check_index_name(&t.name)?;
+                }
+                if selected.iter().any(|t| t.kind == TargetKind::DataStream)
+                    && !ctx.types.cluster.contains(&"index_template")
+                {
+                    eprintln!(
+                        "warning: a data stream loads only where a matching index template exists; add index_template (and component_template) to --types to dump them too"
+                    );
+                }
             }
             let root = PathBuf::from(&ctx.args.output);
             if ctx.args.dry_run {
-                println!("{} of {} indices selected:", selected.len(), all.len());
-                for i in &selected {
-                    let rel = rel_dir(ctx.args.layout, &ctx.sel, i)?;
-                    let files: Vec<String> = ctx
-                        .types
-                        .iter()
-                        .map(|k| {
-                            root.join(&rel)
-                                .join(item_file(i, k, ctx.args.compression))
+                if !ctx.types.cluster.is_empty() {
+                    println!("cluster-wide:");
+                    for k in &ctx.types.cluster {
+                        println!(
+                            "  {}",
+                            root.join(CLUSTER_DIR).join(format!("{k}.json")).display()
+                        );
+                    }
+                }
+                println!(
+                    "{} of {total} indices and data streams selected:",
+                    selected.len()
+                );
+                let split = ctx.args.splits();
+                for t in &selected {
+                    let rel = rel_dir(ctx.args.layout, &ctx.sel, &t.name, &t.matched)?;
+                    let d = root.join(&rel);
+                    let mut files: Vec<String> = vec![];
+                    if t.kind == TargetKind::DataStream {
+                        files.push(
+                            d.join(format!("{}.datastream.json", t.name))
                                 .display()
-                                .to_string()
-                        })
-                        .collect();
-                    println!("  {i}\n    {}", files.join("\n    "));
+                                .to_string(),
+                        );
+                    }
+                    for k in ctx
+                        .types
+                        .index
+                        .iter()
+                        .filter(|k| t.kind == TargetKind::Index || **k == "data")
+                    {
+                        let f = if *k == "data" && split {
+                            format!("{}.data.split-N.{}", t.name, ctx.args.compression.suffix())
+                        } else {
+                            item_file(&t.name, k, ctx.args.compression)
+                        };
+                        files.push(d.join(f).display().to_string());
+                    }
+                    let via = if t.matched != t.name {
+                        format!(" (via alias {})", t.matched)
+                    } else {
+                        String::new()
+                    };
+                    let ds = if t.kind == TargetKind::DataStream {
+                        " [data stream]"
+                    } else {
+                        ""
+                    };
+                    println!("  {}{ds}{via}\n    {}", t.name, files.join("\n    "));
                 }
                 return Ok(0);
             }
-            if selected.is_empty() {
+            if selected.is_empty() && ctx.types.cluster.is_empty() {
                 eprintln!(
-                    "no index matches --match '{}' (of {} indices)",
+                    "nothing matches --match '{}' (of {total} indices and data streams)",
                     ctx.args.match_re,
-                    all.len()
                 );
                 return Ok(1);
             }
@@ -1123,33 +1814,48 @@ async fn run(args: Args) -> Result<i32> {
             m.layout = Some(ctx.args.layout);
             m.compression = Some(ctx.args.compression);
             let mut todo = vec![];
-            for i in selected {
-                let done = m.indices.get(&i).is_some_and(|e| {
+            for t in selected {
+                let done = m.indices.get(&t.name).is_some_and(|e| {
+                    let d = root.join(&e.dir);
                     e.status == "done"
-                        && e.types.iter().all(|k| {
-                            nonempty(&root.join(&e.dir).join(item_file(
-                                &i,
-                                k,
-                                ctx.args.compression,
-                            ))) || (k == "data" && e.records == Some(0))
+                        && e.types.iter().all(|k| match k.as_str() {
+                            "data" if !e.data_parts.is_empty() => {
+                                e.data_parts.iter().all(|p| d.join(p).is_file())
+                            }
+                            "data" => {
+                                e.records == Some(0)
+                                    || e.data_file.as_ref().is_some_and(|f| nonempty(&d.join(f)))
+                            }
+                            "analyzer" => {
+                                d.join(item_file(&t.name, k, Compression::None)).is_file()
+                            }
+                            k => nonempty(&d.join(item_file(&t.name, k, Compression::None))),
                         })
                 });
                 if ctx.args.resume && done {
-                    println!("skip {i} (already dumped)");
+                    println!("skip {} (already dumped)", t.name);
                     continue;
                 }
-                todo.push(i);
+                todo.push(t);
             }
             m.save(&root)?;
+            let manifest = Arc::new(Mutex::new(m));
+            if !ctx.types.cluster.is_empty() {
+                println!(
+                    "dumping cluster-wide {} to {}",
+                    ctx.types.cluster.join(", "),
+                    root.join(CLUSTER_DIR).display()
+                );
+                early = dump_cluster(&ctx, &cluster, &root, &manifest).await;
+            }
             println!(
-                "dumping {} indices to {} ({} at a time, logs in {})",
+                "dumping {} indices/data streams to {} ({} at a time, logs in {})",
                 todo.len(),
                 root.display(),
                 ctx.args.parallel,
                 log_dir.display()
             );
-            let manifest = Arc::new(Mutex::new(m));
-            for i in todo {
+            for t in todo {
                 let (ctx, cluster, root, manifest, sem) = (
                     ctx.clone(),
                     cluster.clone(),
@@ -1159,8 +1865,8 @@ async fn run(args: Args) -> Result<i32> {
                 );
                 set.spawn(async move {
                     let _p = sem.acquire().await;
-                    let o = dump_one(&ctx, &cluster, &root, &manifest, &i).await;
-                    (i, o)
+                    let o = dump_one(&ctx, &cluster, &root, &manifest, &t).await;
+                    (t.name, o)
                 });
             }
         }
@@ -1169,15 +1875,38 @@ async fn run(args: Args) -> Result<i32> {
             if !root.is_dir() {
                 bail!("dump directory does not exist: {}", root.display());
             }
-            let found: Vec<Found> = discover(&root)?
-                .into_iter()
-                .filter(|f| ctx.sel.selects(&f.index))
+            let mut found: Vec<Found> = if ctx.types.index.is_empty() {
+                vec![]
+            } else {
+                discover(&root)?
+                    .into_iter()
+                    .filter(|f| ctx.sel.selects(&f.index))
+                    .collect()
+            };
+            if ctx.args.order == Order::Desc {
+                found.reverse();
+            }
+            let cluster_files: Vec<&str> = ctx
+                .types
+                .cluster
+                .iter()
+                .copied()
+                .filter(|k| nonempty(&root.join(CLUSTER_DIR).join(format!("{k}.json"))))
                 .collect();
             if ctx.args.dry_run {
-                println!("{} indices to load:", found.len());
+                if !cluster_files.is_empty() {
+                    println!("cluster-wide, loaded first: {}", cluster_files.join(", "));
+                }
+                println!("{} indices/data streams to load:", found.len());
                 for f in &found {
+                    let parts = if f.data.len() > 1 {
+                        format!(", {} data parts", f.data.len())
+                    } else {
+                        String::new()
+                    };
+                    let ds = if f.datastream { " [data stream]" } else { "" };
                     println!(
-                        "  {} -> {}{}{} (from {})",
+                        "  {}{ds} -> {}{}{} (from {}{parts})",
                         f.index,
                         ctx.args.prefix,
                         f.index,
@@ -1187,9 +1916,9 @@ async fn run(args: Args) -> Result<i32> {
                 }
                 return Ok(0);
             }
-            if found.is_empty() {
+            if found.is_empty() && cluster_files.is_empty() {
                 eprintln!(
-                    "no dumped index in {} matches --match '{}'",
+                    "nothing in {} matches --match '{}'",
                     root.display(),
                     ctx.args.match_re
                 );
@@ -1201,8 +1930,11 @@ async fn run(args: Args) -> Result<i32> {
                 &ctx.args,
             )?);
             fs::create_dir_all(&log_dir)?;
+            if !ctx.types.cluster.is_empty() {
+                early = load_cluster(&ctx, &cluster, &root).await;
+            }
             println!(
-                "loading {} indices from {} ({} at a time, logs in {})",
+                "loading {} indices/data streams from {} ({} at a time, logs in {})",
                 found.len(),
                 root.display(),
                 ctx.args.parallel,
@@ -1220,8 +1952,7 @@ async fn run(args: Args) -> Result<i32> {
     }
 
     let (mut ok, mut skipped, mut failed) = (0, 0, vec![]);
-    while let Some(r) = set.join_next().await {
-        let (index, outcome) = r?;
+    let mut report = |index: String, outcome: Outcome| {
         match outcome {
             Outcome::Done(s) => {
                 ok += 1;
@@ -1237,6 +1968,13 @@ async fn run(args: Args) -> Result<i32> {
             }
         }
         let _ = std::io::stdout().flush();
+    };
+    for (index, outcome) in early {
+        report(index, outcome);
+    }
+    while let Some(r) = set.join_next().await {
+        let (index, outcome) = r?;
+        report(index, outcome);
     }
     failed.sort();
     println!(
@@ -1313,16 +2051,25 @@ mod tests {
         assert!(s.has_group());
         assert_eq!(s.group("logs-app-2026.10.31").as_deref(), Some("2026.10"));
         assert_eq!(
-            rel_dir(Layout::Group, &s, "logs-app-2026.10.31").unwrap(),
+            rel_dir(
+                Layout::Group,
+                &s,
+                "logs-app-2026.10.31",
+                "logs-app-2026.10.31"
+            )
+            .unwrap(),
             PathBuf::from("2026.10")
         );
         let first = Selector::new(r"^([a-z]+)-", None, false).unwrap();
         assert_eq!(first.group("web-1").as_deref(), Some("web"));
         let none = Selector::new("^x", None, false).unwrap();
         assert!(!none.has_group());
-        assert_eq!(rel_dir(Layout::Flat, &none, "x1").unwrap(), PathBuf::new());
         assert_eq!(
-            rel_dir(Layout::Index, &none, "x1").unwrap(),
+            rel_dir(Layout::Flat, &none, "x1", "x1").unwrap(),
+            PathBuf::new()
+        );
+        assert_eq!(
+            rel_dir(Layout::Index, &none, "x1", "x1").unwrap(),
             PathBuf::from("x1")
         );
         assert_eq!(sanitize_dir("a/b"), "a_b");
@@ -1357,7 +2104,27 @@ mod tests {
             &["alias".into()],
         )
         .unwrap();
-        assert_eq!(t, vec!["settings", "mapping", "data"]);
+        assert_eq!(t.index, vec!["settings", "mapping", "data"]);
+        assert!(t.cluster.is_empty());
+        let t = resolve_types(
+            &[
+                "template".into(),
+                "data".into(),
+                "policy".into(),
+                "index_template".into(),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(t.index, vec!["data"]);
+        assert_eq!(t.cluster, vec!["policy", "index_template", "template"]);
+        let t = resolve_types(&["all".into()], &["script".into(), "analyzer".into()]).unwrap();
+        assert_eq!(t.index, vec!["settings", "mapping", "alias", "data"]);
+        assert_eq!(
+            t.cluster,
+            vec!["policy", "component_template", "index_template", "template"]
+        );
+        assert!(resolve_types(&["data".into()], &["all".into()]).is_err());
         assert!(resolve_types(&["bogus".into()], &[]).is_err());
         assert!(resolve_types(&["data".into()], &["data".into()]).is_err());
         for bad in ["", ".", "..", "a/b", "a\\b", "-x", "a\nb"] {
@@ -1449,7 +2216,7 @@ mod tests {
         let names: Vec<_> = found.iter().map(|f| f.index.as_str()).collect();
         assert_eq!(names, vec!["a", "b"]);
         assert_eq!(found[1].dir, r.join("2026.10"));
-        assert!(found[1].data.as_ref().unwrap().ends_with("b.data.json.zst"));
+        assert!(found[1].data[0].ends_with("b.data.json.zst"));
         // duplicate across directories is an error
         fs::create_dir_all(r.join("dup")).unwrap();
         fs::write(r.join("dup").join("a.settings.json"), "{}").unwrap();
@@ -1488,5 +2255,202 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].index, "a");
         assert_eq!(found[0].records_hint, Some(1));
+    }
+
+    #[test]
+    fn targets_by_index_alias_and_datastream() {
+        let indices: Vec<String> = [
+            "logs-a",
+            "logs-b",
+            "other",
+            ".ds-web-2026.11.01-000001",
+            ".ds-web-2026.11.02-000002",
+        ]
+        .map(String::from)
+        .to_vec();
+        let aliases = vec![
+            ("logs".to_string(), "logs-a".to_string()),
+            ("logs".to_string(), "logs-b".to_string()),
+            ("ali-other".to_string(), "other".to_string()),
+            ("gone".to_string(), "closed-idx".to_string()),
+        ];
+        let streams = vec![(
+            "web".to_string(),
+            vec![
+                ".ds-web-2026.11.01-000001".to_string(),
+                ".ds-web-2026.11.02-000002".to_string(),
+            ],
+        )];
+        let names = |t: &[Target]| t.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let all = Selector::new("^.*$", None, true).unwrap();
+        // index matching with hidden indices still leaves stream backing indices alone
+        let t = select_targets(
+            &all,
+            &[MatchType::Index, MatchType::Datastream],
+            &indices,
+            &aliases,
+            &streams,
+        );
+        assert_eq!(names(&t), vec!["logs-a", "logs-b", "other", "web"]);
+        assert_eq!(t[3].kind, TargetKind::DataStream);
+        // alias matching selects the indices behind the alias, grouped by the alias name
+        let s = Selector::new("^(?P<group>ali)-|^logs$", None, false).unwrap();
+        let t = select_targets(&s, &[MatchType::Alias], &indices, &aliases, &streams);
+        assert_eq!(names(&t), vec!["logs-a", "logs-b", "other"]);
+        assert_eq!(t[2].matched, "ali-other");
+        assert_eq!(
+            rel_dir(Layout::Group, &s, &t[2].name, &t[2].matched).unwrap(),
+            PathBuf::from("ali")
+        );
+        // index and alias together dump an index once
+        let s = Selector::new("logs", None, false).unwrap();
+        let t = select_targets(
+            &s,
+            &[MatchType::Index, MatchType::Alias],
+            &indices,
+            &aliases,
+            &streams,
+        );
+        assert_eq!(names(&t), vec!["logs-a", "logs-b"]);
+        // without datastream, backing indices are ordinary hidden indices
+        let t = select_targets(&all, &[MatchType::Index], &indices, &aliases, &streams);
+        assert_eq!(t.len(), 5);
+    }
+
+    #[test]
+    fn split_part_names_and_discovery() {
+        assert_eq!(
+            parse_data_file("i.data.split-12.json.gz"),
+            Some(("i".into(), Compression::Gzip, Some(12)))
+        );
+        assert_eq!(
+            parse_data_file("i.x.data.split-0.json"),
+            Some(("i.x".into(), Compression::None, Some(0)))
+        );
+        assert_eq!(
+            parse_data_file("i.data.json.zst"),
+            Some(("i".into(), Compression::Zstd3, None))
+        );
+        assert_eq!(parse_data_file("i.data.split-x.json"), None);
+        assert_eq!(parse_data_file("i.mapping.json"), None);
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        for n in [0, 1, 2, 10] {
+            fs::write(r.join(format!("p.data.split-{n}.json")), "{}\n").unwrap();
+        }
+        assert!(data_parts(r, "p").is_err(), "gap 3..9 must be an error");
+        for n in 3..10 {
+            fs::write(r.join(format!("p.data.split-{n}.json")), "{}\n").unwrap();
+        }
+        let parts = data_parts(r, "p").unwrap();
+        assert_eq!(parts.len(), 11);
+        assert!(
+            parts[10].ends_with("p.data.split-10.json"),
+            "numeric, not lexical, order"
+        );
+        fs::write(r.join("p.settings.json"), "{}").unwrap();
+        // cluster-scoped files are not indices; a data stream marker is recognised
+        fs::create_dir_all(r.join(CLUSTER_DIR)).unwrap();
+        fs::write(r.join(CLUSTER_DIR).join("template.json"), "{}").unwrap();
+        fs::write(r.join("web.datastream.json"), "{}").unwrap();
+        fs::write(r.join("web.data.json.gz"), "x").unwrap();
+        let found = discover(r).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].index, "p");
+        assert_eq!(found[0].data.len(), 11);
+        assert!(!found[0].datastream);
+        assert_eq!(found[1].index, "web");
+        assert!(found[1].datastream);
+        // a single data file next to parts is ambiguous
+        fs::write(r.join("p.data.json"), "{}\n").unwrap();
+        assert!(discover(r).is_err());
+        fs::remove_file(r.join("p.data.json")).unwrap();
+        // parts in two codecs are an error
+        fs::write(r.join("p.data.split-11.json.gz"), "x").unwrap();
+        assert!(discover(r).is_err());
+        fs::remove_file(r.join("p.data.split-11.json.gz")).unwrap();
+        // stale-file cleanup only touches this index's data files
+        remove_data_files(r, "p").unwrap();
+        assert!(data_parts(r, "p").unwrap().is_empty());
+        assert!(r.join("p.settings.json").exists());
+        assert!(r.join("web.data.json.gz").exists());
+    }
+
+    #[test]
+    fn split_flag_detection_and_cluster_flags() {
+        let parse = |a: &[&str]| {
+            Args::try_parse_from(
+                [
+                    "multielasticdump",
+                    "--input",
+                    "http://h:9200",
+                    "--output",
+                    "/tmp/x",
+                ]
+                .iter()
+                .chain(a),
+            )
+            .unwrap()
+        };
+        assert!(!parse(&[]).splits());
+        assert!(parse(&["--fileSize", "1gb"]).splits());
+        assert!(parse(&["--maxRows", "10"]).splits());
+        assert!(parse(&["--", "--maxRows=10"]).splits());
+        assert!(
+            Args::try_parse_from([
+                "m",
+                "--input",
+                "a",
+                "--output",
+                "b",
+                "--fileSize",
+                "1gb",
+                "--maxRows",
+                "2"
+            ])
+            .is_err()
+        );
+        let a = parse(&["--matchType", "alias,datastream", "--interval", "250"]);
+        assert_eq!(a.match_type, vec![MatchType::Alias, MatchType::Datastream]);
+        assert_eq!(a.interval, 250);
+        let mut a = parse(&["--skipExisting"]);
+        assert_eq!(
+            cluster_flags(&a, "index_template", true),
+            vec![LIFECYCLE_DROP.to_string(), "--skip-existing".to_string()]
+        );
+        assert!(cluster_flags(&a, "index_template", false).is_empty());
+        a.lifecycle = Lifecycle::Convert;
+        assert_eq!(
+            cluster_flags(&a, "policy", true),
+            vec![
+                "--convertIlmToIsm".to_string(),
+                "--skip-existing".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn interval_spaces_out_starts() {
+        let p = Arc::new(Pacer::new(Duration::from_millis(500)));
+        let t0 = tokio::time::Instant::now();
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..3 {
+            let p = p.clone();
+            set.spawn(async move {
+                p.wait().await;
+                tokio::time::Instant::now()
+            });
+        }
+        let mut at: Vec<Duration> = vec![];
+        while let Some(t) = set.join_next().await {
+            at.push(t.unwrap() - t0);
+        }
+        at.sort();
+        assert_eq!(at[0], Duration::ZERO);
+        assert!(at[1] >= Duration::from_millis(500), "{at:?}");
+        assert!(at[2] >= Duration::from_millis(1000), "{at:?}");
+        let none = Pacer::new(Duration::ZERO);
+        none.wait().await;
+        none.wait().await;
     }
 }

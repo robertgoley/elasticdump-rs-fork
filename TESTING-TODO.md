@@ -68,3 +68,9 @@ Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, int
 - Real-cluster round trip with `scripts/it` containers: ES 7/8 -> OpenSearch 2/3 with `--lifecycle drop`, a few hundred indices at `--parallel` 4-8, zstd and gzip, and a mid-run Ctrl-C then `--resume`.
 - Load an `oslogs.py backup` directory and dump with multielasticdump, then restore with `oslogs.py` (cross-tool compatibility).
 - Image check: `multielasticdump` runs inside each image and finds `/usr/local/bin/elasticdump-rs`.
+- Real-cluster run (not possible on Grok Bot's computer: no podman/docker and about 3 GB of free RAM). Needs a single-node Elasticsearch 8.x and OpenSearch 2.x (1 GB heap each, security on, self-signed TLS) on the build machine, for example `podman run --network=host` with `discovery.type=single-node`. Then:
+  - Dump about 20 indices (some with aliases, one with custom analysis, one empty, one hidden) plus a data stream with its component and index templates, an ILM policy, a legacy template and a stored script, with `--matchType index,alias,datastream --types=all --fileSize=50mb --parallel=4 --interval=200`.
+  - Load into a fresh Elasticsearch: counts match, templates and policy present, `GET _data_stream/NAME` shows the stream with its documents, analyzer works (`_analyze`).
+  - Load into OpenSearch with `--lifecycle drop` and with `--types=policy --lifecycle=convert`: the ISM policy is created and index templates load without `index.lifecycle`.
+  - Interrupt a split dump with Ctrl-C and rerun with `--resume`; kill the target mid-load and confirm the failed index is reported and the others finish.
+  - Large index (several GB) with `--fileSize`: part sizes near the limit and memory flat.
