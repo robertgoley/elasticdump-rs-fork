@@ -42,6 +42,8 @@ def log(*a):
 # possible staging leftover (the tool itself stages only in hidden `.name.part-*` files, never indices).
 SYSTEM_INDEX_PREFIXES = (".ds-", ".tasks", ".security", ".geoip_databases", ".kibana", ".apm", ".fleet",
                          ".opendistro", ".plugins", ".opensearch", ".ql-", ".async-search", ".transform")
+# Engine-created indices without a leading dot (OpenSearch security plugin audit log on secure profiles).
+ENGINE_INDEX_PREFIXES = ("security-auditlog-",)
 
 
 def leak_check(cl, work=None, before=None, expected=(), wait_s=15, contexts=True, allow_part=None):
@@ -89,7 +91,7 @@ def leak_check(cl, work=None, before=None, expected=(), wait_s=15, contexts=True
     if cl is not None and before is not None:
         after = {i["index"] for i in cl.req("GET", "/_cat/indices?format=json&expand_wildcards=all")}
         new = after - set(before) - set(expected)
-        leak["unexpected_indices"] = sorted(i for i in new if not i.startswith("."))
+        leak["unexpected_indices"] = sorted(i for i in new if not i.startswith(".") and not i.startswith(ENGINE_INDEX_PREFIXES))
         leak["new_system_indices"] = sorted(i for i in new if i.startswith(".") and i.startswith(SYSTEM_INDEX_PREFIXES))
         leak["new_hidden_indices"] = sorted(i for i in new if i.startswith(".") and not i.startswith(SYSTEM_INDEX_PREFIXES))
         if leak["unexpected_indices"] or leak["new_hidden_indices"]:
