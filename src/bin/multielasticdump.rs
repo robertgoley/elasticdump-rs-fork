@@ -211,6 +211,33 @@ pub struct Args {
     /// Types to skip (Node multielasticdump --ignoreType), comma separated
     #[arg(long = "ignoreType", value_delimiter = ',')]
     pub ignore_type: Vec<String>,
+    /// Node compatibility: `--ignoreData[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreData", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_data: Option<bool>,
+    /// Node compatibility: `--ignoreMapping[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreMapping", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_mapping: Option<bool>,
+    /// Node compatibility: `--ignoreSettings[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreSettings", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_settings: Option<bool>,
+    /// Node compatibility: `--ignoreTemplate[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreTemplate", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_template: Option<bool>,
+    /// Node compatibility: `--ignoreAlias[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreAlias", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_alias: Option<bool>,
+    /// Node compatibility: `--ignoreAnalyzer[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreAnalyzer", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_analyzer: Option<bool>,
+    /// Node compatibility: `--ignoreIndex[=true|false]` (true removes the type, false adds it)
+    #[arg(long = "ignoreIndex", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_index: Option<bool>,
+    /// Node compatibility, accepted and ignored: one index failing never stops the others here
+    #[arg(long = "ignoreChildError", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new(), hide_short_help = true)]
+    pub ignore_child_error: Option<bool>,
+    /// Node compatibility: process only these types (as --types; `index` means settings,mapping)
+    #[arg(long = "includeType", value_delimiter = ',', conflicts_with = "types")]
+    pub include_type: Vec<String>,
     /// How many indices to process at once
     #[arg(long, default_value_t = 2)]
     pub parallel: usize,
@@ -596,6 +623,59 @@ pub fn data_parts(dir: &Path, index: &str) -> Result<Vec<PathBuf>> {
 pub struct Types {
     pub index: Vec<&'static str>,
     pub cluster: Vec<&'static str>,
+}
+
+/// Node multielasticdump's per-type flags folded into `--types`/`--ignoreType` lists:
+/// `--includeType` replaces the type list, `--ignoreX=true` removes X, `--ignoreX=false` adds it
+/// (Node ignores analyzer, alias and index unless told otherwise). Node's `index` type (the
+/// index create body) is our settings + mapping.
+pub fn node_type_flags(args: &Args, default_types: &[String]) -> (Vec<String>, Vec<String>) {
+    let expand = |t: &str| -> Vec<String> {
+        match t.trim() {
+            "index" => vec!["settings".into(), "mapping".into()],
+            t => vec![t.to_string()],
+        }
+    };
+    let mut want: Vec<String> = if !args.include_type.is_empty() {
+        args.include_type.iter().flat_map(|t| expand(t)).collect()
+    } else if !args.types.is_empty() {
+        args.types.clone()
+    } else {
+        default_types.to_vec()
+    };
+    // Ignoring Node's `index` run leaves settings and mapping alone, so it is a no-op here.
+    let mut ignore: Vec<String> = args
+        .ignore_type
+        .iter()
+        .filter(|t| t.trim() != "index")
+        .cloned()
+        .collect();
+    let flags = [
+        ("data", args.ignore_data),
+        ("mapping", args.ignore_mapping),
+        ("settings", args.ignore_settings),
+        ("template", args.ignore_template),
+        ("alias", args.ignore_alias),
+        ("analyzer", args.ignore_analyzer),
+    ];
+    for (t, v) in flags {
+        match v {
+            Some(true) => ignore.push(t.to_string()),
+            Some(false) if !want.iter().any(|w| w.trim() == t || w.trim() == "all") => {
+                want.push(t.to_string())
+            }
+            _ => {}
+        }
+    }
+    // --ignoreIndex: Node's separate index-create run; settings and mapping already create it.
+    if args.ignore_index == Some(false) {
+        for t in ["settings", "mapping"] {
+            if !want.iter().any(|w| w.trim() == t || w.trim() == "all") {
+                want.push(t.to_string());
+            }
+        }
+    }
+    (want, ignore)
 }
 
 pub fn resolve_types(types: &[String], ignore: &[String]) -> Result<Types> {
@@ -1835,14 +1915,8 @@ async fn run(args: Args) -> Result<i32> {
     if args.direction == Direction::Load {
         default_types.extend(CLUSTER_TYPES.iter().map(|s| s.to_string()));
     }
-    let types = resolve_types(
-        if args.types.is_empty() {
-            &default_types
-        } else {
-            &args.types
-        },
-        &args.ignore_type,
-    )?;
+    let (want, ignore) = node_type_flags(&args, &default_types);
+    let types = resolve_types(&want, &ignore)?;
     let mut types = types;
     if args.node_compat {
         if let Some(i) = types.cluster.iter().position(|k| *k == "template") {
@@ -2723,6 +2797,71 @@ mod tests {
         let none = Pacer::new(Duration::ZERO);
         none.wait().await;
         none.wait().await;
+    }
+
+    #[test]
+    fn node_ignore_flags() {
+        let p = |extra: &[&str]| {
+            let mut v = vec![
+                "multielasticdump",
+                "--input=http://h:9200",
+                "--output=/tmp/x",
+            ];
+            v.extend_from_slice(extra);
+            let a = Args::try_parse_from(v).unwrap();
+            let d: Vec<String> = ["settings", "mapping", "data"].map(String::from).to_vec();
+            let (w, i) = node_type_flags(&a, &d);
+            resolve_types(&w, &i).unwrap()
+        };
+        assert_eq!(p(&[]).index, ["settings", "mapping", "data"]);
+        assert_eq!(p(&["--ignoreData"]).index, ["settings", "mapping"]);
+        assert_eq!(p(&["--ignoreData=true"]).index, ["settings", "mapping"]);
+        assert_eq!(
+            p(&["--ignoreMapping=false"]).index,
+            ["settings", "mapping", "data"]
+        );
+        assert_eq!(
+            p(&[
+                "--ignoreAlias=false",
+                "--ignoreAnalyzer=false",
+                "--ignoreSettings=true"
+            ])
+            .index,
+            ["analyzer", "mapping", "alias", "data"]
+        );
+        let t = p(&["--ignoreTemplate=false"]);
+        assert_eq!(t.cluster, ["template"]);
+        assert!(p(&["--ignoreTemplate"]).cluster.is_empty());
+        assert_eq!(
+            p(&["--includeType=index,data"]).index,
+            ["settings", "mapping", "data"]
+        );
+        assert_eq!(p(&["--includeType=data,alias"]).index, ["alias", "data"]);
+        assert_eq!(
+            p(&["--ignoreType=index,data"]).index,
+            ["settings", "mapping"]
+        );
+        assert_eq!(
+            p(&["--ignoreIndex=false", "--types=data"]).index,
+            ["settings", "mapping", "data"]
+        );
+        assert_eq!(
+            p(&["--ignoreChildError=true", "--ignoreIndex"]).index,
+            ["settings", "mapping", "data"]
+        );
+        assert!(
+            Args::try_parse_from([
+                "m",
+                "--input=a",
+                "--output=b",
+                "--types=data",
+                "--includeType=data"
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from(["m", "--input=a", "--output=b", "--ignoreData=maybe"]).is_err()
+        );
     }
 
     #[test]

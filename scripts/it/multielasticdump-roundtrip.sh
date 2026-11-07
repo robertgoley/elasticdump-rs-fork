@@ -47,6 +47,11 @@ check "empty index created, .kibana_1 has 1 doc" test "$(count $DST empty-logs-x
 rm "$W/f/multielasticdump.json"
 check "load without manifest" "$M" --direction=load --input="$W/f" --output="http://127.0.0.1:$DST" --match='^logs-web' --prefix=nm- --logDir="$W/l7"
 check "no-manifest count 5" test "$(count $DST nm-logs-web-2026.10.01)" = 5
+# 5b. Node multielasticdump flag names: --ignoreData, --ignoreAlias=false, --includeType, --ignoreChildError
+check "dump with --ignoreData --ignoreAlias=false --ignoreChildError" "$M" --input="http://127.0.0.1:$SRC" --output="$W/ni" --match='^logs-app' --ignoreData --ignoreAlias=false --ignoreChildError --logDir="$W/l5b"
+check "no data files, alias files written" sh -c "! ls '$W/ni' | grep -q '\.data\.' && test -s '$W/ni/logs-app-2026.10.01.alias.json'"
+check "load --includeType=index (settings+mapping only)" "$M" --direction=load --input="$W/f" --output="http://127.0.0.1:$DST" --match='^logs-web' --prefix=it- --includeType=index --ignoreChildError=true --logDir="$W/l5c"
+check "index created with mapping and 0 docs" sh -c "test \"\$(curl -sf http://127.0.0.1:$DST/it-logs-web-2026.10.01/_count | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"count\"])')\" = 0 && curl -sf http://127.0.0.1:$DST/it-logs-web-2026.10.01/_mapping | grep -q msg"
 # 6. OpenSearch target, drop lifecycle (the default)
 check "load into OpenSearch-flavoured node" "$M" --direction=load --input="$W/g" --output="http://127.0.0.1:$OSP" --match='app-2026.10.02' --prefix=os- --logDir="$W/l8"
 check "dry run lists, writes nothing" sh -c "'$M' --input=http://127.0.0.1:$SRC --output='$W/dry' --dryRun | grep -q logs-web && test ! -e '$W/dry/multielasticdump.json'"

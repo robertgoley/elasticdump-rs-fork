@@ -375,6 +375,11 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
   templates that name them, component templates before the index templates built from them).
 - `--types` picks items (dump default `settings,mapping,data`; load default every per-index type plus every
   cluster-wide file present, missing files skipped; `all` selects everything); `--ignoreType` removes some.
+  Node's flag names work too: `--ignoreData`, `--ignoreMapping`, `--ignoreSettings`, `--ignoreTemplate`,
+  `--ignoreAlias`, `--ignoreAnalyzer` (bare or `=true` removes the type, `=false` adds it), `--includeType`
+  (instead of `--types`), and `--ignoreIndex` / `--ignoreChildError` (accepted; Node's `index` type is our
+  settings + mapping, and one failed index never stops the others here). Node ignores analyzer and alias unless
+  told otherwise, so pass `--ignoreAlias=false` to a Node load of our alias files.
 - Dump checks: the record count of each data file (or the parts together) against the source `_count` (an empty
   file for a non-empty index fails it). `multielasticdump.json` records each index's directory, types, data file or
   parts, records and status, and each cluster-wide file; `--resume` skips indices already done.
@@ -395,8 +400,8 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
 - Per-run logs go to `--logDir` (default a temp dir; one log per data part); a failure prints the last lines.
   `--dryRun` lists what would run. Exit status: 0 all done, 1 any item failed or nothing matched, 2 usage error,
   130 interrupted.
-- Not in this tool (Node `multielasticdump`): `--ignoreChildError` (failures never stop other indices),
-  Node's per-type `--ignore*` flag names (use `--ignoreType`). Cluster-wide items are not filtered by `--match`.
+- Not in this tool (Node `multielasticdump`): `--customMatcher` and `--transform` (JavaScript), `--delete`.
+  Cluster-wide items are not filtered by `--match`.
 - Node compatibility (`--nodeCompat`, dump only): writes the layout Node's `multielasticdump` 6.x loads with its
   defaults: `DIR/INDEX.json.gz` (data), `DIR/INDEX.settings.json.gz`, `INDEX.mapping.json.gz` and
   `INDEX.template.json.gz` (all legacy `_template`s, per index, as Node does), all gzipped. The directory holds only
