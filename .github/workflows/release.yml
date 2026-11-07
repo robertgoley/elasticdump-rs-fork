@@ -25,14 +25,14 @@ jobs:
           - { target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl }
           - { target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl }
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
         with: { toolchain: 1.85.1, targets: "${{ matrix.target }}" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "${{ matrix.target }}" }
       # zig provides the C cross-compiler for zstd-sys / ring / mimalloc and the glibc version pin.
-      - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with: { version: 0.13.0 }
       # pinned: 0.21.8 is the newest release whose MSRV (1.85) matches the toolchain
       - run: cargo install cargo-zigbuild --locked --version 0.21.8
@@ -50,7 +50,7 @@ jobs:
           cp "$f" LICENSE THIRD-PARTY-NOTICES.md "$d/"
           tar czf "$d.tar.gz" "$d"
           sha256sum "elasticdump-rs-$TARGET.tar.gz" > "elasticdump-rs-$TARGET.tar.gz.sha256"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: elasticdump-rs-${{ matrix.target }}
           path: elasticdump-rs-${{ matrix.target }}.tar.gz*
@@ -68,7 +68,7 @@ jobs:
       IT_DIR: /tmp/edrs-it
       RC_DIFF_DIR: /tmp/edrs-it/rc-diff
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -90,5 +90,5 @@ jobs:
       - if: always()
         run: cat /tmp/edrs-it/rc-diff/diff.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
       - if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: rc-diff, path: /tmp/edrs-it/rc-diff/ }
