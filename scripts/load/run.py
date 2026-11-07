@@ -208,6 +208,10 @@ def sh_env(path):
 
 
 def engine_mapping_flavour(engine):
+    # es710-plain is the OSS build (bitnamilegacy 7.10.2): no X-Pack `flattened`, so use the
+    # plain disabled-object variant (edgen `os1`), like OpenSearch 1.x.
+    if engine == "es710-plain":
+        return "os1"
     if engine.startswith("os13") or engine.startswith("opensearch1"):
         return "os1"
     if engine.startswith("os") or engine.startswith("opensearch"):
