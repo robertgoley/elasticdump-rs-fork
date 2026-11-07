@@ -117,6 +117,7 @@ es_pki() {
   (
     cd "$d"
     openssl req -x509 -newkey rsa:2048 -nodes -days 3 -subj "/CN=edrs-it-ca" \
+      -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
       -keyout ca.key -out ca.crt 2>/dev/null
     openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" -keyout tls.key -out tls.csr 2>/dev/null
     printf "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth\n" > node.ext
