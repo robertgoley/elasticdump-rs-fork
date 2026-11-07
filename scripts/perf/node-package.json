@@ -1,0 +1,8 @@
+{
+  "name": "ed",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "elasticdump": "6.125.1"
+  }
+}

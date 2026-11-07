@@ -191,12 +191,18 @@ case "$PROFILE" in
       CURL=(curl -fsS)
     else
     NAME="it-es-plain-${RUN_ID}"
-    DATA=$(es_data_dir "$NAME")
+    if [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]]; then
+      DATA="${NAME}-data"
+      engine volume create --label elasticdump-rs-it=1 --label "elasticdump-rs-run=${RUN_ID}" "$DATA" >/dev/null
+    else
+      DATA=$(es_data_dir "$NAME")
+    fi
     printf "xpack.ml.enabled: false\n" > "$IT_DIR/es-plain.yml"
     chmod 644 "$IT_DIR/es-plain.yml"
     # (its my_elasticsearch.yml replaces the generated config, so the 7.10.2
     # OSS image gets none: it has no X-Pack settings to turn off anyway)
     MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:Z")
+    [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]] && MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:U")
     [[ "$ES_TAG" != 7.10* ]] && MOUNTS+=(-v "$IT_DIR/es-plain.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z")
     engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
@@ -234,12 +240,17 @@ case "$PROFILE" in
       URL="https://localhost:${PORT}"
       CURL=(curl -fsS --cacert "$CERTS/ca.crt" -u "elastic:${ADMIN_PW}")
     else
-    DATA=$(es_data_dir "$NAME")
+    if [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]]; then
+      DATA="${NAME}-data"
+      engine volume create --label elasticdump-rs-it=1 --label "elasticdump-rs-run=${RUN_ID}" "$DATA" >/dev/null
+    else
+      DATA=$(es_data_dir "$NAME")
+    fi
     CERTS=$(es_pki)
     # ES 9 entitlements only let the SSL module read files under config/
     engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
-      -v "$DATA:/bitnami/elasticsearch/data:Z" \
+      -v "$DATA:/bitnami/elasticsearch/data:$([[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]] && echo U || echo Z)" \
       -v "$CERTS:/opt/bitnami/elasticsearch/config/certs:ro,Z" \
       -v "$CERTS/my_elasticsearch.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z" \
       -e "ELASTICSEARCH_HEAP_SIZE=${ES_HEAP}" \

@@ -739,6 +739,12 @@ Absolute numbers depend heavily on your Elasticsearch cluster, network, disk, an
 
 ## Testing
 
+The [sequential speed suite](scripts/perf/README.md) benchmarks dump/restore, copy,
+codecs/splits, metadata and multielasticdump parallelism against every pinned engine,
+with correctness gates, per-engine baselines and Node 6.125.1 comparisons:
+`./scripts/perf/run-suite.sh --dry-run` (plan) or `./scripts/perf/run-suite.sh` (rootless Podman).
+Real-engine performance runs and initial baselines are pending.
+
 Tests are split into tiers (`.config/nextest.toml`; each tier writes JUnit to `target/nextest/<tier>/junit.xml`):
 
 ```bash

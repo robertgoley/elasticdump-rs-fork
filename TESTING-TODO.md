@@ -16,6 +16,17 @@ Every test idea that is **not** part of the other agent's task plan. The delegat
 | Full arm64 image build (**low priority**) | Build and run both images for `linux/arm64` (`scripts/build-image.sh --platform linux/arm64`, then `make test-image`) on an arm64 host or with qemu/binfmt; so far only the arm64 base images were resolved (L-808b). Deprioritized by the user on 2026-11-01 (L-808d). |
 
 ### Performance
+
+- **Sequential speed suite (t89u): pending real-engine validation.** Defined/scripted in
+  [scripts/perf/README.md](scripts/perf/README.md), entrypoint `scripts/perf/run-suite.sh`.
+  Run all 37 cases across the 16 plain/secure profiles (all nine database images from
+  `images.lock`) with Node elasticdump 6.125.1 and both multielasticdump binaries. Validate
+  the Podman-only controller build/remote socket, named-volume cleanup, auth, every
+  codec/split/metadata path and failure/interruption teardown. Then run L0 and dedicated-host
+  L1, record reviewed per-engine baselines, rerun with the 10% regression gate, and retain
+  `combined.json`/`summary.md`. Offline plan/summary/comparator tests do **not** establish
+  correctness or speed against real engines. No real suite baseline exists yet.
+
 | Test | What it checks |
 |---|---|
 | Networked backup and restore with compression at scale | Tool and cluster on **separate machines** over a real network, with bandwidth and latency measured first (for example 1 Gbit and 10 Gbit links, iperf3 and ping); a multi-node cluster; 10M+ docs and multi-GB files. Dump (scroll unsliced, scroll with slices = shards, PIT with 4/8/16 slices) and restore (`--concurrency` 1/4/8/16) with `--compressionType` none, gzip levels 1 and 6, and zstd levels 1, 3 and 9. Record throughput in MB/s and docs/s, client CPU-s and server CPU per node, and network utilisation, and find out whether compression pays off once the network, not the CPU or the cluster, is the bottleneck. Baseline: the box results in [`results/local/L-805.md`](results/local/L-805.md) (compression levels) and [`results/local/L-807.md`](results/local/L-807.md) (concurrency curves). Those ran tool and engine on one 8-vCPU machine over loopback, with no real network, so they measure codec CPU and engine limits, not transfer cost. |

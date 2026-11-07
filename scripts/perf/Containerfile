@@ -1,0 +1,13 @@
+# Same public Debian builder digest as Makefile. No private registry credentials.
+FROM docker.io/library/rust:1.99-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137
+# Networked build only; runner and engines use loopback. npm lifecycle scripts disabled.
+RUN perl -pi -e 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends python3 podman curl openssl nodejs npm git \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup toolchain install 1.85.1 --profile minimal
+COPY node-package.json /opt/node-ed/package.json
+COPY node-package-lock.json /opt/node-ed/package-lock.json
+RUN cd /opt/node-ed && npm ci --ignore-scripts --no-audit --no-fund
+ENV NODE_ED_BIN=/opt/node-ed/node_modules/.bin
+CMD ["python3"]

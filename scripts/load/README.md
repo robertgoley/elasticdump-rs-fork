@@ -1,5 +1,9 @@
 # Load harness (TST-INF-006, TST-LOAD-001…003, LOAD-012)
 
+For the one-command, all-engine sequential speed/regression and Node comparison suite,
+see [../perf/README.md](../perf/README.md). It reuses this harness's measurement, seeding,
+verification, resource-tier and comparator helpers; specialized investigations below remain available.
+
 ## measure.sh
 
 `measure.sh` runs one command and records its metrics.
