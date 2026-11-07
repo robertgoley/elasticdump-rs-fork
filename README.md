@@ -132,7 +132,7 @@ and `script` (see [Types](#types)). Index renaming: `--renamePrefix`, `--renameI
 `--renamePatterns` (see [Renaming indices](#renaming-indices)).
 
 Out of scope (rejected or ignored with a warning, see `docs/PARITY.md` §3.7): CSV, S3/MinIO, AWS signing,
-transforms, `multielasticdump`, `--delete`.
+transforms, `--delete`. `multielasticdump` is a separate, smaller tool (see [Bulk dump and load](#bulk-dump-and-load-multielasticdump)).
 
 Where this tool differs from Node because Node is incomplete or buggy, see [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md);
 for every place the tool changes what is loaded, and for the tested versions, see
@@ -336,6 +336,48 @@ warning where there is no PIT, and credentials sent to the OSS build (which has 
 it does not check them. Writing to a data stream with the default `--bulkAction index` fails per document; the
 first such failure prints a hint to use `--bulkAction create`. Checked live on Elasticsearch 7.10.2 (OSS and
 default), 7.17.29, 8.6.1, 8.19.23 and 9.1.2, and OpenSearch 1.3.20, 2.19.7 and 3.9.0.
+
+## Bulk dump and load (multielasticdump)
+
+`multielasticdump` dumps every index whose name matches a regex to a directory, one file set per index, and loads
+such a directory back. It runs one `elasticdump-rs` per index and item type (found next to its own executable, then
+`$ELASTICDUMP_BIN`, then `PATH`), so all flags, retries and credential handling are the main tool's. It is not a
+copy of Node's `multielasticdump`; it follows `scripts/oslogs.py` and writes the same file names, so either tool can
+load the other's dumps.
+
+```sh
+# Every logs-* index, broken out per application into DIR/app/, DIR/web/, ... (zstd level 3)
+multielasticdump --input=https://src:9200 --output=/data/logs \
+  --match='^logs-(?P<group>[a-z]+)-' --layout=group --compression=zstd3 --parallel=4
+
+# Load it all back (any layout; uses /data/logs/multielasticdump.json when present)
+multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 --parallel=4
+```
+
+- Selection: `--match` (unanchored regex, default all), `--exclude`. Indices starting with `.` are left out unless
+  `--includeHidden` is set or `--match` starts with `^\.`. Closed indices are skipped on dump.
+- Layout: `flat` (`DIR/INDEX.*`, as `oslogs.py`), `index` (`DIR/INDEX/`) or `group` (`DIR/GROUP/`, from the `group`
+  named capture of `--match` or its first capture group).
+- Files per index: `INDEX.settings.json`, `INDEX.mapping.json`, optional `INDEX.alias.json`, and
+  `INDEX.data.json.gz` / `.zst` / `.json` (`--compression gzip|zstd1|zstd3|none`, default gzip).
+  `--types` picks items (dump default `settings,mapping,data`, load default `settings,mapping,alias,data`);
+  `--ignoreType` removes some.
+- Dump checks: the record count of each data file against the source `_count` (an empty file for a non-empty index
+  fails it). `multielasticdump.json` records each index's directory, types, records and status; `--resume` skips
+  indices already done.
+- Load (as `oslogs.py restore`): an index that already exists fails (or is skipped with `--skipExisting`); settings
+  first, with `--lifecycle drop` (default: `--excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference`)
+  or `convert` (`--convertIlmToIsm`, which does not rewrite `index.lifecycle` settings, so use `drop` for OpenSearch);
+  then the mapping (PUT `_mapping` directly if that run fails), aliases, data, and a `_refresh` + `_count` check
+  against the file's record count. `--prefix`/`--suffix` rename targets.
+- Data runs get `--limit=5000 --scrollTime=10m --retryAttempts=5 --retryDelay=2000 --timeout=300000 --maxResponseMb=0`
+  (`--noDefaultDataFlags` drops them); anything after `--` is passed to every data run. Credentials:
+  `ELASTICDUMP_INPUT_USERNAME`/`_PASSWORD` and `ELASTICDUMP_OUTPUT_USERNAME`/`_PASSWORD`, or `--httpAuthFile`.
+- Per-run logs go to `--logDir` (default a temp dir); a failure prints the last lines. `--dryRun` lists what would
+  run. Exit status: 0 all done, 1 any index failed or nothing matched, 2 usage error, 130 interrupted.
+- Not in this tool (Node `multielasticdump`): `--matchType alias,datastream`, templates/analyzers/policies,
+  `--interval`, split-part loads, `--ignoreChildError` (failures never stop other indices).
+- Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers).
 
 ## Renaming indices
 

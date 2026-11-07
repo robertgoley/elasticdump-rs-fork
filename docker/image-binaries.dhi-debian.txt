@@ -246,6 +246,7 @@
 /usr/libexec/dpkg/dpkg-db-backup
 /usr/libexec/dpkg/dpkg-db-keeper
 /usr/local/bin/elasticdump-rs
+/usr/local/bin/multielasticdump
 /usr/sbin/add-shell
 /usr/sbin/agetty
 /usr/sbin/blkdiscard

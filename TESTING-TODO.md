@@ -62,3 +62,9 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 ## 3. Tests that come with unbuilt features
 
 Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, interop and break tests when it is built (multielasticdump, AWS SigV4 and Serverless, S3/MinIO, CSV, SOCKS5, `--delete`, transforms). AWS tests (B13) stay blocked until the owner approves a named sandbox account.
+
+## multielasticdump (added 2026-11-07)
+
+- Real-cluster round trip with `scripts/it` containers: ES 7/8 -> OpenSearch 2/3 with `--lifecycle drop`, a few hundred indices at `--parallel` 4-8, zstd and gzip, and a mid-run Ctrl-C then `--resume`.
+- Load an `oslogs.py backup` directory and dump with multielasticdump, then restore with `oslogs.py` (cross-tool compatibility).
+- Image check: `multielasticdump` runs inside each image and finds `/usr/local/bin/elasticdump-rs`.

@@ -274,3 +274,11 @@ Run 2026-11-02 at 37fa3ac (read-only). Moved from TESTING-TODO §2.
 | Hidden-Unicode lint (F-15) | scripts/lint-hygiene.sh F-15; fails on planted RLO/ZWSP | [security/findings/2026-11-02-hidden-code-scan.md](security/findings/2026-11-02-hidden-code-scan.md) |
 | zizmor in CI | security.yml `zizmor` job, pinned 1.31.1, SHA-256 checked; 0 findings | [security/findings/2026-11-02-workflow-hardening.md](security/findings/2026-11-02-workflow-hardening.md) |
 | Signing and branch protection steps | owner instructions; not applied | [security/findings/2026-11-02-signing-branch-protection-steps.md](security/findings/2026-11-02-signing-branch-protection-steps.md) |
+
+## multielasticdump (Grok Bot, 2026-11-07)
+
+| Test | Result | Where |
+|---|---|---|
+| Unit tests (selection, group break-out, types, mapping body shapes, credential order and redaction, record counts for gzip/zstd/plain, discovery in flat/index/group layouts and from the manifest) | 7/7 pass; clippy `-D warnings` and fmt clean on 1.85.1 | `src/bin/multielasticdump.rs` |
+| Dump/load round trip against in-memory fake nodes (Elasticsearch- and OpenSearch-flavoured) | 20/20 checks: group layout + zstd3 + alias, counts 7/3/5, lifecycle dropped, mapping and alias restored, existing target refused then `--skipExisting`, hidden and empty indices, `oslogs.py` file names, load without a manifest, `--dryRun` | `scripts/it/multielasticdump-roundtrip.sh` |
+| Against a real cluster | not run (no cluster on the Grok Bot box); see TESTING-TODO | |

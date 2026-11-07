@@ -53,9 +53,10 @@ COPY tools ./tools
 RUN --network=none --mount=type=cache,target=/src/target,id=edrs-target \
     test -f .vendor/config.toml \
       || { echo "no .vendor/: run scripts/vendor-crates.sh on the host first (or use scripts/build-image.sh / make image)" >&2; exit 1; } \
- && cargo build --locked --offline --release --config .vendor/config.toml --bin elasticdump-rs \
+ && cargo build --locked --offline --release --config .vendor/config.toml --bin elasticdump-rs --bin multielasticdump \
  && install -D -m 0755 target/release/elasticdump-rs /out/elasticdump-rs \
- && /out/elasticdump-rs --version
+ && install -D -m 0755 target/release/multielasticdump /out/multielasticdump \
+ && /out/elasticdump-rs --version && /out/multielasticdump --version
 # CA bundle for runtimes that lack one (runtime-shell copies it only when missing).
 RUN install -D -m 0644 /etc/ssl/certs/ca-certificates.crt /out/ca-certificates.crt
 # License and third-party notices, shipped in every image (L-808c).
@@ -63,6 +64,7 @@ COPY LICENSE THIRD-PARTY-NOTICES.md /out/root/usr/share/doc/elasticdump-rs/
 # Root tree for the COPY-only `runtime` stage (bases without a shell): the binary, the
 # `elasticdump` symlink for scripts written for the Node tool, and an empty /data.
 RUN install -D -m 0755 /out/elasticdump-rs /out/root/usr/local/bin/elasticdump-rs \
+ && install -D -m 0755 /out/multielasticdump /out/root/usr/local/bin/multielasticdump \
  && ln -s elasticdump-rs /out/root/usr/local/bin/elasticdump \
  && install -d -m 0755 /out/root/data
 
@@ -87,6 +89,8 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # Bases with a shell (Alpine, Debian -dev, debian:trixie-slim): `--target runtime-shell`.
 FROM base AS runtime-shell
 COPY --from=builder /out/elasticdump-rs /usr/local/bin/elasticdump-rs
+# Bulk dump/load of regex-selected indices (runs elasticdump-rs from the same directory).
+COPY --from=builder /out/multielasticdump /usr/local/bin/multielasticdump
 COPY --from=builder /out/root/usr/share/doc/elasticdump-rs/ /usr/share/doc/elasticdump-rs/
 # - `elasticdump` symlink for scripts written for the Node tool
 # - CA bundle only when the base image has none
