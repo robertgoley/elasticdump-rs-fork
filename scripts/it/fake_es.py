@@ -89,6 +89,8 @@ class H(BaseHTTPRequestHandler):
                 ix = IDX.setdefault(name, new_idx()); ix["docs"][did] = src
                 items.append({op: {"_index": name, "_id": did, "status": 201, "result": "created"}})
             return (200, {"took": 1, "errors": any("error" in next(iter(x.values())) for x in items), "items": items})
+        if p == ["_aliases"] and m == "GET":
+            return (200, {n: {"aliases": v["aliases"]} for n, v in sorted(IDX.items())})
         if p[0] == "_aliases" and m == "POST":
             for a in j().get("actions", []):
                 op = next(iter(a)); d = dict(a[op]); n = d.pop("index"); al = d.pop("alias")

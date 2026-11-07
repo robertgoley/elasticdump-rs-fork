@@ -74,5 +74,22 @@ check "reloading an existing stream is refused" sh -c "! '$M' --direction=load -
 check "--interval 400 with 3 indices takes >= 0.8 s" sh -c "s=\$(date +%s%N); '$M' --input=http://127.0.0.1:$SRC --output='$W/iv' --match='^logs-' --types=settings --parallel=3 --interval=400 --logDir='$W/l17' >/dev/null && e=\$(( (\$(date +%s%N)-s)/1000000 )); test \$e -ge 800"
 check "--order desc dry run lists newest name first" sh -c "'$M' --input=http://127.0.0.1:$SRC --output='$W/dry' --match='^logs-app' --order=desc --dryRun | grep -E '^  logs-' | head -1 | grep -q 2026.10.02"
 check "--fileSize and --maxRows together are refused" sh -c "! '$M' --input=x --output=y --fileSize=1mb --maxRows=2 2>/dev/null"
+# 10. --nodeCompat: Node multielasticdump names, metadata outside the directory
+check "dump --nodeCompat" "$M" --input="http://127.0.0.1:$SRC" --output="$W/nc" --nodeCompat --match='^logs-' --types=settings,mapping,template,data,policy --logDir="$W/l18"
+check "Node names: INDEX.json.gz + gzipped settings/mapping/template" sh -c "for i in logs-app-2026.10.01 logs-web-2026.10.01; do for s in json.gz settings.json.gz mapping.json.gz template.json.gz; do test -s '$W/nc/'\$i.\$s || exit 1; done; done; gzip -t '$W/nc/logs-web-2026.10.01.settings.json.gz'"
+check "only index files in the directory; manifest and _cluster in DIR.meta" sh -c "test -z \"\$(ls '$W/nc' | grep -vE '^logs-[a-z]+-2026\.10\.0[12]\.(settings\.|mapping\.|template\.)?json\.gz\$')\" -a -s '$W/nc.meta/multielasticdump.json' -a -s '$W/nc.meta/_cluster/policy.json'"
+check "--nodeCompat refuses split, zstd, group layout and data streams" sh -c "! '$M' --input=x --output=y --nodeCompat --maxRows=1 2>/dev/null && ! '$M' --input=x --output=y --nodeCompat --compression=zstd3 2>/dev/null && ! '$M' --input=x --output=y --nodeCompat --layout=index 2>/dev/null && ! '$M' --input=x --output=y --nodeCompat --matchType=datastream 2>/dev/null"
+check "our load reads the Node layout (finds DIR.meta)" sh -c "'$M' --direction=load --input='$W/nc' --output=http://127.0.0.1:$DS2 --prefix=nc- --logDir='$W/l19' | grep -q 'nc-logs-web-2026.10.01 docs=5'"
+if [[ -n ${NODE_ED_BIN:-} && -x $NODE_ED_BIN/multielasticdump ]]; then
+  check "Node multielasticdump loads the --nodeCompat dump" "$NODE_ED_BIN/multielasticdump" --direction=load --input="$W/nc" --output="http://127.0.0.1:$OSP" --fsCompress --interval=50
+  check "Node restore: counts 7/3/5" test "$(count $OSP logs-app-2026.10.01)/$(count $OSP logs-app-2026.10.02)/$(count $OSP logs-web-2026.10.01)" = 7/3/5
+  check "Node restore: mapping" sh -c "curl -sf http://127.0.0.1:$OSP/logs-web-2026.10.01/_mapping | grep -q '\"msg\"'"
+  mkdir -p "$W/nd"
+  check "Node multielasticdump dump" "$NODE_ED_BIN/multielasticdump" --direction=dump --input="http://127.0.0.1:$SRC" --output="$W/nd" --match='^logs-web' --fsCompress --interval=50
+  check "our load reads Node's own dump" sh -c "'$M' --direction=load --input='$W/nd' --output=http://127.0.0.1:$DS2 --prefix=nd- --logDir='$W/l20' | grep -q 'nd-logs-web-2026.10.01 docs=5'"
+  check "our metadata files are byte-identical to Node's" bash -c "for s in settings mapping template; do cmp <(zcat '$W/nc/logs-web-2026.10.01.'\$s.json.gz) <(zcat '$W/nd/logs-web-2026.10.01.'\$s.json.gz) || exit 1; done"
+else
+  echo "skip  Node checks (set NODE_ED_BIN to the bin dir of an elasticdump 6.x npm install)"
+fi
 if grep -h UNHANDLED "$W"/*.log; then bad "fake node saw requests it does not handle"; fi
 [[ $fail == 0 ]] && echo "multielasticdump round trip: all checks passed" || { echo "multielasticdump round trip: FAILED"; exit 1; }

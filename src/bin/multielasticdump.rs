@@ -12,6 +12,10 @@
 //! policies and stored scripts go to `DIR/_cluster/` and load before any index; `--fileSize` /
 //! `--maxRows` split data files into parts that load in order.
 //!
+//! `--nodeCompat` writes the file names Node's `multielasticdump` 6.x reads (`INDEX.json.gz`,
+//! `INDEX.settings.json.gz`, ...) with the manifest and `_cluster/` moved to `DIR.meta` (`--metaDir`),
+//! because Node treats every entry in the directory as an index. Load accepts both namings.
+//!
 //! Credentials: use `ELASTICDUMP_INPUT_*` / `ELASTICDUMP_OUTPUT_*` environment variables or
 //! `--httpAuthFile`; children inherit them. `user:pass@` in a URL works but puts the password on
 //! every child's command line (visible in `ps`).
@@ -260,6 +264,17 @@ pub struct Args {
     /// Print the selected indices and the files they map to, then exit
     #[arg(long = "dryRun", alias = "dry-run")]
     pub dry_run: bool,
+    /// Dump in Node multielasticdump's layout, so `multielasticdump --direction=load` of Node
+    /// elasticdump 6.x restores it: flat, data as INDEX.json[.gz], parts as
+    /// INDEX.split-N.json[.gz], every file gzipped or none (gzip or none only), one
+    /// INDEX.template.json per index, and the manifest and other cluster-wide files kept out
+    /// of the directory (in --metaDir). Load reads Node-named directories without it.
+    #[arg(long = "nodeCompat", alias = "node-compat")]
+    pub node_compat: bool,
+    /// Where the manifest and cluster-wide files (`_cluster/`) go. Default: the dump
+    /// directory, or DIR.meta beside it with --nodeCompat. Load looks in DIR, then DIR.meta
+    #[arg(long = "metaDir")]
+    pub meta_dir: Option<PathBuf>,
     /// Extra elasticdump-rs arguments for every data run
     #[arg(last = true)]
     pub extra: Vec<String>,
@@ -440,24 +455,104 @@ pub fn item_file(index: &str, kind: &str, compression: Compression) -> String {
     }
 }
 
-/// What a data-file name says: the index, the codec, and the part number of a split dump
-/// (`INDEX.data.split-N.json[.gz|.zst]`, as elasticdump-rs names parts).
-pub fn parse_data_file(name: &str) -> Option<(String, Compression, Option<u64>)> {
-    let c = Compression::of_file(name).or_else(|| {
-        [Compression::Gzip, Compression::Zstd3, Compression::None]
-            .into_iter()
-            .find(|c| name.ends_with(&format!(".{}", c.suffix())))
-    })?;
-    let stem = name.strip_suffix(&format!(".{}", c.suffix()))?;
-    if let Some(index) = stem.strip_suffix(".data") {
-        return Some((index.to_string(), c, None));
+/// File names in Node multielasticdump's layout: `INDEX.json[.gz]` for data and
+/// `INDEX.TYPE.json[.gz]` for the rest, every file gzipped or none.
+pub fn node_item_file(index: &str, kind: &str, compression: Compression) -> String {
+    let gz = if compression == Compression::Gzip {
+        ".gz"
+    } else {
+        ""
+    };
+    if kind == "data" {
+        format!("{index}.json{gz}")
+    } else {
+        format!("{index}.{kind}.json{gz}")
     }
-    let (head, n) = stem.rsplit_once(".data.split-")?;
-    let part: u64 = n
-        .parse()
-        .ok()
-        .filter(|_| n.bytes().all(|b| b.is_ascii_digit()))?;
-    Some((head.to_string(), c, Some(part)))
+}
+
+/// The file for one item in either naming.
+pub fn item_file_for(node: bool, index: &str, kind: &str, compression: Compression) -> String {
+    if node {
+        node_item_file(index, kind, compression)
+    } else {
+        item_file(index, kind, compression)
+    }
+}
+
+/// Name suffixes of the non-data files of an index, in either naming (`.index` is Node's
+/// `--type=index` file).
+const META_SUFFIXES: &[&str] = &[
+    "settings",
+    "analyzer",
+    "mapping",
+    "alias",
+    "template",
+    "index",
+    "datastream",
+];
+
+/// What a data-file name says: the index, the codec, and the part number of a split dump.
+/// elasticdump-rs names: `INDEX.data.json[.gz|.zst]`, `INDEX.data.split-N.json[...]`;
+/// Node names: `INDEX.json[.gz]`, `INDEX.split-N.json[.gz]`.
+pub fn parse_data_file(name: &str) -> Option<(String, Compression, Option<u64>)> {
+    if name == MANIFEST {
+        return None;
+    }
+    let (stem, c) = if let Some(s) = name.strip_suffix(".json.gz") {
+        (s, Compression::Gzip)
+    } else if let Some(s) = name.strip_suffix(".json.zst") {
+        (s, Compression::Zstd3)
+    } else if let Some(s) = name.strip_suffix(".json") {
+        (s, Compression::None)
+    } else {
+        return None;
+    };
+    if let Some(index) = stem.strip_suffix(".data") {
+        return (!index.is_empty()).then(|| (index.to_string(), c, None));
+    }
+    if let Some((head, n)) = stem.rsplit_once(".split-") {
+        if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+            let head = head.strip_suffix(".data").unwrap_or(head);
+            let part: u64 = n.parse().ok()?;
+            return (!head.is_empty()).then(|| (head.to_string(), c, Some(part)));
+        }
+        return None;
+    }
+    if stem.is_empty()
+        || META_SUFFIXES
+            .iter()
+            .any(|k| stem.ends_with(&format!(".{k}")))
+    {
+        return None;
+    }
+    Some((stem.to_string(), c, None))
+}
+
+/// Whether a data-file name is in elasticdump-rs naming (`.data.` before the extension).
+fn rs_named(name: &str) -> bool {
+    name.contains(".data.json") || name.contains(".data.split-")
+}
+
+/// An index's non-data file in either form (`INDEX.KIND.json`, then `.json.gz`), if it is
+/// there and not empty; the flag says it is gzipped.
+pub fn meta_file(dir: &Path, index: &str, kind: &str) -> Option<(PathBuf, bool)> {
+    [("json", false), ("json.gz", true)]
+        .into_iter()
+        .map(|(ext, gz)| (dir.join(format!("{index}.{kind}.{ext}")), gz))
+        .find(|(p, _)| nonempty(p))
+}
+
+/// A text file, gunzipped when its name ends in `.gz`.
+fn read_text(p: &Path) -> Result<String> {
+    let f = fs::File::open(p).with_context(|| format!("open {}", p.display()))?;
+    let mut s = String::new();
+    if p.extension().is_some_and(|e| e == "gz") {
+        flate2::read::MultiGzDecoder::new(f).read_to_string(&mut s)
+    } else {
+        std::io::BufReader::new(f).read_to_string(&mut s)
+    }
+    .with_context(|| format!("read {}", p.display()))?;
+    Ok(s)
 }
 
 /// A split dump's part files for one index in `dir`, in part order. Errors on a gap or on parts
@@ -474,6 +569,14 @@ pub fn data_parts(dir: &Path, index: &str) -> Result<Vec<PathBuf>> {
         }
     }
     parts.sort_by_key(|p| p.0);
+    if let Some(w) = parts.windows(2).find(|w| w[0].0 == w[1].0) {
+        bail!(
+            "{index}: data part {} twice ({} and {})",
+            w[0].0,
+            w[0].2.display(),
+            w[1].2.display()
+        );
+    }
     if parts.windows(2).any(|w| w[0].1.suffix() != w[1].1.suffix()) {
         bail!(
             "{index}: data parts in more than one codec in {}",
@@ -567,6 +670,9 @@ pub struct Manifest {
     pub layout: Option<Layout>,
     #[serde(default)]
     pub compression: Option<Compression>,
+    /// Written with --nodeCompat (Node multielasticdump file names).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub node_compat: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub cluster: BTreeMap<String, ClusterEntry>,
     pub indices: BTreeMap<String, IndexEntry>,
@@ -605,12 +711,15 @@ pub struct Found {
     pub datastream: bool,
 }
 
-/// Indices in a dump directory: from the manifest when there is one, else every
+/// Indices in a dump directory: from the manifest (in `meta`) when there is one, else every
 /// `INDEX.settings.json` / `INDEX.mapping.json` / `INDEX.data*.json*` / `INDEX.datastream.json`
-/// up to two levels down (the `_cluster` directory excepted).
-pub fn discover(root: &Path) -> Result<Vec<Found>> {
+/// up to two levels down (the `_cluster` directory excepted). Node multielasticdump names
+/// (`INDEX.json.gz`, `INDEX.settings.json.gz`, `INDEX.split-N.json.gz`) are found too; a
+/// Node-named data file counts only next to a settings or mapping file of the same index.
+pub fn discover(root: &Path, meta: &Path) -> Result<Vec<Found>> {
     let mut out: BTreeMap<String, Found> = BTreeMap::new();
-    if let Some(m) = Manifest::load(root)? {
+    let mut has_meta = std::collections::BTreeSet::new();
+    if let Some(m) = Manifest::load(meta)? {
         for (name, e) in &m.indices {
             if e.status != "done" {
                 eprintln!(
@@ -660,30 +769,39 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
                 continue;
             }
             let data = parse_data_file(&name);
-            let index = [
-                "settings.json",
-                "analyzer.json",
-                "mapping.json",
-                "alias.json",
-                "datastream.json",
+            let marker = [
+                "settings",
+                "analyzer",
+                "mapping",
+                "alias",
+                "template",
+                "datastream",
             ]
             .iter()
-            .find_map(|k| name.strip_suffix(&format!(".{k}")))
-            .map(str::to_string)
-            .or_else(|| data.as_ref().map(|d| d.0.clone()));
+            .flat_map(|k| [format!(".{k}.json"), format!(".{k}.json.gz")])
+            .find_map(|suffix| name.strip_suffix(&suffix).map(|i| (i.to_string(), suffix)));
+            let index = marker
+                .as_ref()
+                .map(|m| m.0.clone())
+                .or_else(|| data.as_ref().map(|d| d.0.clone()));
             let Some(index) = index else { continue };
             if check_index_name(&index).is_err() {
                 continue;
             }
-            let entry = out
-                .entry(format!("{}\0{index}", d.display()))
-                .or_insert_with(|| Found {
-                    index: index.clone(),
-                    dir: d.clone(),
-                    data: Vec::new(),
-                    records_hint: None,
-                    datastream: false,
-                });
+            let key = format!("{}\0{index}", d.display());
+            if marker
+                .as_ref()
+                .is_some_and(|m| m.1.starts_with(".settings.") || m.1.starts_with(".mapping."))
+            {
+                has_meta.insert(key.clone());
+            }
+            let entry = out.entry(key).or_insert_with(|| Found {
+                index: index.clone(),
+                dir: d.clone(),
+                data: Vec::new(),
+                records_hint: None,
+                datastream: false,
+            });
             if name.ends_with(".datastream.json") {
                 entry.datastream = true;
             }
@@ -694,6 +812,13 @@ pub fn discover(root: &Path) -> Result<Vec<Found>> {
             }
         }
     }
+    // A Node-style `NAME.json` alone is just some JSON file, not an index.
+    out.retain(|k, f| {
+        has_meta.contains(k)
+            || f.datastream
+            || f.data.is_empty()
+            || f.data.iter().any(|p| rs_named(&file_name(p)))
+    });
     // Settle each index's data files: one single file, or a gap-free run of parts.
     for f in out.values_mut() {
         let (parts, singles): (Vec<PathBuf>, Vec<PathBuf>) = std::mem::take(&mut f.data)
@@ -1181,6 +1306,9 @@ pub enum Outcome {
 
 struct Ctx {
     args: Args,
+    /// Where the manifest and `_cluster/` live (the dump directory unless --metaDir or
+    /// --nodeCompat put them elsewhere).
+    meta: PathBuf,
     types: Types,
     sel: Selector,
     runner: Runner,
@@ -1273,6 +1401,7 @@ async fn dump_one(
     let dir = root.join(&rel);
     let comp = ctx.args.compression;
     let split = ctx.args.splits();
+    let node = ctx.args.node_compat;
     let mut entry = IndexEntry {
         dir: rel.to_string_lossy().into_owned(),
         kind: ds.then(|| "datastream".to_string()),
@@ -1307,18 +1436,30 @@ async fn dump_one(
                 extra.extend(ctx.runner.data_flags.iter().cloned());
                 // elasticdump-rs adds the codec extension to each part itself.
                 let name = if split {
-                    item_file(index, "data", Compression::None)
+                    item_file_for(node, index, "data", Compression::None)
                 } else {
-                    item_file(index, "data", comp)
+                    item_file_for(node, index, "data", comp)
                 };
                 (dir.join(name), extra)
+            } else if node {
+                // Node gzips every file with --fsCompress, not only the data.
+                (
+                    dir.join(node_item_file(index, kind, comp)),
+                    strings(comp.flags()),
+                )
             } else {
                 (dir.join(item_file(index, kind, comp)), vec![])
             };
             let o = out.to_string_lossy().into_owned();
+            // Node's per-index template file holds the cluster's legacy templates.
+            let input = if *kind == "template" {
+                cluster.child_base.clone()
+            } else {
+                source.clone()
+            };
             let runner = &ctx.runner;
-            tokio::task::block_in_place(|| runner.run(index, kind, &source, &o, &extra))?;
-            if !matches!(*kind, "data" | "analyzer") && !nonempty(&out) {
+            tokio::task::block_in_place(|| runner.run(index, kind, &input, &o, &extra))?;
+            if !matches!(*kind, "data" | "analyzer" | "template") && !nonempty(&out) {
                 bail!("{kind} export is empty");
             }
         }
@@ -1327,7 +1468,7 @@ async fn dump_one(
             let files: Vec<PathBuf> = if split {
                 data_parts(&dir, index)?
             } else {
-                let f = dir.join(item_file(index, "data", comp));
+                let f = dir.join(item_file_for(node, index, "data", comp));
                 if f.exists() { vec![f] } else { vec![] }
             };
             let mut records = 0;
@@ -1337,7 +1478,7 @@ async fn dump_one(
             if split {
                 entry.data_parts = files.iter().map(|f| file_name(f)).collect();
             } else {
-                entry.data_file = Some(item_file(index, "data", comp));
+                entry.data_file = Some(item_file_for(node, index, "data", comp));
             }
             entry.records = Some(records);
             if let Some(src) = entry.source_count {
@@ -1373,7 +1514,7 @@ async fn dump_one(
     };
     let mut m = manifest.lock().unwrap();
     m.indices.insert(index.to_string(), entry);
-    if let Err(e) = m.save(root) {
+    if let Err(e) = m.save(&ctx.meta) {
         eprintln!("warning: could not write the manifest: {e:#}");
     }
     outcome
@@ -1401,10 +1542,9 @@ fn cluster_flags(args: &Args, kind: &str, load: bool) -> Vec<String> {
 async fn dump_cluster(
     ctx: &Ctx,
     cluster: &Cluster,
-    root: &Path,
     manifest: &Mutex<Manifest>,
 ) -> Vec<(String, Outcome)> {
-    let dir = root.join(CLUSTER_DIR);
+    let dir = ctx.meta.join(CLUSTER_DIR);
     let mut out = vec![];
     for kind in &ctx.types.cluster {
         let name = format!("{CLUSTER_DIR}/{kind}");
@@ -1432,7 +1572,7 @@ async fn dump_cluster(
         ));
         let mut m = manifest.lock().unwrap();
         m.cluster.insert(kind.to_string(), entry);
-        if let Err(e) = m.save(root) {
+        if let Err(e) = m.save(&ctx.meta) {
             eprintln!("warning: could not write the manifest: {e:#}");
         }
     }
@@ -1440,9 +1580,9 @@ async fn dump_cluster(
 }
 
 /// Load the cluster-scoped files present under `ROOT/_cluster`, in CLUSTER_TYPES order.
-async fn load_cluster(ctx: &Ctx, cluster: &Cluster, root: &Path) -> Vec<(String, Outcome)> {
-    let dir = root.join(CLUSTER_DIR);
-    let recorded = Manifest::load(root).ok().flatten().map(|m| m.cluster);
+async fn load_cluster(ctx: &Ctx, cluster: &Cluster) -> Vec<(String, Outcome)> {
+    let dir = ctx.meta.join(CLUSTER_DIR);
+    let recorded = Manifest::load(&ctx.meta).ok().flatten().map(|m| m.cluster);
     let mut out = vec![];
     for kind in &ctx.types.cluster {
         let name = format!("{CLUSTER_DIR}/{kind}");
@@ -1502,11 +1642,26 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             .copied()
             .filter(|k| !f.datastream || *k == "data")
             .collect();
+        // A Node-layout dump carries the legacy templates next to each index; load them
+        // first, as Node does (the same templates again for each index is harmless).
+        if ctx.types.cluster.contains(&"template") && !f.datastream {
+            if let Some((p, gz)) = meta_file(&f.dir, &f.index, "template") {
+                let mut extra = cluster_flags(&ctx.args, "template", true);
+                if gz {
+                    extra.push("--fsCompress".into());
+                }
+                let input = p.to_string_lossy().into_owned();
+                let runner = &ctx.runner;
+                tokio::task::block_in_place(|| {
+                    runner.run(&f.index, "template", &input, &cluster.child_base, &extra)
+                })?;
+            }
+        }
         for kind in kinds {
             if kind == "data" {
                 if f.data.is_empty() {
                     let meta_only =
-                        f.datastream || nonempty(&f.dir.join(format!("{}.settings.json", f.index)));
+                        f.datastream || meta_file(&f.dir, &f.index, "settings").is_some();
                     if f.records_hint.unwrap_or(0) == 0 && meta_only {
                         eprintln!(
                             "note: {}: no data file (empty index); loading metadata only",
@@ -1551,14 +1706,18 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                 // The settings file already carries index.analysis.
                 continue;
             }
-            let p = f.dir.join(item_file(&f.index, kind, Compression::None));
-            if !nonempty(&p) {
+            let Some((p, gz)) = meta_file(&f.dir, &f.index, kind) else {
                 if matches!(kind, "alias" | "analyzer") {
                     continue;
                 }
-                bail!("missing {kind} file {}", p.display());
-            }
-            let extra = if kind == "settings" {
+                bail!(
+                    "missing {kind} file {}",
+                    f.dir
+                        .join(item_file(&f.index, kind, Compression::None))
+                        .display()
+                );
+            };
+            let mut extra = if kind == "settings" {
                 match ctx.args.lifecycle {
                     Lifecycle::Drop => vec![LIFECYCLE_DROP.to_string()],
                     Lifecycle::Convert => vec!["--convertIlmToIsm".into()],
@@ -1566,6 +1725,9 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             } else {
                 vec![]
             };
+            if gz {
+                extra.push("--fsCompress".into());
+            }
             let input = p.to_string_lossy().into_owned();
             let runner = &ctx.runner;
             let r =
@@ -1576,7 +1738,7 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                     eprintln!(
                         "note: {target}: mapping via elasticdump-rs failed, applying it directly"
                     );
-                    let text = fs::read_to_string(&p)?;
+                    let text = read_text(&p)?;
                     cluster
                         .put_mapping(&target, &mappings_body(&text)?)
                         .await
@@ -1607,6 +1769,32 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
     }
 }
 
+/// Where the manifest and `_cluster/` go: --metaDir; else for a dump the directory itself, or
+/// `DIR.meta` beside it with --nodeCompat (Node takes every entry in DIR for an index); for a
+/// load the directory when it holds a manifest or `_cluster/`, else `DIR.meta` when that exists.
+pub fn meta_dir(args: &Args) -> PathBuf {
+    if let Some(d) = &args.meta_dir {
+        return d.clone();
+    }
+    let dir = match args.direction {
+        Direction::Dump => &args.output,
+        Direction::Load => &args.input,
+    };
+    let root = PathBuf::from(dir);
+    let beside = PathBuf::from(format!("{}.meta", dir.trim_end_matches('/')));
+    match args.direction {
+        Direction::Dump if args.node_compat => beside,
+        Direction::Dump => root,
+        Direction::Load => {
+            if root.join(MANIFEST).exists() || root.join(CLUSTER_DIR).is_dir() || !beside.is_dir() {
+                root
+            } else {
+                beside
+            }
+        }
+    }
+}
+
 async fn run(args: Args) -> Result<i32> {
     if args.parallel == 0 {
         bail!("--parallel must be at least 1");
@@ -1614,7 +1802,30 @@ async fn run(args: Args) -> Result<i32> {
     if args.direction == Direction::Load && (args.file_size.is_some() || args.max_rows.is_some()) {
         bail!("--fileSize/--maxRows apply to dumps; load finds split parts on its own");
     }
+    if args.node_compat {
+        if args.direction == Direction::Load {
+            bail!("--nodeCompat applies to dumps; load reads Node-named directories on its own");
+        }
+        if args.layout != Layout::Flat {
+            bail!("--nodeCompat needs --layout flat (Node reads one directory, no subdirectories)");
+        }
+        if !matches!(args.compression, Compression::Gzip | Compression::None) {
+            bail!("--nodeCompat: Node reads gzip or uncompressed files only, not zstd");
+        }
+        if args.splits() {
+            bail!(
+                "--nodeCompat cannot split data: Node multielasticdump 6.x cannot load split parts (it opens INDEX.json or 'undefined' for them); dump without --nodeCompat, or without --fileSize/--maxRows"
+            );
+        }
+        if args.match_type.contains(&MatchType::Datastream) {
+            bail!(
+                "--nodeCompat: Node multielasticdump cannot restore data streams (its data runs use the index op); dump them without --nodeCompat"
+            );
+        }
+    }
     let mut default_types: Vec<String> = match args.direction {
+        // Node dumps (and by default loads) the legacy templates with every index.
+        Direction::Dump if args.node_compat => vec!["settings", "mapping", "template", "data"],
         Direction::Dump => vec!["settings", "mapping", "data"],
         Direction::Load => vec!["settings", "analyzer", "mapping", "alias", "data"],
     }
@@ -1632,6 +1843,30 @@ async fn run(args: Args) -> Result<i32> {
         },
         &args.ignore_type,
     )?;
+    let mut types = types;
+    if args.node_compat {
+        if let Some(i) = types.cluster.iter().position(|k| *k == "template") {
+            // Node keeps the legacy templates in INDEX.template.json, loaded before the index.
+            types.cluster.remove(i);
+            types.index.insert(0, "template");
+        } else {
+            eprintln!(
+                "warning: no template type: Node's multielasticdump load stops on the missing INDEX.template.json unless run with --ignoreTemplate=true"
+            );
+        }
+        for k in ["settings", "mapping", "data"] {
+            if !types.index.contains(&k) {
+                eprintln!(
+                    "warning: no {k} type: Node's multielasticdump load stops on the missing files unless run with --ignore{}=true",
+                    match k {
+                        "settings" => "Settings",
+                        "mapping" => "Mapping",
+                        _ => "Data",
+                    }
+                );
+            }
+        }
+    }
     let sel = Selector::new(&args.match_re, args.exclude.as_deref(), args.include_hidden)?;
     if args.layout == Layout::Group && !sel.has_group() {
         bail!("--layout group needs a capture group in --match, e.g. '^logs-(?P<group>[a-z]+)-'");
@@ -1685,7 +1920,9 @@ async fn run(args: Args) -> Result<i32> {
         cancelled: cancelled.clone(),
     };
     let pacer = Pacer::new(Duration::from_millis(args.interval));
+    let meta = meta_dir(&args);
     let ctx = Arc::new(Ctx {
+        meta,
         args,
         types,
         sel,
@@ -1743,7 +1980,10 @@ async fn run(args: Args) -> Result<i32> {
                     for k in &ctx.types.cluster {
                         println!(
                             "  {}",
-                            root.join(CLUSTER_DIR).join(format!("{k}.json")).display()
+                            ctx.meta
+                                .join(CLUSTER_DIR)
+                                .join(format!("{k}.json"))
+                                .display()
                         );
                     }
                 }
@@ -1769,10 +2009,19 @@ async fn run(args: Args) -> Result<i32> {
                         .iter()
                         .filter(|k| t.kind == TargetKind::Index || **k == "data")
                     {
+                        let node = ctx.args.node_compat;
                         let f = if *k == "data" && split {
-                            format!("{}.data.split-N.{}", t.name, ctx.args.compression.suffix())
+                            if node {
+                                node_item_file(
+                                    &format!("{}.split-N", t.name),
+                                    k,
+                                    ctx.args.compression,
+                                )
+                            } else {
+                                format!("{}.data.split-N.{}", t.name, ctx.args.compression.suffix())
+                            }
                         } else {
-                            item_file(&t.name, k, ctx.args.compression)
+                            item_file_for(node, &t.name, k, ctx.args.compression)
                         };
                         files.push(d.join(f).display().to_string());
                     }
@@ -1798,8 +2047,22 @@ async fn run(args: Args) -> Result<i32> {
                 return Ok(1);
             }
             fs::create_dir_all(&root).with_context(|| format!("create {}", root.display()))?;
+            fs::create_dir_all(&ctx.meta)
+                .with_context(|| format!("create {}", ctx.meta.display()))?;
             fs::create_dir_all(&log_dir)?;
-            let mut m = Manifest::load(&root)?.unwrap_or_default();
+            let mut m = Manifest::load(&ctx.meta)?.unwrap_or_default();
+            if m.node_compat != ctx.args.node_compat && !m.indices.is_empty() {
+                bail!(
+                    "{} already holds a dump {} --nodeCompat; use another directory",
+                    root.display(),
+                    if m.node_compat {
+                        "made with"
+                    } else {
+                        "made without"
+                    }
+                );
+            }
+            m.node_compat = ctx.args.node_compat;
             if let Some(prev) = m.compression.filter(|c| *c != ctx.args.compression) {
                 if !m.indices.is_empty() {
                     eprintln!(
@@ -1826,10 +2089,15 @@ async fn run(args: Args) -> Result<i32> {
                                 e.records == Some(0)
                                     || e.data_file.as_ref().is_some_and(|f| nonempty(&d.join(f)))
                             }
-                            "analyzer" => {
-                                d.join(item_file(&t.name, k, Compression::None)).is_file()
-                            }
-                            k => nonempty(&d.join(item_file(&t.name, k, Compression::None))),
+                            "analyzer" | "template" => d
+                                .join(item_file_for(
+                                    m.node_compat,
+                                    &t.name,
+                                    k,
+                                    m.compression.unwrap_or(Compression::None),
+                                ))
+                                .is_file(),
+                            k => meta_file(&d, &t.name, k).is_some(),
                         })
                 });
                 if ctx.args.resume && done {
@@ -1838,15 +2106,18 @@ async fn run(args: Args) -> Result<i32> {
                 }
                 todo.push(t);
             }
-            m.save(&root)?;
+            m.save(&ctx.meta)?;
             let manifest = Arc::new(Mutex::new(m));
+            if ctx.meta != root {
+                println!("manifest and cluster-wide files in {}", ctx.meta.display());
+            }
             if !ctx.types.cluster.is_empty() {
                 println!(
                     "dumping cluster-wide {} to {}",
                     ctx.types.cluster.join(", "),
-                    root.join(CLUSTER_DIR).display()
+                    ctx.meta.join(CLUSTER_DIR).display()
                 );
-                early = dump_cluster(&ctx, &cluster, &root, &manifest).await;
+                early = dump_cluster(&ctx, &cluster, &manifest).await;
             }
             println!(
                 "dumping {} indices/data streams to {} ({} at a time, logs in {})",
@@ -1878,7 +2149,7 @@ async fn run(args: Args) -> Result<i32> {
             let mut found: Vec<Found> = if ctx.types.index.is_empty() {
                 vec![]
             } else {
-                discover(&root)?
+                discover(&root, &ctx.meta)?
                     .into_iter()
                     .filter(|f| ctx.sel.selects(&f.index))
                     .collect()
@@ -1891,7 +2162,7 @@ async fn run(args: Args) -> Result<i32> {
                 .cluster
                 .iter()
                 .copied()
-                .filter(|k| nonempty(&root.join(CLUSTER_DIR).join(format!("{k}.json"))))
+                .filter(|k| nonempty(&ctx.meta.join(CLUSTER_DIR).join(format!("{k}.json"))))
                 .collect();
             if ctx.args.dry_run {
                 if !cluster_files.is_empty() {
@@ -1931,7 +2202,7 @@ async fn run(args: Args) -> Result<i32> {
             )?);
             fs::create_dir_all(&log_dir)?;
             if !ctx.types.cluster.is_empty() {
-                early = load_cluster(&ctx, &cluster, &root).await;
+                early = load_cluster(&ctx, &cluster).await;
             }
             println!(
                 "loading {} indices/data streams from {} ({} at a time, logs in {})",
@@ -2212,7 +2483,7 @@ mod tests {
             fs::write(r.join("2026.10").join(f), "{}").unwrap();
         }
         fs::write(r.join("notes.txt"), "x").unwrap();
-        let found = discover(r).unwrap();
+        let found = discover(r, r).unwrap();
         let names: Vec<_> = found.iter().map(|f| f.index.as_str()).collect();
         assert_eq!(names, vec!["a", "b"]);
         assert_eq!(found[1].dir, r.join("2026.10"));
@@ -2220,11 +2491,11 @@ mod tests {
         // duplicate across directories is an error
         fs::create_dir_all(r.join("dup")).unwrap();
         fs::write(r.join("dup").join("a.settings.json"), "{}").unwrap();
-        assert!(discover(r).is_err());
+        assert!(discover(r, r).is_err());
         fs::remove_dir_all(r.join("dup")).unwrap();
         // two data files for one index is an error
         fs::write(r.join("a.data.json.zst"), b"x").unwrap();
-        assert!(discover(r).is_err());
+        assert!(discover(r, r).is_err());
         fs::remove_file(r.join("a.data.json.zst")).unwrap();
         // a manifest wins and failed entries are skipped
         let mut m = Manifest {
@@ -2251,7 +2522,7 @@ mod tests {
             },
         );
         m.save(r).unwrap();
-        let found = discover(r).unwrap();
+        let found = discover(r, r).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].index, "a");
         assert_eq!(found[0].records_hint, Some(1));
@@ -2354,7 +2625,7 @@ mod tests {
         fs::write(r.join(CLUSTER_DIR).join("template.json"), "{}").unwrap();
         fs::write(r.join("web.datastream.json"), "{}").unwrap();
         fs::write(r.join("web.data.json.gz"), "x").unwrap();
-        let found = discover(r).unwrap();
+        let found = discover(r, r).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].index, "p");
         assert_eq!(found[0].data.len(), 11);
@@ -2363,11 +2634,11 @@ mod tests {
         assert!(found[1].datastream);
         // a single data file next to parts is ambiguous
         fs::write(r.join("p.data.json"), "{}\n").unwrap();
-        assert!(discover(r).is_err());
+        assert!(discover(r, r).is_err());
         fs::remove_file(r.join("p.data.json")).unwrap();
         // parts in two codecs are an error
         fs::write(r.join("p.data.split-11.json.gz"), "x").unwrap();
-        assert!(discover(r).is_err());
+        assert!(discover(r, r).is_err());
         fs::remove_file(r.join("p.data.split-11.json.gz")).unwrap();
         // stale-file cleanup only touches this index's data files
         remove_data_files(r, "p").unwrap();
@@ -2452,5 +2723,89 @@ mod tests {
         let none = Pacer::new(Duration::ZERO);
         none.wait().await;
         none.wait().await;
+    }
+
+    #[test]
+    fn node_names_and_meta_dir() {
+        assert_eq!(node_item_file("i", "data", Compression::Gzip), "i.json.gz");
+        assert_eq!(
+            node_item_file("i", "settings", Compression::Gzip),
+            "i.settings.json.gz"
+        );
+        assert_eq!(
+            node_item_file("i", "template", Compression::None),
+            "i.template.json"
+        );
+        assert_eq!(
+            parse_data_file("i.json.gz"),
+            Some(("i".into(), Compression::Gzip, None))
+        );
+        assert_eq!(
+            parse_data_file("i.split-3.json.gz"),
+            Some(("i".into(), Compression::Gzip, Some(3)))
+        );
+        for meta in [
+            "i.settings.json.gz",
+            "i.template.json",
+            "i.index.json.gz",
+            "multielasticdump.json",
+            ".json",
+        ] {
+            assert_eq!(parse_data_file(meta), None, "{meta}");
+        }
+        // a Node-named dump directory, as Node 6.x writes it
+        let d = tempfile::tempdir().unwrap();
+        let r = d.path();
+        for f in [
+            "a.json.gz",
+            "a.settings.json.gz",
+            "a.mapping.json.gz",
+            "a.template.json.gz",
+            "notes.json",
+        ] {
+            fs::write(r.join(f), "x").unwrap();
+        }
+        let found = discover(r, r).unwrap();
+        assert_eq!(found.len(), 1, "a lone notes.json is not an index");
+        assert_eq!(found[0].index, "a");
+        assert!(found[0].data[0].ends_with("a.json.gz"));
+        assert_eq!(
+            meta_file(r, "a", "settings").map(|m| m.1),
+            Some(true),
+            "gzipped metadata found"
+        );
+        // the same part number in both namings is an error, not a silent pick
+        fs::write(r.join("b.split-0.json"), "{}\n").unwrap();
+        fs::write(r.join("b.data.split-0.json"), "{}\n").unwrap();
+        assert!(data_parts(r, "b").is_err());
+        // --metaDir defaults
+        let mut a = Args::try_parse_from([
+            "m",
+            "--input=http://h:9200",
+            "--output=/backup/x/",
+            "--nodeCompat",
+        ])
+        .unwrap();
+        assert_eq!(meta_dir(&a), PathBuf::from("/backup/x.meta"));
+        a.node_compat = false;
+        assert_eq!(meta_dir(&a), PathBuf::from("/backup/x/"));
+        let load = Args::try_parse_from([
+            "m",
+            "--direction=load",
+            &format!("--input={}", r.display()),
+            "--output=http://h:9200",
+        ])
+        .unwrap();
+        assert_eq!(
+            meta_dir(&load),
+            r.to_path_buf(),
+            "no DIR.meta: the directory"
+        );
+        fs::create_dir_all(format!("{}.meta", r.display())).unwrap();
+        assert_eq!(
+            meta_dir(&load),
+            PathBuf::from(format!("{}.meta", r.display()))
+        );
+        fs::remove_dir_all(format!("{}.meta", r.display())).unwrap();
     }
 }

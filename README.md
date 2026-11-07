@@ -397,7 +397,18 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
   130 interrupted.
 - Not in this tool (Node `multielasticdump`): `--ignoreChildError` (failures never stop other indices),
   Node's per-type `--ignore*` flag names (use `--ignoreType`). Cluster-wide items are not filtered by `--match`.
-- Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers).
+- Node compatibility (`--nodeCompat`, dump only): writes the layout Node's `multielasticdump` 6.x loads with its
+  defaults: `DIR/INDEX.json.gz` (data), `DIR/INDEX.settings.json.gz`, `INDEX.mapping.json.gz` and
+  `INDEX.template.json.gz` (all legacy `_template`s, per index, as Node does), all gzipped. The directory holds only
+  those files, because Node treats every entry in it as an index; the manifest and any other cluster-wide types go to
+  the sibling `DIR.meta/` (or `--metaDir`). Default types are `settings,mapping,template,data` (Node's load needs all
+  four unless it gets `--ignoreX=true`). Refused with it: `--fileSize`/`--maxRows` (Node 6.x cannot load split
+  parts), zstd, layouts other than `flat`, and `--matchType datastream` (Node loads data with the `index` op).
+  Restore with `multielasticdump --direction=load --input=DIR --output=URL` (Node), or with this tool, which also
+  loads `DIR.meta/_cluster/` first. This tool's load reads Node-made dumps too (both namings, plain or gzipped
+  metadata). Tested against the real elasticdump 6.125.1 npm package both ways.
+- Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers; set `NODE_ED_BIN` to the
+  `node_modules/.bin` of an elasticdump 6.x install to add the Node checks).
 
 ## Renaming indices
 
