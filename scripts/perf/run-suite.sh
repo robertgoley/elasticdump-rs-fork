@@ -4,6 +4,13 @@ set -euo pipefail
 umask 077
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$root"
+# --host-tools / PERF_HOST_TOOLS=1 is handled here (see below), never passed to suite.py.
+host_tools="${PERF_HOST_TOOLS:-0}"
+rest=()
+for arg in "$@"; do
+  if [[ "$arg" == --host-tools ]]; then host_tools=1; else rest+=("$arg"); fi
+done
+set -- "${rest[@]+"${rest[@]}"}"
 # Offline plan/help never builds, pulls, starts a service, or creates result directories.
 for arg in "$@"; do
   if [[ "$arg" == --dry-run || "$arg" == --help || "$arg" == -h ]]; then
@@ -12,6 +19,22 @@ for arg in "$@"; do
     exit 2
   fi
 done
+# --host-tools (or PERF_HOST_TOOLS=1): skip the controller image (its apt/npm build needs
+# registry access) and run suite.py on this host with host-built release binaries and a
+# local Node elasticdump 6.125.1 install. The container controller stays the default.
+if [[ "$host_tools" == 1 ]]; then
+  command -v podman >/dev/null || { echo 'podman is required (rootless; no sudo).' >&2; exit 2; }
+  command -v python3 >/dev/null || { echo 'host-tools mode needs Python 3.11+.' >&2; exit 2; }
+  if [[ -z "${PERF_BIN_DIR:-}" ]]; then
+    cargo "+${PERF_TOOLCHAIN:-1.85.1}" build --release --bins -p elasticdump-rs -p edgen -p edverify \
+      -j "${PERF_BUILD_JOBS:-2}" >&2
+    export PERF_BIN_DIR="$root/target/release"
+  fi
+  export NODE_ED_BIN="${NODE_ED_BIN:-/workspace/node-ed/node_modules/.bin}"
+  export PERF_HOST_ID="${PERF_HOST_ID:-$(hostname)}"
+  touch /tmp/elasticdump-rs-it.lock
+  exec python3 scripts/perf/suite.py "$@"
+fi
 command -v podman >/dev/null || { echo 'podman is required (rootless; no sudo).' >&2; exit 2; }
 [[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || { echo 'Use rootless podman.' >&2; exit 2; }
 image="${PERF_CONTROLLER_IMAGE:-localhost/elasticdump-rs-perf:1}"

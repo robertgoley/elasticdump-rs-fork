@@ -26,7 +26,20 @@ CLI:
 ```
 run-suite.sh [--engines LIST] [--cases LIST] [--tier L0|L1] [--reps N]
              [--skip-node] [--baseline-dir DIR] [--update-baselines]
-             [--threshold PCT] [--place PLACE] [--dry-run]
+             [--threshold PCT] [--place PLACE] [--dry-run] [--host-tools]
+```
+
+**Host-tools mode** (`--host-tools` or `PERF_HOST_TOOLS=1`): no controller image is built or
+run, so no apt/npm access is needed inside a container (use it when a proxy breaks the
+Containerfile's `apt-get`). `suite.py` runs directly on the host (Python 3.11+, podman, bash,
+curl, openssl, git). Unless `PERF_BIN_DIR` is set it builds the four release binaries with
+`cargo +${PERF_TOOLCHAIN:-1.85.1} build --release` and uses `target/release`. `NODE_ED_BIN`
+defaults to `/workspace/node-ed/node_modules/.bin` (Node elasticdump 6.125.1, installed with
+`npm ci --ignore-scripts`). Baselines record `controller=local`. The container controller
+stays the default.
+
+```
+scripts/perf/run-suite.sh --host-tools --tier L0 --reps 3 --update-baselines
 ```
 
 Lists are comma-separated exact IDs. Unknown/duplicate IDs and nonpositive reps are errors.
