@@ -42,8 +42,9 @@ def log(*a):
 # possible staging leftover (the tool itself stages only in hidden `.name.part-*` files, never indices).
 SYSTEM_INDEX_PREFIXES = (".ds-", ".tasks", ".security", ".geoip_databases", ".kibana", ".apm", ".fleet",
                          ".opendistro", ".plugins", ".opensearch", ".ql-", ".async-search", ".transform")
-# Engine-created indices without a leading dot (OpenSearch security plugin audit log on secure profiles).
-ENGINE_INDEX_PREFIXES = ("security-auditlog-",)
+# Engine-created indices without a leading dot: the OpenSearch security plugin audit log and the
+# query-insights plugin top_queries-YYYY.MM.DD-NNNNN export (both appear on OpenSearch profiles).
+ENGINE_INDEX_PREFIXES = ("security-auditlog-", "top_queries-")
 
 
 def leak_check(cl, work=None, before=None, expected=(), wait_s=15, contexts=True, allow_part=None):
