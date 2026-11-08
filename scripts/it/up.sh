@@ -105,7 +105,9 @@ fi
 es_data_dir() {
   local d="$IT_DIR/es-data-$1"
   mkdir -p "$d"
-  podman unshare chown -R "${2:-1001}:0" "$d"
+  # Rootless: chown inside podman's user namespace. As root there is no userns
+  # mapping (podman refuses `unshare`), so the container UID is the host UID.
+  if [[ $(id -u) -eq 0 ]]; then chown -R "${2:-1001}:0" "$d"; else podman unshare chown -R "${2:-1001}:0" "$d"; fi
   echo "$d"
 }
 

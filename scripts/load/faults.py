@@ -400,7 +400,7 @@ def main():
             stats = sc.req("GET", "/_nodes/stats/thread_pool")["nodes"]
             res["storm_rejected_total"] = sum(v["thread_pool"]["write"]["rejected"] for v in stats.values())
             subprocess.run(["podman", "rm", "-f", f"it-es-plain-{senv['RUN_ID']}"], stdout=subprocess.DEVNULL)
-            subprocess.run(["podman", "unshare", "rm", "-rf", senv["IT_DIR"]])
+            subprocess.run((["rm", "-rf"] if os.geteuid() == 0 else ["podman", "unshare", "rm", "-rf"]) + [senv["IT_DIR"]])
 
         # 3. flood-stage block for 30 s
         def flood(info):
@@ -467,7 +467,7 @@ def main():
             for e in envs:
                 subprocess.run(["podman", "rm", "-f", f"it-es-plain-{e['RUN_ID']}"], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
-            subprocess.run(["podman", "unshare", "rm", "-rf", work])
+            subprocess.run((["rm", "-rf"] if os.geteuid() == 0 else ["podman", "unshare", "rm", "-rf"]) + [work])
     outc = {}
     for r in res["runs"]:
         outc[r["outcome"]] = outc.get(r["outcome"], 0) + 1

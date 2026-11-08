@@ -115,7 +115,7 @@ def online(a):
             # only this run's container (down.sh would remove every IT container on the box)
             subprocess.run(["podman", "rm", "-f", f"it-es-plain-{env['RUN_ID']}", f"it-os-plain-{env['RUN_ID']}"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["podman", "unshare", "rm", "-rf", work])
+            subprocess.run((["rm", "-rf"] if os.geteuid() == 0 else ["podman", "unshare", "rm", "-rf"]) + [work])
 
 
 def main():

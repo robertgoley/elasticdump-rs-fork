@@ -15,6 +15,8 @@ fi
 # Data dirs of the Elasticsearch profiles are owned by UID 1001 in the userns.
 IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
 for d in "$IT_DIR"/es-data-*; do
-  [[ -e "$d" ]] && podman unshare rm -rf "$d"
+  if [[ -e "$d" ]]; then
+    if [[ $(id -u) -eq 0 ]]; then rm -rf "$d"; else podman unshare rm -rf "$d"; fi
+  fi
 done
 exit 0

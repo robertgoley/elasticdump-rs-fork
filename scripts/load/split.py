@@ -386,7 +386,7 @@ def main():
         if not a.keep:
             subprocess.run(["podman", "rm", "-f", f"it-es-plain-{env['RUN_ID']}"], stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL)
-            subprocess.run(["podman", "unshare", "rm", "-rf", work])
+            subprocess.run((["rm", "-rf"] if os.geteuid() == 0 else ["podman", "unshare", "rm", "-rf"]) + [work])
     print(f"SPLIT-SUMMARY tier={a.tier} engine={a.engine} docs={res.get('seed_index', {}).get('stored')} "
           f"{'PASS' if rc == 0 else 'FAIL'} cases={len(res['cases'])} result=results/load/{run_id}/split.json")
     for f in res["failures"]:

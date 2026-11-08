@@ -302,7 +302,7 @@ def main():
         json.dump(res, open(os.path.join(resdir, "curves.json"), "w"), indent=1)
         if not a.keep:
             subprocess.run(["podman", "rm", "-f", cname], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["podman", "unshare", "rm", "-rf", work])
+            subprocess.run((["rm", "-rf"] if os.geteuid() == 0 else ["podman", "unshare", "rm", "-rf"]) + [work])
     print(f"CURVES-SUMMARY tier={a.tier} engine={a.engine} docs={res.get('seed_index', {}).get('stored')} "
           f"{'PASS' if rc == 0 else 'FAIL'} runs={len(res['runs'])} result=results/load/{run_id}/curves.json")
     for f in res["failures"]:
