@@ -739,6 +739,12 @@ Absolute numbers depend heavily on your Elasticsearch cluster, network, disk, an
 
 ## Testing
 
+To run everything on a local server in one go (host prep, pinned images, release build,
+integration matrix, load matrix, extra checks and the speed suite), run
+`./start-local-testing.sh` as a normal user with rootless Podman logged in to dhi.io.
+`--dry-run` prints the plan, `--steps` picks steps, `--update-baselines` records the first
+speed baselines, and logs plus a summary go to `results/local-testing/<timestamp>/`.
+
 The [sequential speed suite](scripts/perf/README.md) benchmarks dump/restore, copy,
 codecs/splits, metadata and multielasticdump parallelism against every pinned engine,
 with correctness gates, per-engine baselines and Node 6.125.1 comparisons:

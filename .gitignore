@@ -32,6 +32,7 @@ sbom-*.json
 /results/*.json
 /results/*.json.stderr
 /results/load/
+/results/local-testing/
 __pycache__/
 /artifacts/
 
