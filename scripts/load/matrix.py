@@ -63,7 +63,17 @@ def main():
             scen_res[sc] = dict(state=state, detail=summary[0] if summary else "", needs=size.get("note"))
             worst = max(worst, p.returncode)
             continue
-        res = json.load(open(os.path.join(ROOT, "results", "load", run_id, sc + ".json")))
+        res_path = os.path.join(ROOT, "results", "load", run_id, sc + ".json")
+        if not os.path.exists(res_path):
+            # run.py stopped before writing a result (e.g. "edgen not built"): a failed
+            # scenario, not a crash of the whole matrix
+            errs = [line for line in p.stderr.splitlines() if line.strip()]
+            reason = errs[-1] if errs else f"run.py exited {p.returncode} without a result file"
+            scen_res[sc] = dict(state="fail", detail=reason, exit=p.returncode)
+            print(f"matrix: scenario {sc} FAILED (no result file): {reason}", flush=True)
+            worst = 1 if worst in (0, 3) else worst
+            continue
+        res = json.load(open(res_path))
         scen_res[sc] = dict(state="pass" if res["pass"] else "fail", failures=res["failures"],
                             node_peak_rss_mb=res.get("node", {}).get("peak_rss_mb"), scaled=res.get("scaled"),
                             seeds=[{k: s[k] for k in ("index", "stored", "seconds")} for s in res["seeds"]])
@@ -124,7 +134,8 @@ def main():
     print(f"MATRIX-SUMMARY tier={a.tier} place={a.place} cells={len(cells)} "
           f"correct={sum(c['correct'] for c in cells.values())} "
           f"perf_regressions={sum(c['perf'].startswith('REGRESSION') for c in cells.values())} "
-          f"refused={[s for s, r in scen_res.items() if r['state'] == 'refused']} result={os.path.relpath(path, ROOT)}")
+          f"refused={[s for s, r in scen_res.items() if r['state'] == 'refused']} "
+          f"failed_no_result={[s for s, r in scen_res.items() if r['state'] == 'fail' and 'exit' in r]} result={os.path.relpath(path, ROOT)}")
     return worst
 
 
