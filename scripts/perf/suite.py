@@ -340,7 +340,11 @@ class EngineRun:
         # Its outputs are compared by exact decimal value; a changed value (integers above 2^53,
         # long mantissas) still fails. elasticdump-rs keeps bytes, so it keeps the strict check.
         numbers = ["--decimal-numbers"] if tool == "node" else []
-        cmd = [self.tools["edverify"], "diff", "--canonical", *numbers, "--index-as", "x", "--a", source,
+        # Bounded scroll pages for large documents: edverify's default (4 slices x 1000 docs) asks
+        # the engine for ~150 MB (edge: 1 MB docs, 10k arrays) or every 3-10 MB `big` doc at once,
+        # which tripped the 1 GB-heap parent circuit breaker (HTTP 429) on restore-edge.
+        page = {"big": ["--size=2", "--slices=2"], "edge": ["--size=100"]}.get(getattr(self, "dataset", None), [])
+        cmd = [self.tools["edverify"], "diff", "--canonical", *numbers, *page, "--index-as", "x", "--a", source,
                "--b", *targets, "--out", str(report), *self.edv_tls]
         p = subprocess.run([str(x) for x in cmd], env=self.tenv, stdout=subprocess.DEVNULL)
         if p.returncode == 1:
@@ -353,6 +357,7 @@ class EngineRun:
 
     def seed(self, dataset):
         n = self.plan["sizes"][dataset]
+        self.dataset = dataset
         profile = {"logs": "logs", "small": "geo", "big": "huge", "edge": "edge", "many": "logs"}[dataset]
         specs = [dict(index=f"perf-src-{i:02d}", profile=profile, docs=n // 16 + (i < n % 16), seed=1)
                  for i in range(16)] if dataset == "many" else [dict(index="perf-src", profile=profile, docs=n, seed=1)]
