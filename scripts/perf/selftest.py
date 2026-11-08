@@ -153,6 +153,53 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(res['summary'][0]['status'], 'FAIL')
             self.assertEqual(before, bpath.read_text())
 
+    def test_node_failure_is_recorded_not_an_rs_failure(self):
+        with tempfile.TemporaryDirectory(dir=S.ROOT / 'results') as td:
+            d = Path(td)
+            p = S.make_plan(args(engines='es717-plain', cases='dump-small'))
+            a = args(update_baselines=True, baseline_dir=d, reps=2)
+            calls = []
+            def it(case, tool, rep):
+                calls.append((tool, rep))
+                if tool == 'node':
+                    raise S.VerifyMismatch('document sets differ')
+                return metric()
+            with patch.object(S.EngineRun, 'start'), patch.object(S.EngineRun, 'seed'), \
+                 patch.object(S.EngineRun, 'cleanup_dataset'), patch.object(S.EngineRun, 'close'), \
+                 patch.object(S.EngineRun, 'iteration', side_effect=it):
+                res = S.execute_engine(a, p, p['engines'][0], {}, d)
+            self.assertEqual(res['failures'], [])
+            row = res['summary'][0]
+            self.assertEqual(row['status'], 'PASS (NO_BASELINE)')
+            self.assertEqual(row['node_status'], 'NODE_DIFF')
+            self.assertIsNone(row['node'])
+            # Node stops after its first failure; rs completes warm-up plus every repetition.
+            self.assertEqual([c for c in calls if c[0] == 'node'], [('node', -1)])
+            self.assertEqual(len([c for c in calls if c[0] == 'rs']), 3)
+            self.assertIn('NODE_DIFF', S.markdown(dict(engines=[res])))
+            self.assertIn('baseline_updated', res)
+
+    def test_node_auth_file_is_ini(self):
+        text = S.node_auth_ini('admin', 'p;w#d="x"')
+        self.assertEqual(text, 'user="admin"\npassword="p;w#d=\\"x\\""\n')
+        node = Path(S.os.environ.get('NODE_ED_BIN', '/workspace/node-ed/node_modules/.bin')).parent / 'elasticdump'
+        if (node / 'lib/add-auth.js').exists() and S.shutil.which('node'):
+            with tempfile.NamedTemporaryFile('w', suffix='.ini') as f:
+                f.write(text)
+                f.flush()
+                js = (f"console.log(require({str(node / 'lib/add-auth.js')!r})"
+                      f"('http://h:1/x', {f.name!r}))")
+                out = subprocess.run(['node', '-e', js], capture_output=True, text=True, check=True).stdout
+            self.assertEqual(out.strip(), 'http://admin:p%3Bw%23d%3D%22x%22@h:1/x')
+
+    def test_settings_target_is_left_absent(self):
+        with tempfile.TemporaryDirectory(dir=S.ROOT / 'results') as td:
+            plan = S.make_plan(args(engines='es717-plain', cases='settings-restore'))
+            er = S.EngineRun(args(), plan, plan['engines'][0], {}, Path(td))
+            er.cl = unittest.mock.Mock()
+            er.create_target('perf-src', 'perf-dst', meta='settings')
+            self.assertEqual([c.args[0] for c in er.cl.req.call_args_list], ['DELETE'])
+
     def test_multi_cli_child_flags_and_fresh_targets(self):
         with tempfile.TemporaryDirectory(dir=S.ROOT / 'results') as td:
             directory = Path(td)

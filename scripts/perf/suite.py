@@ -32,6 +32,10 @@ class TeardownError(RuntimeError):
     pass
 
 
+class VerifyMismatch(RuntimeError):
+    """edverify ran and reported different document sets (exit 1), as opposed to an error (exit 2)."""
+
+
 PROTOCOL = "edrs-perf/v1"
 LIMIT = 2000  # existing dump-restore-logs scenario; identical for Node and Rust
 
@@ -207,7 +211,9 @@ def row_summary(case, results, base, threshold, directory):
 
 def markdown(results):
     lines = ["# Sequential speed suite", "", "Wall median seconds; ratio = rs / Node (lower is better).",
-             "Node SLOWER is a warning, never a baseline failure. Missing baselines are not regression-tested.", ""]
+             "Node SLOWER is a warning, never a baseline failure. Missing baselines are not regression-tested.",
+             "NODE_DIFF = Node's output differs in value from the source (e.g. integers above 2^53);",
+             "NODE_FAIL = Node errored. Both are recorded for comparison only and never fail an rs case.", ""]
     def fmt(x, suffix=""):
         return "—" if x is None else f"{x:.3f}{suffix}"
     for engine in results["engines"]:
@@ -216,9 +222,12 @@ def markdown(results):
         for row in engine.get("summary", []):
             lines.append(f"| {row['case']} | {fmt((row.get('rs') or {}).get('wall_s'))} | "
                          f"{fmt((row.get('node') or {}).get('wall_s'))} | {fmt(row.get('rs_over_node'))} | "
-                         f"{fmt(row.get('baseline_delta_pct'), '%')} | {row['status']} |")
+                         f"{fmt(row.get('baseline_delta_pct'), '%')} | {row['status']}"
+                         f"{'; ' + row['node_status'] if row.get('node_status') else ''} |")
         for error in engine.get("failures", []):
             lines.append("\nFailure: " + str(error).replace("\n", " ").replace("|", "/"))
+        for note in engine.get("node_differences", []):
+            lines.append("\nNode (informational, not an rs failure): " + str(note).replace("\n", " ").replace("|", "/"))
         lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -278,6 +287,11 @@ def meta_value(cl, index, kind):
     return value
 
 
+def node_auth_ini(user, pw):
+    """Node elasticdump --httpAuthFile content (ini `user=` / `password=`; see lib/add-auth.js)."""
+    return f"user={json.dumps(user)}\npassword={json.dumps(pw)}\n"
+
+
 class EngineRun:
     def __init__(self, a, plan, engine, tools, directory):
         self.a, self.plan, self.entry, self.tools, self.directory = a, plan, engine, tools, directory
@@ -304,9 +318,13 @@ class EngineRun:
                              ELASTICDUMP_INPUT_USERNAME=user, ELASTICDUMP_INPUT_PASSWORD=pw,
                              ELASTICDUMP_OUTPUT_USERNAME=user, ELASTICDUMP_OUTPUT_PASSWORD=pw)
             # Node parent's discovery does not use child transport auth env. Keep auth OUT of argv/logs.
-            auth = self.work / "node-auth.json"
-            write_json(auth, dict(user=user, password=pw))
-            auth.chmod(0o600)
+            # Node reads --httpAuthFile with the `ini` parser (lib/add-auth.js) and throws
+            # "Malformed Auth File" unless both `user` and `password` keys are present. Values are
+            # JSON-quoted, which `ini` unquotes, so ';', '#', '=' in a password survive.
+            auth = self.work / "node-auth.ini"
+            fd = os.open(auth, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(node_auth_ini(user, pw))
             self.node_tls = ["--httpAuthFile=" + str(auth)]
         if self.url.startswith("https"):
             # Test-only PKI; use the same verification policy for both tools and parents.
@@ -315,11 +333,20 @@ class EngineRun:
             self.edv_tls = ["--insecure"]
         self.result["engine_version"] = self.cl.req("GET", "/")["version"]["number"]
 
-    def verify(self, tag, source, targets):
+    def verify(self, tag, source, targets, tool="rs"):
         report = self.directory / ("verify-" + tag + ".json")
-        cmd = [self.tools["edverify"], "diff", "--canonical", "--index-as", "x", "--a", source,
+        # Node re-serialises every document through JSON.parse/stringify, which rewrites number
+        # spelling (79.746790 -> 79.74679, 1.0 -> 1, 1e308 -> 1e+308) without changing the value.
+        # Its outputs are compared by exact decimal value; a changed value (integers above 2^53,
+        # long mantissas) still fails. elasticdump-rs keeps bytes, so it keeps the strict check.
+        numbers = ["--decimal-numbers"] if tool == "node" else []
+        cmd = [self.tools["edverify"], "diff", "--canonical", *numbers, "--index-as", "x", "--a", source,
                "--b", *targets, "--out", str(report), *self.edv_tls]
-        checked(cmd, env=self.tenv, stdout=subprocess.DEVNULL)
+        p = subprocess.run([str(x) for x in cmd], env=self.tenv, stdout=subprocess.DEVNULL)
+        if p.returncode == 1:
+            raise VerifyMismatch(f"edverify diff {tag}: document sets differ (report {report.name})")
+        if p.returncode:
+            raise subprocess.CalledProcessError(p.returncode, cmd)
 
     def plain(self, args):
         checked([self.tools["elasticdump-rs"], *args, *self.rs_tls], env=self.tenv, stdout=subprocess.DEVNULL)
@@ -376,6 +403,12 @@ class EngineRun:
 
     def create_target(self, source, target, meta=False):
         self.cl.req("DELETE", "/" + target, ok404=True)
+        if meta == "settings":
+            # Both tools apply index settings by CREATING the index (Node: PUT /<index> with the
+            # settings body; elasticdump-rs refuses an existing index because static settings such
+            # as number_of_shards cannot be changed). A pre-created target made rs exit 1 and let
+            # the metadata check compare two harness-made indices; leave the target absent.
+            return
         if meta:
             self.cl.req("PUT", "/" + target, {"settings": {"number_of_shards": 1, "number_of_replicas": 0}})
         else:
@@ -403,9 +436,16 @@ class EngineRun:
             flags = ["--includeType=data", "--interval=0", f"--parallel={case['parallel']}"]
             if case["kind"] == "dump":
                 inp, output = self.url, str(outdir / "multi")
+                if tool == "node":
+                    # Node's multielasticdump exits 1 with "Directory --output ... does not exists".
+                    Path(output).mkdir()
                 if tool == "rs":
                     flags += ["--nodeCompat"]
-                flags += ["--match=^perf-src-", "--matchType=index"]
+                flags += ["--match=^perf-src-"]
+                # Node 6.125.1 knows only matchType alias|datastream ("invalid matchType index", exit 1);
+                # its default `alias` lists /_aliases and tests the INDEX name as well as alias names.
+                # elasticdump-rs names that selection `index` (its default; its `alias` = alias names only).
+                flags += ["--matchType=index"] if tool == "rs" else []
             else:
                 inp, output = str(self.refdir), self.url
                 inputs = [str(self.refdir)]
@@ -428,7 +468,7 @@ class EngineRun:
                 if case.get("split"):
                     flags += ["--fileSize=20mb"]
             else:
-                self.create_target("perf-src", "perf-dst", meta=bool(meta))
+                self.create_target("perf-src", "perf-dst", meta=meta)
                 targets = ["perf-dst"]
                 output = self.url + "/perf-dst"
                 if case["kind"] == "copy":
@@ -459,8 +499,10 @@ class EngineRun:
                 checked(measure + ["--", *cmd], env=self.tenv, stdout=stdout)
             m = json.loads(metric_path.read_text())
             errs = M.validate(m)
-            if errs or m["failed_writes"] or m["max_rss_kb"] > self.plan["place_config"]["tool_mem_mb"] * 1024:
-                raise RuntimeError(f"metrics/write/RSS gate: {errs}")
+            rss_cap_kb = self.plan["place_config"]["tool_mem_mb"] * 1024
+            if errs or m["failed_writes"] or m["max_rss_kb"] > rss_cap_kb:
+                raise RuntimeError(f"metrics/write/RSS gate: schema errors={errs} failed_writes={m['failed_writes']} "
+                                   f"max_rss_kb={m['max_rss_kb']} (cap {rss_cap_kb})")
             if not multi and not meta and m["total_writes"] is not None and not case.get("split") and m["total_writes"] != self.count:
                 raise RuntimeError("write count differs from stored source count")
             if case["kind"] == "dump":
@@ -474,23 +516,23 @@ class EngineRun:
                 if multi:
                     for rec in self.sources:
                         p = Path(output) / (rec["index"] + ".json")
-                        self.verify(tag + "-" + rec["index"], self.url + "/" + rec["index"], [str(p)])
+                        self.verify(tag + "-" + rec["index"], self.url + "/" + rec["index"], [str(p)], tool)
                 else:
                     paths = sorted(str(p) for p in outdir.iterdir() if p.is_file())
                     if not paths:
                         raise RuntimeError("no dump files")
                     if meta:
                         # Round-trip the actual timed output, then verify normalized metadata with edverify.
-                        self.create_target("perf-src", "perf-dst", meta=True)
+                        self.create_target("perf-src", "perf-dst", meta=meta)
                         targets = ["perf-dst"]
                         self.plain(["--input=" + paths[0], "--output=" + self.url + "/perf-dst", "--type=" + meta])
                     else:
-                        self.verify(tag, self.url + "/perf-src", paths)
+                        self.verify(tag, self.url + "/perf-src", paths, tool)
             else:
                 for rec, target in zip(self.sources, targets):
                     self.cl.req("POST", f"/{target}/_refresh")
                     if not meta:
-                        self.verify(tag + "-" + target, self.url + "/" + rec["index"], [self.url + "/" + target])
+                        self.verify(tag + "-" + target, self.url + "/" + rec["index"], [self.url + "/" + target], tool)
             if meta:
                 key = "mappings" if meta == "mapping" else "settings"
                 pair = []
@@ -500,7 +542,7 @@ class EngineRun:
                     # edverify needs one NDJSON document, not pretty JSON.
                     p.write_text(json.dumps(json.loads(p.read_text())) + "\n")
                     pair.append(str(p))
-                self.verify(tag + "-metadata", pair[0], [pair[1]])
+                self.verify(tag + "-metadata", pair[0], [pair[1]], tool)
                 for p in pair:
                     Path(p).unlink()
             if not meta:
@@ -519,10 +561,15 @@ class EngineRun:
             raise
         finally:
             # Scope is a private test engine, not a user cluster. Prevent Node scroll accumulation.
-            if self.cl:
-                self.cl.req("DELETE", "/_search/scroll/_all", ok404=True)
-            for target in targets:
-                self.cl.req("DELETE", "/" + target, ok404=True)
+            # Best effort: an unreachable engine must not skip the output-dir removal, or every
+            # later iteration fails with "File exists" instead of the real error.
+            for path in ["/_search/scroll/_all"] + ["/" + t for t in targets]:
+                try:
+                    if self.cl:
+                        self.cl.req("DELETE", path, ok404=True)
+                except Exception as e:
+                    self.result["failures"].append(f"{tag}: cleanup DELETE {path}: {e}")
+                    break
             shutil.rmtree(outdir, ignore_errors=True)
 
     def cleanup_dataset(self):
@@ -566,9 +613,10 @@ def execute_engine(a, plan, entry, tools, directory):
                     variants = ["rs"] + ([] if a.skip_node or skip_reason(entry["engine"], case, "node") else ["node"])
                     samples = {v: [] for v in variants}
                     failed = False
+                    node_status = None
                     # A verified untimed warm-up per variant, then rotated paired order per repetition.
                     for rep in range(-1, a.reps):
-                        order = list(variants)
+                        order = [v for v in variants if not (v == "node" and node_status)]
                         random.Random(173 + rep).shuffle(order)
                         for tool in order:
                             try:
@@ -576,13 +624,21 @@ def execute_engine(a, plan, entry, tools, directory):
                                 if rep >= 0:
                                     samples[tool].append(m)
                             except Exception as e:
-                                er.result["failures"].append(f"{case['id']}/{tool}/rep{rep}: {e}")
-                                failed = True
+                                if tool == "node":
+                                    # Node is the comparison, not the product under test: its failure or
+                                    # data difference is recorded (like Node SLOWER) and never fails rs.
+                                    node_status = ("NODE_DIFF" if isinstance(e, VerifyMismatch) else "NODE_FAIL")
+                                    er.result.setdefault("node_differences", []).append(
+                                        f"{case['id']}/node/rep{rep}: {node_status}: {e}")
+                                else:
+                                    er.result["failures"].append(f"{case['id']}/{tool}/rep{rep}: {e}")
+                                    failed = True
                         if failed:
                             break
                     stats = {v: aggregate(ms) for v, ms in samples.items() if len(ms) == a.reps and not failed}
                     row = row_summary(case["id"], stats, base.get("cells", {}).get(case["id"]), a.threshold,
                                       directory / ("compare-" + case["id"]))
+                    row["node_status"] = node_status
                     row["node_skip"] = "--skip-node" if a.skip_node else skip_reason(entry["engine"], case, "node")
                     if row["status"] == "REGRESSION":
                         er.result["failures"].append(case["id"] + ": baseline regression")

@@ -261,7 +261,10 @@ Per engine/dataset/case:
 4. `measure.sh` wraps each invocation; schema-validation uses the existing
    `measure.py`/`metrics.schema.json`. Every sample must exit 0, have no failed writes,
    respect RSS budget and pass **edverify diff --canonical --index-as x** before its
-   timing counts. Both dump files (all split parts) and every restore/copy target are
+   timing counts. Node samples add `--decimal-numbers`: Node's JSON.parse/stringify
+   respells numbers (`79.746790` -> `79.74679`, `1.0` -> `1`) without changing their value,
+   so Node is compared by exact decimal value; a changed value (rounded integers above
+   2^53, shortened mantissas, `-0` -> `0`) still fails. Both dump files (all split parts) and every restore/copy target are
    verified **on every repetition**, not just the first one. Total Writes, when the
    wrapper captures it unambiguously, must match the accepted source count.
 5. Metadata-only cells round-trip the **actual timed dump** or restore the reference,
@@ -269,8 +272,11 @@ Per engine/dataset/case:
    edverify. Mappings must match; settings exclude only generated UUID, creation date,
    provided name, version and history UUID. They report operations/s, not document throughput.
    Reference creation and the untimed half of the metadata round-trip are not included.
-6. Any failed warm-up/repetition invalidates that entire case's aggregate for **both**
-   variants. Rust must leave no scroll/PIT contexts. Node contexts are recorded, then
+6. Any failed Rust warm-up/repetition invalidates that entire case's aggregate for **both**
+   variants. A failed **Node** sample is the comparison's problem, not the product's: the
+   case keeps its Rust result and is marked `NODE_DIFF` (Node's output differs in value,
+   e.g. the `edge` numeric cases) or `NODE_FAIL` (Node errored or broke the RSS budget), and
+   Node is not run again for that case. Neither blocks `--update-baselines`. Rust must leave no scroll/PIT contexts. Node contexts are recorded, then
    explicitly cleared outside timing on this private engine to avoid polluting later runs.
 
 Retain raw metrics, commands (existing redaction), stdout/stderr, verify reports, seed
