@@ -141,10 +141,20 @@ async fn l619_index_deleted_mid_dump_or_mid_restore_is_reported() {
         "1",
     ]));
     let run_h = tokio::spawn(async move { run_loud(a).await });
-    tokio::time::sleep(Duration::from_millis(8000)).await;
+    // Delete only once the tool has written for longer than its 5 s uuid capture (one batch
+    // of 5 per second; 35 docs = 7 batches), so a slow start (TLS, a loaded host) cannot
+    // move the capture past the deletion. Bounded so a stalled run still fails below.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    while c.count(&dst).await < 35 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
     c.delete_index(&dst).await;
     let o = run_h.await.unwrap();
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    // After the re-create, adversarial documents (e.g. adv1's `big` beyond long) may also be
+    // rejected by the dynamic mappings; those item errors / Failed Writes lines are allowed,
+    // but the deleted-and-re-created outcome takes precedence: exit 1, not 3.
     assert_eq!(o.status.code(), Some(1), "restore: {err}");
     assert!(
         err.contains(&format!(

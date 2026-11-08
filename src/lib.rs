@@ -150,7 +150,11 @@ impl std::fmt::Display for WriteFailures {
 impl std::error::Error for WriteFailures {}
 
 /// Exit status for an error returned by [`run`]: 2 usage, 3 finished with failed writes,
-/// 1 anything else.
+/// 1 anything else. Precedence: a run-level failure (e.g. the target index deleted, or
+/// deleted and re-created, mid-restore, TST-BRK-SRV-008) is returned by the writer's drain
+/// before [`WriteFailures`] is ever built, so it exits 1 even when documents were also
+/// rejected (their item errors are still on stderr): the restore is invalid as a whole,
+/// not merely incomplete, and 3 would understate it.
 pub fn exit_code(error: &anyhow::Error) -> i32 {
     if error.downcast_ref::<UsageError>().is_some() {
         2

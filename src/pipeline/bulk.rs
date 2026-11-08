@@ -148,6 +148,9 @@ pub struct BulkSink {
     /// uuid of the single target index, noted once mid-run (TST-BRK-SRV-008).
     target_uuid: Option<String>,
     uuid_checked: bool,
+    /// The single target index was missing (404) when its uuid was to be noted, after
+    /// [`UUID_CAPTURE_AFTER`] of writes: it was deleted mid-run (TST-BRK-SRV-008).
+    target_gone_mid_run: bool,
     /// The 409 explanation is printed once per run (TST-BRK-SRV-011).
     conflict_hint_shown: bool,
     data_stream_hint_shown: bool,
@@ -420,6 +423,7 @@ impl BulkSink {
             first_batch: None,
             target_uuid: None,
             uuid_checked: false,
+            target_gone_mid_run: false,
             conflict_hint_shown: false,
             data_stream_hint_shown: false,
         }
@@ -493,7 +497,12 @@ impl BulkSink {
         }
         self.uuid_checked = true;
         if let Some(name) = self.single_target() {
-            self.target_uuid = self.target_uuid(&name).await.ok().flatten();
+            match self.target_uuid(&name).await {
+                Ok(u) => self.target_uuid = u,
+                // Documents have been written for UUID_CAPTURE_AFTER, so the index existed
+                // (or was auto-created); a 404 now means it was deleted mid-run.
+                Err(()) => self.target_gone_mid_run = true,
+            }
         }
     }
 
@@ -501,13 +510,17 @@ impl BulkSink {
     /// means it was deleted; another uuid means it was deleted and re-created (auto-create,
     /// dynamic mappings) while documents were written.
     async fn check_target_index(&mut self) -> Result<()> {
-        let (Some(start), Some(name)) = (self.target_uuid.clone(), self.single_target()) else {
+        if self.target_uuid.is_none() && !self.target_gone_mid_run {
+            return Ok(());
+        }
+        let Some(name) = self.single_target() else {
             return Ok(());
         };
-        let recreated = match self.target_uuid(&name).await {
-            Err(()) => false,
-            Ok(Some(end)) if end != start => true,
-            Ok(_) => return Ok(()),
+        let end = self.target_uuid(&name).await;
+        let Some(recreated) =
+            target_index_outcome(self.target_uuid.as_deref(), self.target_gone_mid_run, end)
+        else {
+            return Ok(());
         };
         Err(anyhow!(
             "the target index '{name}' was deleted during the restore{}: documents written before that are gone{}. Re-create the index (with its mappings) and run the restore again",
@@ -548,6 +561,7 @@ impl BulkSink {
             first_batch: None,
             target_uuid: None,
             uuid_checked: false,
+            target_gone_mid_run: false,
             conflict_hint_shown: false,
             data_stream_hint_shown: false,
         }
@@ -1800,6 +1814,23 @@ mod prop_bulk {
 
 /// Restores that have not run this long skip the target-index check (TST-BRK-SRV-008), so
 /// short runs send exactly Node's requests.
+/// TST-BRK-SRV-008: what happened to the single target index. `noted` is the uuid noted
+/// mid-run (if any), `gone_mid_run` whether it was missing then, `end` the lookup at the
+/// end (`Err` = 404). `None`: unchanged; `Some(false)`: deleted; `Some(true)`: deleted and
+/// re-created (auto-create, dynamic mappings).
+fn target_index_outcome(
+    noted: Option<&str>,
+    gone_mid_run: bool,
+    end: std::result::Result<Option<String>, ()>,
+) -> Option<bool> {
+    match (noted, end) {
+        (_, Err(())) if noted.is_some() || gone_mid_run => Some(false),
+        (Some(start), Ok(Some(end))) if end != start => Some(true),
+        (None, Ok(_)) if gone_mid_run => Some(true),
+        _ => None,
+    }
+}
+
 const UUID_CAPTURE_AFTER: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
@@ -1866,5 +1897,22 @@ mod id_literal_tests {
             assert!(!is_json_number(raw), "{raw}");
         }
         assert!(is_json_number("-0") && is_json_number("0e0") && is_json_number("10.25E-3"));
+    }
+}
+
+#[cfg(test)]
+mod target_index_outcome_tests {
+    use super::target_index_outcome as t;
+
+    #[test]
+    fn unchanged_deleted_and_recreated() {
+        assert_eq!(t(None, false, Ok(Some("a".into()))), None, "never noted");
+        assert_eq!(t(None, false, Err(())), None, "never noted");
+        assert_eq!(t(Some("a"), false, Ok(Some("a".into()))), None);
+        assert_eq!(t(Some("a"), false, Err(())), Some(false));
+        assert_eq!(t(Some("a"), false, Ok(Some("b".into()))), Some(true));
+        // missing when the uuid was to be noted (deleted before the capture)
+        assert_eq!(t(None, true, Err(())), Some(false));
+        assert_eq!(t(None, true, Ok(Some("b".into()))), Some(true));
     }
 }
