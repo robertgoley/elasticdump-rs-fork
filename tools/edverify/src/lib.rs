@@ -3,7 +3,10 @@
 //!
 //! Per document: `h = SHA-256(index_rel ‖ 0x00 ‖ _id ‖ 0x00 ‖ routing ‖ 0x00 ‖ source)`
 //! where `source` is the raw `_source` bytes (or, with `--canonical`, the
-//! `_source` re-serialised with sorted keys and numbers kept as written).
+//! `_source` re-serialised with sorted keys and numbers kept as written; add
+//! `--decimal-numbers` to also write each number in a normal form of its exact
+//! decimal value, so `79.746790`, `79.74679` and `7.974679e1` hash alike but
+//! `9007199254740993` and `9007199254740992` still differ).
 //! The set digest is `(Σ h mod 2^256, XOR h, count)`. Documents are also
 //! assigned to one of `B` buckets by `SHA-256(index_rel ‖ 0x00 ‖ _id)`, so a
 //! changed, missing or duplicated document changes exactly one bucket and a
@@ -25,6 +28,8 @@ pub const DEFAULT_BUCKETS: usize = 1024;
 pub struct Opts {
     /// Re-serialise `_source` canonically (sorted keys) before hashing.
     pub canonical: bool,
+    /// With `canonical`: normalise numbers by exact decimal value (see [`decimal_normal`]).
+    pub decimal_numbers: bool,
     /// Use this index name for every document instead of its `_index`.
     pub index_as: Option<String>,
     /// Number of buckets (sub-digests).
@@ -145,7 +150,7 @@ impl SetDigest {
             "tool": "edverify",
             "version": env!("CARGO_PKG_VERSION"),
             "inputs": specs,
-            "mode": if opts.canonical { "canonical" } else { "raw" },
+            "mode": match (opts.canonical, opts.decimal_numbers) { (true, true) => "canonical-decimal", (true, false) => "canonical", _ => "raw" },
             "index_as": opts.index_as,
             "count": self.count,
             "bad_lines": self.bad_lines,
@@ -208,7 +213,7 @@ pub fn parse_doc<'a>(line: &'a [u8], opts: &Opts) -> Result<Doc<'a>> {
         None => std::borrow::Cow::Borrowed(trim(line)),
     };
     let source = if opts.canonical {
-        std::borrow::Cow::Owned(canonical(&raw)?)
+        std::borrow::Cow::Owned(canonical_with(&raw, opts.decimal_numbers)?)
     } else {
         raw
     };
@@ -246,13 +251,120 @@ fn trim(b: &[u8]) -> &[u8] {
 /// Sorted keys at every level; strings re-escaped by serde_json; numbers
 /// kept exactly as written (arbitrary_precision).
 pub fn canonical(raw: &[u8]) -> Result<Vec<u8>> {
-    let v: serde_json::Value = serde_json::from_slice(raw).context("canonical: invalid JSON")?;
+    canonical_with(raw, false)
+}
+
+/// [`canonical`], optionally with numbers in [`decimal_normal`] form.
+pub fn canonical_with(raw: &[u8], decimal_numbers: bool) -> Result<Vec<u8>> {
+    let v: serde_json::Value = match serde_json::from_slice(raw) {
+        Ok(v) => v,
+        // serde_json rejects `\uD800`-style escapes of unpaired surrogates, which JSON
+        // permits and Elasticsearch/OpenSearch store verbatim (edgen `lone_surrogate`). Without
+        // this retry such documents became `bad_lines` and dropped out of the digest, so a
+        // cluster read failed the `_count` cross-check.
+        Err(e) => match escape_lone_surrogates(raw) {
+            Some(fixed) => serde_json::from_slice(&fixed).context("canonical: invalid JSON")?,
+            None => return Err(anyhow::Error::new(e).context("canonical: invalid JSON")),
+        },
+    };
     let mut out = Vec::with_capacity(raw.len());
-    write_canon(&v, &mut out);
+    write_canon(&v, &mut out, decimal_numbers);
     Ok(out)
 }
 
-fn write_canon(v: &serde_json::Value, out: &mut Vec<u8>) {
+/// Normal form of a JSON number's EXACT decimal value (no float conversion):
+/// `[-]D[.DDD]eN` with no leading/trailing zero digits, or `0` / `-0`. Only the
+/// textual representation is normalised, so a re-serialiser that drops trailing
+/// zeros or rewrites `1e308` as `1e+308` (Node's `JSON.stringify`) compares equal,
+/// while any change of value (rounding of integers above 2^53, a shortened
+/// mantissa) still differs. The sign of zero is kept.
+pub fn decimal_normal(num: &str) -> String {
+    let (neg, rest) = match num.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, num),
+    };
+    let (mant, exp) = match rest.find(['e', 'E']) {
+        Some(i) => (&rest[..i], rest[i + 1..].parse::<i64>().unwrap_or(0)),
+        None => (rest, 0),
+    };
+    let (int, frac) = mant.split_once('.').unwrap_or((mant, ""));
+    let digits: String = format!("{int}{frac}");
+    // value = 0.digits * 10^(exp + int.len())
+    let lead = digits.len() - digits.trim_start_matches('0').len();
+    let sig = digits.trim_start_matches('0').trim_end_matches('0');
+    let sign = if neg { "-" } else { "" };
+    if sig.is_empty() {
+        return format!("{sign}0");
+    }
+    // Scientific exponent of the first significant digit.
+    let e = exp + int.len() as i64 - lead as i64 - 1;
+    let (first, tail) = sig.split_at(1);
+    if tail.is_empty() {
+        format!("{sign}{first}e{e}")
+    } else {
+        format!("{sign}{first}.{tail}e{e}")
+    }
+}
+
+/// Rewrite every `\uXXXX` escape of an UNPAIRED surrogate inside a JSON string as the
+/// six literal characters `\\uxxxx` (escaped backslash, lowercase hex), so serde_json can
+/// parse the document. Deterministic and case-insensitive, so `\uD800` (engine/edgen) and
+/// `\ud800` (Node's JSON.stringify) canonicalise alike; valid pairs are left untouched.
+/// Returns None when there is nothing to rewrite.
+fn escape_lone_surrogates(raw: &[u8]) -> Option<Vec<u8>> {
+    fn hex4(b: &[u8]) -> Option<u16> {
+        let s = std::str::from_utf8(b.get(..4)?).ok()?;
+        u16::from_str_radix(s, 16).ok()
+    }
+    let esc_at = |i: usize| -> Option<u16> {
+        if raw.get(i) == Some(&b'\\') && raw.get(i + 1) == Some(&b'u') {
+            hex4(&raw[i + 2..])
+        } else {
+            None
+        }
+    };
+    let mut out = Vec::with_capacity(raw.len() + 16);
+    let (mut i, mut in_str, mut changed) = (0, false, false);
+    while i < raw.len() {
+        let c = raw[i];
+        if !in_str {
+            in_str = c == b'"';
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' => {
+                in_str = false;
+                out.push(c);
+                i += 1;
+            }
+            b'\\' => match esc_at(i) {
+                Some(0xD800..=0xDBFF) if matches!(esc_at(i + 6), Some(0xDC00..=0xDFFF)) => {
+                    out.extend_from_slice(&raw[i..i + 12]);
+                    i += 12;
+                }
+                Some(u @ 0xD800..=0xDFFF) => {
+                    out.extend_from_slice(format!("\\\\u{u:04x}").as_bytes());
+                    changed = true;
+                    i += 6;
+                }
+                _ => {
+                    // Any other escape: copy the backslash and the escaped byte verbatim.
+                    out.extend_from_slice(&raw[i..(i + 2).min(raw.len())]);
+                    i += 2;
+                }
+            },
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    changed.then_some(out)
+}
+
+fn write_canon(v: &serde_json::Value, out: &mut Vec<u8>, dec: bool) {
     use serde_json::Value;
     match v {
         Value::Object(m) => {
@@ -265,7 +377,7 @@ fn write_canon(v: &serde_json::Value, out: &mut Vec<u8>) {
                 }
                 serde_json::to_writer(&mut *out, k).unwrap();
                 out.push(b':');
-                write_canon(&m[k], out);
+                write_canon(&m[k], out, dec);
             }
             out.push(b'}');
         }
@@ -275,10 +387,11 @@ fn write_canon(v: &serde_json::Value, out: &mut Vec<u8>) {
                 if i > 0 {
                     out.push(b',');
                 }
-                write_canon(x, out);
+                write_canon(x, out, dec);
             }
             out.push(b']');
         }
+        Value::Number(n) if dec => out.extend_from_slice(decimal_normal(&n.to_string()).as_bytes()),
         other => serde_json::to_writer(&mut *out, other).unwrap(),
     }
 }
@@ -621,6 +734,82 @@ mod tests {
         assert_ne!(
             dig(&[r#"{"_id":"1","_source":{"b":1,"a":2}}"#], &raw),
             dig(&[r#"{"_id":"1","_source":{"a":2,"b":1}}"#], &raw)
+        );
+    }
+
+    #[test]
+    fn decimal_numbers_compare_by_exact_value() {
+        for (a, b) in [
+            ("79.746790", "79.74679"),
+            ("1.0", "1"),
+            ("1e308", "1e+308"),
+            ("1E308", "10e307"),
+            ("0.000120", "1.2e-4"),
+            ("100", "1e2"),
+            ("0", "0.000"),
+            ("-0.0", "-0"),
+            ("4.9e-324", "4.9E-324"),
+        ] {
+            assert_eq!(decimal_normal(a), decimal_normal(b), "{a} vs {b}");
+        }
+        for (a, b) in [
+            ("9007199254740993", "9007199254740992"),
+            ("18446744073709551617", "18446744073709552000"),
+            ("0.1000000000000000055511151231257827", "0.1"),
+            ("-0", "0"),
+            ("12", "1.2"),
+        ] {
+            assert_ne!(decimal_normal(a), decimal_normal(b), "{a} vs {b}");
+        }
+        let o = Opts {
+            canonical: true,
+            decimal_numbers: true,
+            ..Default::default()
+        };
+        let raw = Opts {
+            canonical: true,
+            ..Default::default()
+        };
+        let es = r#"{"_id":"1","_source":{"c":[[79.746790,86.171460]],"n":1.0}}"#;
+        let node = r#"{"_id":"1","_source":{"c":[[79.74679,86.17146]],"n":1}}"#;
+        assert_eq!(dig(&[es], &o), dig(&[node], &o));
+        assert_ne!(dig(&[es], &raw), dig(&[node], &raw));
+    }
+
+    #[test]
+    fn canonical_accepts_lone_surrogates() {
+        let o = Opts {
+            canonical: true,
+            ..Default::default()
+        };
+        // Engine/edgen bytes vs Node's re-serialisation (lowercase hex, other key order).
+        let a = dig(
+            &[
+                r#"{"_id":"1","_source":{"case":"lone_surrogate","t":"a\uD800b\uDC00","p":"\uD83D\uDE00"}}"#,
+            ],
+            &o,
+        );
+        let b = dig(
+            &[
+                r#"{"_id":"1","_source":{"p":"\ud83d\ude00","t":"a\ud800b\udc00","case":"lone_surrogate"}}"#,
+            ],
+            &o,
+        );
+        assert_eq!(a.bad_lines, 0);
+        assert_eq!(a.count, 1);
+        assert_eq!(a, b);
+        // A different lone surrogate must still differ.
+        let c = dig(
+            &[
+                r#"{"_id":"1","_source":{"case":"lone_surrogate","t":"a\uD801b\uDC00","p":"\uD83D\uDE00"}}"#,
+            ],
+            &o,
+        );
+        assert_ne!(a, c);
+        // Genuinely invalid JSON is still a bad line.
+        assert_eq!(
+            dig(&[r#"{"_id":"1","_source":{"t":"\uD800"#], &o).bad_lines,
+            1
         );
     }
 

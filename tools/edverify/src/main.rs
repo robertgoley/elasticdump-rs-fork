@@ -31,6 +31,10 @@ struct Common {
     /// Hash `_source` re-serialised with sorted keys (cross-engine, pretty input).
     #[arg(long)]
     canonical: bool,
+    /// With --canonical: compare numbers by exact decimal value, not spelling
+    /// (`1.50` == `1.5` == `15e-1`; a rounded value still differs).
+    #[arg(long, requires = "canonical")]
+    decimal_numbers: bool,
     /// Use this index name for every document (compare a source and a renamed copy).
     #[arg(long)]
     index_as: Option<String>,
@@ -87,6 +91,7 @@ enum Cmd {
 fn opts(c: &Common) -> Opts {
     Opts {
         canonical: c.canonical,
+        decimal_numbers: c.decimal_numbers,
         index_as: c.index_as.clone(),
         buckets: c.buckets,
     }

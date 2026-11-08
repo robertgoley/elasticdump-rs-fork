@@ -3,9 +3,9 @@
 edverify is a test-only tool. It does not depend on elasticdump-rs, so a bug in the tool under test cannot hide itself.
 
 ```
-edverify digest [--canonical] [--index-as NAME] <input>...       # JSON digest on stdout (or --out)
+edverify digest [--canonical [--decimal-numbers]] [--index-as NAME] <input>...       # JSON digest on stdout (or --out)
 edverify compare a.json b.json                                    # exit 0 equal, 1 different
-edverify diff [--canonical] [--index-as NAME] --a <in>... --b <in>... [--limit 10] [--out r.json]
+edverify diff [--canonical [--decimal-numbers]] [--index-as NAME] --a <in>... --b <in>... [--limit 10] [--out r.json]
 ```
 
 ## Inputs
@@ -36,7 +36,8 @@ Each document also goes into one of 1,024 buckets, chosen by `SHA-256(index ‖ 
 Options:
 
 - `--index-as` replaces `_index`. Use it when you compare a source index with a renamed copy.
-- `--canonical` re-serialises `_source` with sorted keys before hashing. Numbers keep the digits as written. Use it across engines, and when the source documents were pretty-printed: since the INJ-F1 fix, the dump flattens line breaks in `_source`.
+- `--canonical` re-serialises `_source` with sorted keys before hashing. Numbers keep the digits as written. Use it across engines, and when the source documents were pretty-printed: since the INJ-F1 fix, the dump flattens line breaks in `_source`. Escapes of unpaired surrogates (`"\uD800"`, valid JSON that engines store) are hashed as their lowercase escape text instead of being dropped as bad lines.
+- `--decimal-numbers` (with `--canonical`) writes each number as a normal form of its exact decimal value, so `79.746790`, `79.74679` and `7.974679e1` hash alike while `9007199254740993` and `9007199254740992`, or `-0` and `0`, still differ. Use it for output from tools that re-serialise numbers (Node elasticdump).
 
 ## Exit codes
 
