@@ -1,0 +1,600 @@
+{
+  "identity": {
+    "protocol": "edrs-perf/v1",
+    "host": "grok-bot-vm-417583633",
+    "tier": "L0",
+    "place": "box",
+    "image": "docker.io/bitnamilegacy/elasticsearch:8.6.1-debian-11-r0@sha256:af815f5356650ca1663092084f7bd4cc88bff50f1e4542ac63e6c61eb1cbf3b3",
+    "heap_mb": 1024,
+    "limit": 2000,
+    "sizes": {
+      "logs": 100000,
+      "small": 100000,
+      "big": 33,
+      "edge": 10000,
+      "many": 100000
+    },
+    "case_manifest": [
+      {
+        "id": "dump-none",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "restore-none",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "dump-gzip",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "gzip",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "restore-gzip",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "gzip",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "dump-zstd",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "zstd",
+        "flags": [],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "restore-zstd",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "zstd",
+        "flags": [],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "copy",
+        "kind": "copy",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "dump-scroll-s1",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--slices=1"
+        ],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "dump-pit-s1",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--searchAfter",
+          "--pit",
+          "--slices=1"
+        ],
+        "node": false,
+        "limit": 2000,
+        "pit": true
+      },
+      {
+        "id": "dump-scroll-s2",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--slices=2"
+        ],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "dump-pit-s2",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--searchAfter",
+          "--pit",
+          "--slices=2"
+        ],
+        "node": false,
+        "limit": 2000,
+        "pit": true
+      },
+      {
+        "id": "dump-scroll-s4",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--slices=4"
+        ],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "dump-pit-s4",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--searchAfter",
+          "--pit",
+          "--slices=4"
+        ],
+        "node": false,
+        "limit": 2000,
+        "pit": true
+      },
+      {
+        "id": "dump-scroll-s8",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--slices=8"
+        ],
+        "node": false,
+        "limit": 2000
+      },
+      {
+        "id": "dump-pit-s8",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [
+          "--searchAfter",
+          "--pit",
+          "--slices=8"
+        ],
+        "node": false,
+        "limit": 2000,
+        "pit": true
+      },
+      {
+        "id": "dump-split-none",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "restore-split-none",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "dump-split-gzip",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "gzip",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "restore-split-gzip",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "gzip",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "dump-split-zstd",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "zstd",
+        "flags": [],
+        "node": false,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "restore-split-zstd",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "zstd",
+        "flags": [],
+        "node": false,
+        "limit": 2000,
+        "split": true
+      },
+      {
+        "id": "dump-small",
+        "kind": "dump",
+        "dataset": "small",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "restore-small",
+        "kind": "restore",
+        "dataset": "small",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "dump-big",
+        "kind": "dump",
+        "dataset": "big",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 10
+      },
+      {
+        "id": "restore-big",
+        "kind": "restore",
+        "dataset": "big",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 10
+      },
+      {
+        "id": "dump-edge",
+        "kind": "dump",
+        "dataset": "edge",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "restore-edge",
+        "kind": "restore",
+        "dataset": "edge",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000
+      },
+      {
+        "id": "mapping-dump",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "meta": "mapping"
+      },
+      {
+        "id": "mapping-restore",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "meta": "mapping"
+      },
+      {
+        "id": "settings-dump",
+        "kind": "dump",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "meta": "settings"
+      },
+      {
+        "id": "settings-restore",
+        "kind": "restore",
+        "dataset": "logs",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "meta": "settings"
+      },
+      {
+        "id": "multi-dump-p1",
+        "kind": "dump",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 1
+      },
+      {
+        "id": "multi-restore-p1",
+        "kind": "restore",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 1
+      },
+      {
+        "id": "multi-dump-p4",
+        "kind": "dump",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 4
+      },
+      {
+        "id": "multi-restore-p4",
+        "kind": "restore",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 4
+      },
+      {
+        "id": "multi-dump-p8",
+        "kind": "dump",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 8
+      },
+      {
+        "id": "multi-restore-p8",
+        "kind": "restore",
+        "dataset": "many",
+        "codec": "none",
+        "flags": [],
+        "node": true,
+        "limit": 2000,
+        "parallel": 8
+      }
+    ],
+    "controller": "local",
+    "generator_sources": "8867fd845622e6c434441135e0cfdcdc0d8adcab997e5f55c3f53db99d036860"
+  },
+  "cells": {
+    "dump-small": {
+      "wall_s": 0.403,
+      "user_s": 0.106,
+      "sys_s": 0.066,
+      "cpu_s": 0.174,
+      "max_rss_kb": 59852,
+      "fds_peak": 11,
+      "docs_per_s": 248115.6,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 76.837,
+      "logical_mb_per_s": 76.8440893300248,
+      "compression_ratio": 1.0,
+      "input_bytes": null,
+      "output_bytes": 30968168,
+      "wall_p90_s": 0.503,
+      "wall_min_s": 0.403,
+      "wall_max_s": 0.503,
+      "wall_cv_pct": 10.803770529970166,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "restore-small": {
+      "wall_s": 2.411,
+      "user_s": 0.331,
+      "sys_s": 0.062,
+      "cpu_s": 0.41,
+      "max_rss_kb": 75812,
+      "fds_peak": 11,
+      "docs_per_s": 41484.1,
+      "mb_per_s_in": 12.847,
+      "mb_per_s_out": null,
+      "logical_mb_per_s": 12.844532559104106,
+      "compression_ratio": null,
+      "input_bytes": 30968168,
+      "output_bytes": null,
+      "wall_p90_s": 2.511,
+      "wall_min_s": 2.31,
+      "wall_max_s": 2.511,
+      "wall_cv_pct": 3.403964804903566,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "dump-edge": {
+      "wall_s": 1.507,
+      "user_s": 0.709,
+      "sys_s": 0.336,
+      "cpu_s": 1.134,
+      "max_rss_kb": 417932,
+      "fds_peak": 11,
+      "docs_per_s": 6257.5,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 221.798,
+      "logical_mb_per_s": 221.8200776376908,
+      "compression_ratio": 1.0,
+      "input_bytes": null,
+      "output_bytes": 334282857,
+      "wall_p90_s": 1.607,
+      "wall_min_s": 1.307,
+      "wall_max_s": 1.607,
+      "wall_cv_pct": 8.463373415005522,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "restore-edge": {
+      "wall_s": 2.41,
+      "user_s": 1.275,
+      "sys_s": 0.474,
+      "cpu_s": 1.746,
+      "max_rss_kb": 647720,
+      "fds_peak": 11,
+      "docs_per_s": 3913.4,
+      "mb_per_s_in": 138.709,
+      "mb_per_s_out": null,
+      "logical_mb_per_s": 138.70657966804978,
+      "compression_ratio": null,
+      "input_bytes": 334282857,
+      "output_bytes": null,
+      "wall_p90_s": 2.511,
+      "wall_min_s": 2.31,
+      "wall_max_s": 2.511,
+      "wall_cv_pct": 3.404435550969795,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "settings-dump": {
+      "wall_s": 0.102,
+      "user_s": 0.0,
+      "sys_s": 0.009,
+      "cpu_s": 0.009,
+      "max_rss_kb": 24604,
+      "fds_peak": 3,
+      "docs_per_s": 9.8,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 0.002,
+      "logical_mb_per_s": null,
+      "compression_ratio": 538148.735,
+      "input_bytes": null,
+      "output_bytes": 185,
+      "wall_p90_s": 0.102,
+      "wall_min_s": 0.101,
+      "wall_max_s": 0.102,
+      "wall_cv_pct": 0.46367657782723826,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "settings-restore": {
+      "wall_s": 0.101,
+      "user_s": 0.005,
+      "sys_s": 0.005,
+      "cpu_s": 0.01,
+      "max_rss_kb": 24680,
+      "fds_peak": 3,
+      "docs_per_s": 9.9,
+      "mb_per_s_in": 0.002,
+      "mb_per_s_out": null,
+      "logical_mb_per_s": null,
+      "compression_ratio": null,
+      "input_bytes": 185,
+      "output_bytes": null,
+      "wall_p90_s": 0.101,
+      "wall_min_s": 0.101,
+      "wall_max_s": 0.101,
+      "wall_cv_pct": 0.0,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "multi-dump-p1": {
+      "wall_s": 1.105,
+      "user_s": 0.334,
+      "sys_s": 0.337,
+      "cpu_s": 0.678,
+      "max_rss_kb": 65912,
+      "fds_peak": 12,
+      "docs_per_s": 90482.3,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 90.51,
+      "logical_mb_per_s": 90.52511855203619,
+      "compression_ratio": 1.0,
+      "input_bytes": null,
+      "output_bytes": 100030256,
+      "wall_p90_s": 1.105,
+      "wall_min_s": 1.105,
+      "wall_max_s": 1.105,
+      "wall_cv_pct": 0.0,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "multi-dump-p4": {
+      "wall_s": 0.403,
+      "user_s": 0.352,
+      "sys_s": 0.43,
+      "cpu_s": 0.782,
+      "max_rss_kb": 64052,
+      "fds_peak": 21,
+      "docs_per_s": 247995.3,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 248.07,
+      "logical_mb_per_s": 248.21403473945406,
+      "compression_ratio": 1.0,
+      "input_bytes": null,
+      "output_bytes": 100030256,
+      "wall_p90_s": 0.406,
+      "wall_min_s": 0.403,
+      "wall_max_s": 0.406,
+      "wall_cv_pct": 0.3500528619735387,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    },
+    "multi-dump-p8": {
+      "wall_s": 0.303,
+      "user_s": 0.327,
+      "sys_s": 0.441,
+      "cpu_s": 0.777,
+      "max_rss_kb": 68044,
+      "fds_peak": 33,
+      "docs_per_s": 330381.1,
+      "mb_per_s_in": null,
+      "mb_per_s_out": 330.481,
+      "logical_mb_per_s": 330.13285808580855,
+      "compression_ratio": 1.0,
+      "input_bytes": null,
+      "output_bytes": 100030256,
+      "wall_p90_s": 0.303,
+      "wall_min_s": 0.303,
+      "wall_max_s": 0.303,
+      "wall_cv_pct": 0.0,
+      "n": 3,
+      "exit_code": 0,
+      "failed_writes": 0
+    }
+  },
+  "recorded": "2026-11-08T15:19:11-05:00"
+}

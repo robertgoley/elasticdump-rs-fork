@@ -276,7 +276,10 @@ Per engine/dataset/case:
    variants. A failed **Node** sample is the comparison's problem, not the product's: the
    case keeps its Rust result and is marked `NODE_DIFF` (Node's output differs in value,
    e.g. the `edge` numeric cases) or `NODE_FAIL` (Node errored or broke the RSS budget), and
-   Node is not run again for that case. Neither blocks `--update-baselines`. Rust must leave no scroll/PIT contexts. Node contexts are recorded, then
+   Node is not run again for that case. Neither blocks `--update-baselines`.
+   Every timed command and verification has a wall-clock limit (`PERF_CMD_TIMEOUT_S`,
+   default 1800 s); on expiry its whole process group is killed. For Node that is
+   `NODE_TIMEOUT`; for Rust it is a failure of the case. Rust must leave no scroll/PIT contexts. Node contexts are recorded, then
    explicitly cleared outside timing on this private engine to avoid polluting later runs.
 
 Retain raw metrics, commands (existing redaction), stdout/stderr, verify reports, seed

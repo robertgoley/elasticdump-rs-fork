@@ -179,6 +179,36 @@ class ProtocolTests(unittest.TestCase):
             self.assertIn('NODE_DIFF', S.markdown(dict(engines=[res])))
             self.assertIn('baseline_updated', res)
 
+    def test_timeout_kills_process_group(self):
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / 'child-alive'
+            # The wrapper forks a grandchild (like measure.py -> Node -> forked elasticdump).
+            script = (f"import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',"
+                      f"\"import time,pathlib; time.sleep(3); pathlib.Path({str(marker)!r}).write_text('x')\"]); time.sleep(60)")
+            with self.assertRaises(S.ToolTimeout):
+                S.checked([sys.executable, '-c', script], timeout_s=1)
+            import time
+            time.sleep(3.5)
+            self.assertFalse(marker.exists())
+        with self.assertRaises(subprocess.CalledProcessError):
+            S.checked([sys.executable, '-c', 'raise SystemExit(3)'], timeout_s=30)
+
+    def test_node_timeout_is_recorded_not_an_rs_failure(self):
+        with tempfile.TemporaryDirectory(dir=S.ROOT / 'results') as td:
+            d = Path(td)
+            p = S.make_plan(args(engines='es717-plain', cases='multi-restore-p1'))
+            a = args(update_baselines=False, baseline_dir=d, reps=1)
+            def it(case, tool, rep):
+                if tool == 'node':
+                    raise S.ToolTimeout('timed out')
+                return metric()
+            with patch.object(S.EngineRun, 'start'), patch.object(S.EngineRun, 'seed'), \
+                 patch.object(S.EngineRun, 'cleanup_dataset'), patch.object(S.EngineRun, 'close'), \
+                 patch.object(S.EngineRun, 'iteration', side_effect=it):
+                res = S.execute_engine(a, p, p['engines'][0], {}, d)
+            self.assertEqual(res['failures'], [])
+            self.assertEqual(res['summary'][0]['node_status'], 'NODE_TIMEOUT')
+
     def test_node_auth_file_is_ini(self):
         text = S.node_auth_ini('admin', 'p;w#d="x"')
         self.assertEqual(text, 'user="admin"\npassword="p;w#d=\\"x\\""\n')

@@ -81,8 +81,45 @@ def write_json(path, data):
     tmp.replace(path)
 
 
-def checked(cmd, **kw):
-    return subprocess.run([str(x) for x in cmd], check=True, **kw)
+class ToolTimeout(RuntimeError):
+    """A measured command exceeded its wall-clock limit and was killed (whole process group)."""
+
+
+# Per-command wall-clock limit for timed tool runs and verifications. L0 cases take seconds to
+# a few minutes; a run past this is hung or looping (or its engine died) and must not stall
+# the rest of the sequence. PERF_CMD_TIMEOUT_S overrides it.
+CMD_TIMEOUT_S = int(os.environ.get("PERF_CMD_TIMEOUT_S", "1800"))
+
+
+def checked(cmd, timeout_s=None, **kw):
+    if timeout_s is None:
+        return subprocess.run([str(x) for x in cmd], check=True, **kw)
+    # Own session so the kill reaches measure.py AND the tool it wraps (and Node's forked children).
+    p = subprocess.Popen([str(x) for x in cmd], start_new_session=True, **kw)
+    try:
+        code = p.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(p.pid, sig)
+            except ProcessLookupError:
+                break
+            try:
+                p.wait(timeout=10)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        raise ToolTimeout(f"timed out after {timeout_s}s and was killed: {' '.join(str(x) for x in cmd[-12:])}")
+    except BaseException:
+        # Interrupted suite (SIGTERM/^C): do not leave the measured tool running.
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise
+    if code:
+        raise subprocess.CalledProcessError(code, cmd)
+    return subprocess.CompletedProcess(cmd, code)
 
 
 def capture(cmd, **kw):
@@ -213,7 +250,8 @@ def markdown(results):
     lines = ["# Sequential speed suite", "", "Wall median seconds; ratio = rs / Node (lower is better).",
              "Node SLOWER is a warning, never a baseline failure. Missing baselines are not regression-tested.",
              "NODE_DIFF = Node's output differs in value from the source (e.g. integers above 2^53);",
-             "NODE_FAIL = Node errored. Both are recorded for comparison only and never fail an rs case.", ""]
+             "NODE_FAIL = Node errored; NODE_TIMEOUT = Node exceeded the per-command limit and was killed.",
+             "All three are recorded for comparison only and never fail an rs case.", ""]
     def fmt(x, suffix=""):
         return "—" if x is None else f"{x:.3f}{suffix}"
     for engine in results["engines"]:
@@ -346,11 +384,12 @@ class EngineRun:
         page = {"big": ["--size=2", "--slices=2"], "edge": ["--size=100"]}.get(getattr(self, "dataset", None), [])
         cmd = [self.tools["edverify"], "diff", "--canonical", *numbers, *page, "--index-as", "x", "--a", source,
                "--b", *targets, "--out", str(report), *self.edv_tls]
-        p = subprocess.run([str(x) for x in cmd], env=self.tenv, stdout=subprocess.DEVNULL)
-        if p.returncode == 1:
-            raise VerifyMismatch(f"edverify diff {tag}: document sets differ (report {report.name})")
-        if p.returncode:
-            raise subprocess.CalledProcessError(p.returncode, cmd)
+        try:
+            checked(cmd, env=self.tenv, stdout=subprocess.DEVNULL, timeout_s=CMD_TIMEOUT_S)
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 1:
+                raise VerifyMismatch(f"edverify diff {tag}: document sets differ (report {report.name})") from None
+            raise
 
     def plain(self, args):
         checked([self.tools["elasticdump-rs"], *args, *self.rs_tls], env=self.tenv, stdout=subprocess.DEVNULL)
@@ -501,7 +540,7 @@ class EngineRun:
         self.result["runs"].append(row)
         try:
             with (self.directory / (tag + ".stdout")).open("w") as stdout:
-                checked(measure + ["--", *cmd], env=self.tenv, stdout=stdout)
+                checked(measure + ["--", *cmd], env=self.tenv, stdout=stdout, timeout_s=CMD_TIMEOUT_S)
             m = json.loads(metric_path.read_text())
             errs = M.validate(m)
             rss_cap_kb = self.plan["place_config"]["tool_mem_mb"] * 1024
@@ -632,7 +671,8 @@ def execute_engine(a, plan, entry, tools, directory):
                                 if tool == "node":
                                     # Node is the comparison, not the product under test: its failure or
                                     # data difference is recorded (like Node SLOWER) and never fails rs.
-                                    node_status = ("NODE_DIFF" if isinstance(e, VerifyMismatch) else "NODE_FAIL")
+                                    node_status = ("NODE_DIFF" if isinstance(e, VerifyMismatch) else
+                                                   "NODE_TIMEOUT" if isinstance(e, ToolTimeout) else "NODE_FAIL")
                                     er.result.setdefault("node_differences", []).append(
                                         f"{case['id']}/node/rep{rep}: {node_status}: {e}")
                                 else:
