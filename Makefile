@@ -126,6 +126,7 @@ test-image:
 	CONTAINER=$(CONTAINER) scripts/test-image.sh $(VARIANT_IMAGE) $(IMAGE_VARIANT)
 
 save:
+	rm -f image.tar
 	$(CONTAINER) save -o image.tar $(VARIANT_IMAGE)
 
 sbom: save

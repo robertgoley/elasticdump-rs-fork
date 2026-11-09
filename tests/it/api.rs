@@ -2974,7 +2974,7 @@ async fn l654_override_main_response_version_is_still_opensearch() {
     let root = c.ok("GET", "", None).await;
     let o = run_loud(io(
         &c,
-        &c.index_url(&index),
+        &c.url_with_auth(&index),
         out.to_str().unwrap(),
         &["--type", "data", "--searchType", "pit", "--debug"],
     ))
