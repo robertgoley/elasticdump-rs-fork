@@ -36,7 +36,13 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
             splitter.push(&buf[..n]);
         }
         while let Some(v) = splitter.next_value(n == 0).map_err(|e| anyhow!(e))? {
-            if first.is_none() {
+            if let Some(value) = first.take() {
+                log::warn!(
+                    "Input holds more than one JSON value; only the first is used (elasticdump behaviour)"
+                );
+                return Ok(value);
+            }
+            {
                 let v = match repair_lone_surrogates(&String::from_utf8_lossy(&v)) {
                     Some(fixed) => fixed.into_bytes(),
                     None => v.to_vec(),
@@ -53,11 +59,6 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
                     };
                     anyhow!("Invalid JSON in input {name}: {e}{hint}")
                 })?);
-            } else {
-                log::warn!(
-                    "Input holds more than one JSON value; only the first is used (elasticdump behaviour)"
-                );
-                return Ok(first.unwrap());
             }
         }
         if n == 0 {

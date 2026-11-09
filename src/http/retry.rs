@@ -533,8 +533,7 @@ fn dns_failure(error: &reqwest::Error, chain: &str) -> Option<(bool, String)> {
     let answered = ANSWERED_HOSTS
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .iter()
-        .any(|h| *h == host);
+        .contains(&host);
     let no_such_host = [
         "Name or service not known",
         "No address associated",

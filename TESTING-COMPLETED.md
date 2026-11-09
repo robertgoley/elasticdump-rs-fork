@@ -2,7 +2,7 @@
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 206 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808i (`git log -1 --grep '^L-808i'`; the next commit fills in its sha).
+Total: 207 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808j (`git log -1 --grep '^L-808j'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -253,7 +253,8 @@ Total: 206 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808g | d138b07 | 2026-11-01 | rc-signoff/trace-allow: the 2 mimalloc start-up reads confirmed by the owner (read-only allocator topology/THP probes); trace.sh plain passes. |
 | L-805a | ee1384e | 2026-11-01 | Warnings (not errors) for gzip level 9 and zstd 19+ (README table numbers) and, with `--overwrite`, a note that killed-run leftovers are not removed; 2 unit + 2 contract tests; README/help updated; defaults unchanged. |
 | L-808h | 8a4a06c | 2026-11-01 | security.yml `image` job skipped cleanly on Dependabot PRs; missing-secret hard failure kept elsewhere; actionlint clean; no repo settings or secrets touched. |
-| L-808i | this commit | 2026-11-01 | Offline container build: host-vendored crates, `RUN --network=none` cargo step; glibc and alpine images built and test-image.sh passes for both; README updated. |
+| L-808i | 9348352 | 2026-11-01 | Offline container build: host-vendored crates, `RUN --network=none` cargo step; glibc and alpine images built and test-image.sh passes for both; README updated. |
+| L-808j | this commit | 2026-11-09 | CI Rust 1.91.1: dtolnay/rust-toolchain pinned to its master SHA with explicit `toolchain:` (the 1.85.1 branch pin ignored it, so nightly steps got 1.85.1); 3 clippy 1.91 lints fixed, no behaviour change; MSRV stays 1.85; scanner downloads retried. |
 
 ## Supply-chain scans (Grok Bot)
 

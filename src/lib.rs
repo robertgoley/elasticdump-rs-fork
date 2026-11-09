@@ -455,7 +455,9 @@ async fn build_sink(
                     "--concurrency applies to Elasticsearch outputs; file output stays sequential to keep order"
                 );
             }
-            Ok(Sink::File(FileSink::create(file_options(cli, out)?).await?))
+            Ok(Sink::File(Box::new(
+                FileSink::create(file_options(cli, out)?).await?,
+            )))
         }
     }
 }

@@ -8,7 +8,7 @@ use super::bulk::{BulkSink, WriteReport};
 use super::json_split::single_line_slice;
 
 pub enum Sink {
-    File(FileSink),
+    File(Box<FileSink>),
     Bulk(Box<BulkSink>),
 }
 

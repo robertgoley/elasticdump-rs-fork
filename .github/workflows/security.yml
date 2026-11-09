@@ -26,8 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with: { tool: "cargo-audit@0.22.2,cargo-deny@0.20.2,cargo-cyclonedx@0.5.9" }
       # any vulnerability, or an unmaintained/unsound/yanked warning, fails the job
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           fetch() {
-            curl -fsSL -o "/tmp/$1.tgz" "$2"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$1.tgz" "$2"
             echo "$3  /tmp/$1.tgz" | sha256sum -c -
             sudo tar -C /usr/local/bin -xzf "/tmp/$1.tgz" "$1"
           }
@@ -127,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, nightly
         with: { toolchain: nightly }
       - run: cargo +nightly install --locked --version 0.1.61 cargo-udeps
       - run: cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load
@@ -140,8 +140,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - run: cargo install --locked --version 0.3.8 cargo-supply-chain
       # no `update`: without the db-dump cache it queries the crates.io API (~2 s/crate, ~8 min)
       - run: cargo supply-chain json > sc.json
@@ -162,10 +162,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # nightly (installs the tools)
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, nightly (installs the tools)
         with: { toolchain: nightly }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1, components: llvm-tools-preview }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1, components: llvm-tools-preview }
       - run: cargo +nightly install --locked --version 0.9.1 cargo-llvm-cov
       - run: cargo +nightly install --locked --version 0.9.150 cargo-nextest
       - run: cargo +nightly install --locked --version 0.2.1 rustfilt
@@ -180,8 +180,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - run: scripts/sup/build-inventory.py
       - run: scripts/sup/offline-build.sh
 
@@ -193,8 +193,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false, fetch-depth: 0 }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with: { tool: "cargo-cyclonedx@0.5.9" }
       - name: SBOM diff and label gate
@@ -218,8 +218,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false, fetch-depth: 0 }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - name: install gitleaks 8.28.0 (checksum-verified)
         run: |
           V=8.28.0; cd "$RUNNER_TEMP"

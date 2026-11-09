@@ -40,8 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: scripts/it/run.sh "$PROFILE"
         env: { PROFILE: "${{ matrix.profile }}" }
@@ -63,8 +63,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       # T7: every chaos test prints CHAOS_SEED=<n>; replay with the same env var (INF-013).
@@ -89,8 +89,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # T5 on a hosted runner = L1R (5M docs, zstd only); full L1 runs on the soak host.
       - run: scripts/load/run.sh L1R dump-restore-logs --engine opensearch-plain --place runner
@@ -115,8 +115,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1 }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: podman --version
       - name: file dump/restore, both directions (one container at a time)
@@ -152,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
+      - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       - run: cargo fetch --locked
@@ -186,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
+      - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
       - run: TRACE_LOG_DIR=/tmp/edrs-it/trace-selftest scripts/sup/trace.sh --selftest
@@ -206,7 +206,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
+      - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
       - name: Log in to dhi.io (pull only)
         env:
           DHI_USERNAME: ${{ secrets.DHI_USERNAME }}

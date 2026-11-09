@@ -27,14 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
-        with: { toolchain: 1.85.1, targets: "${{ matrix.target }}" }
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1, targets: "${{ matrix.target }}" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { key: "${{ matrix.target }}" }
       # zig provides the C cross-compiler for zstd-sys / ring / mimalloc and the glibc version pin.
       - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
         with: { version: 0.13.0 }
-      # pinned: 0.21.8 is the newest release whose MSRV (1.85) matches the toolchain
+      # pinned: 0.21.8 (MSRV 1.85; builds on the 1.91.1 CI toolchain)
       - run: cargo install cargo-zigbuild --locked --version 0.21.8
       - run: cargo zigbuild --release --target "$ZIGTARGET"
         env: { ZIGTARGET: "${{ matrix.zigtarget }}" }
@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install 1.85.1 --profile minimal && rustup default 1.85.1
+      - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
