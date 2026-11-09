@@ -171,12 +171,10 @@ def skip_reason(engine, case, tool):
 
 
 def engine_heap_mb(engine, tier_heap_mb):
-    """Per-engine heap override. OpenSearch 2/3 trip the parent circuit breaker on L0
-    datasets that fit elsewhere at 1024 MB: seed fails at 1g, big fills a 2g heap, and
-    edge (10k large-array docs) fills a 3g heap so even DELETE/scroll return HTTP 429.
-    Give them 4096 MB (place.box max). Other engines keep the tier heap."""
-    if engine.startswith(("os2-", "os3-")):
-        return max(tier_heap_mb, 4096)
+    """Per-engine heap. OpenSearch 2/3 used to need 2–4g here because query-insights
+    top_queries collectors (on by default since 2.16) retained large query payloads and
+    tripped the parent breaker; scripts/it/up.sh now disables those collectors, so the
+    tier heap is enough again. Hook kept for a future per-engine override."""
     return tier_heap_mb
 
 
@@ -348,7 +346,7 @@ class EngineRun:
         self.work.mkdir(mode=0o700)
         profile, self.env = engine_env(engine["engine"])
         self.profile = profile
-        # Prefer the per-engine heap (os2/os3 need 4g); fall back to the tier default.
+        # Prefer the per-engine heap when set; fall back to the tier default.
         self.heap_mb = engine.get("heap_mb", plan["heap_mb"])
         # Cgroup limit must cover heap + off-heap; place.box's 6g is tight for a 4g heap.
         place_cmem = plan["place_config"]["container_mem"]
@@ -776,9 +774,9 @@ def main():
                           tool_hashes={k: hashlib.sha256(Path(v).read_bytes()).hexdigest() for k, v in tools.items()},
                           node_runtime=capture(["node", "--version"]) if not a.skip_node else None)
             for entry in plan["engines"]:
-                # Guard against the engine's own heap, not only the tier default (os2/os3 use 4g).
+                # Guard against the engine's own heap, not only the tier default.
                 # Observed container RSS is ~1.1-1.3× heap for these images; keep 2× for small
-                # heaps and 1.5× once heap ≥ 2g so place.box can still host the OS 2/3 override.
+                # heaps and 1.5× once heap ≥ 2g (room for an intentional per-engine raise).
                 _h = entry.get("heap_mb", plan["heap_mb"])
                 _mult = 1.5 if _h >= 2048 else 2
                 eng_need = int(_h * _mult) + 512 + plan["place_config"]["tool_mem_mb"] + 256

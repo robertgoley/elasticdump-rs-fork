@@ -156,7 +156,7 @@ actual stored counts are retained; the reference is what the engine accepted, ne
 nominal generated count. Any rejection/overwrite on non-edge profiles fails seeding.
 Generators' real serialized byte sizes are recorded; size labels are estimates.
 
-Reuse `tiers.toml` heap: **L0 1024 MB; L1 4096 MB** (place caps are marked in plan). OpenSearch 2 and 3 override L0 to **4096 MB** (place.box max) so big/edge/many do not trip the parent circuit breaker (HTTP 429 at 1–3 GB as those datasets fill smaller heaps).
+Reuse `tiers.toml` heap: **L0 1024 MB; L1 4096 MB** (place caps are marked in plan). OpenSearch 2.16+ ships query-insights with top_queries on by default; `scripts/it/up.sh` disables those collectors for IT/perf so OS 2/3 can share the tier L0 **1024 MB** heap (without that, big/edge trip the parent circuit breaker even on DELETE /_search/scroll/_all).
 Only **one dataset** is resident at a time, with at most source + restore target + two
 file copies. The suite reserves `6 × tier_docs × 1000 bytes + 1024 MB` disk (L0 ~1.6 GB,
 L1 ~61 GB, excluding pre-pulled images/build cache), checks it against the place budget

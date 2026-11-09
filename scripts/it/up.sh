@@ -300,6 +300,25 @@ if [[ $ok -ne 1 ]]; then
   exit 1
 fi
 
+# OpenSearch 2.16+ bundles query-insights with top_queries collectors enabled by
+# default (latency/cpu/memory). Those retain recent query payloads in-heap and
+# export a top_queries-* index; on L0 big/edge corpora that drives the parent
+# circuit breaker to HTTP 429 even for DELETE /_search/scroll/_all. IT/perf does
+# not need insights — disable collectors + local exporter when the plugin is present
+# (OpenSearch 1.3 has no query-insights plugin; the check is a no-op there).
+if [[ "$PROFILE" == opensearch* ]] && "${CURL[@]}" "$URL/_cat/plugins" 2>/dev/null | grep -q query-insights; then
+  if ! "${CURL[@]}" -X PUT "$URL/_cluster/settings" -H 'Content-Type: application/json' -d '{
+    "persistent": {
+      "search.insights.top_queries.latency.enabled": false,
+      "search.insights.top_queries.cpu.enabled": false,
+      "search.insights.top_queries.memory.enabled": false,
+      "search.insights.top_queries.exporter.type": "none"
+    }
+  }' >/dev/null; then
+    echo "warn: could not disable OpenSearch query-insights top_queries" >&2
+  fi
+fi
+
 {
   echo "export IT_PROFILE=${PROFILE}"
   echo "export IT_ENGINE=${PROFILE%%-*}"
