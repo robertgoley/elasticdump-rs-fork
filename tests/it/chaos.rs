@@ -4,6 +4,10 @@
 use std::time::Duration;
 
 use crate::harness::*;
+use crate::support::router_mock::{Recorded, Reply, RouterMock};
+use serde_json::json;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn io_args(c: &Cluster, input: &str, output: &str) -> Vec<String> {
     let mut a = s(&["--input", input, "--output", output]);
@@ -45,26 +49,99 @@ async fn dump_and_lose_context(
     (run.await.unwrap(), out)
 }
 
-// L-618 (TST-BRK-SRV-007): the scroll or point-in-time context disappears mid-dump (what a
-// --scrollTime/--pitKeepAlive shorter than a slow page does). The contexts are dropped through
-// the API (clear-scroll `_all`, delete-PIT `_all`) because engines reap expired contexts only
-// every `search.keep_alive_interval` (1 min): the next page then gets the same 404
-// search_context_missing an expiry gives. The run fails with exit 1, commits nothing, and says
-// the context no longer exists, naming --scrollTime / --pitKeepAlive.
+// Drop only the context returned to this CLI, before forwarding that response. This
+// avoids both a sleep/start-up race and the cluster-wide deletion that used to kill
+// other tests' scrolls/PITs when the IT binary ran with four test threads.
+async fn dump_and_drop_own_context(
+    c: &Cluster,
+    index: &str,
+    pit: bool,
+) -> (std::process::Output, std::path::PathBuf) {
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (cluster, counter) = (c.clone(), Arc::clone(&dropped));
+    let proxy = RouterMock::builder()
+        .handler(move |r: Recorded| {
+            let (c, counter) = (cluster.clone(), Arc::clone(&counter));
+            async move {
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(&r.query)
+                    .finish();
+                let path = format!("{}?{query}", r.path);
+                let body = (!r.body.is_empty()).then(|| serde_json::from_slice(&r.body).unwrap());
+                let (status, body) = c.call(&r.method, &path, body).await;
+                let key = if pit { "pit_id" } else { "_scroll_id" };
+                if let Some(id) = body[key].as_str().filter(|_| status < 300) {
+                    assert_ne!(id, "_all");
+                    let (path, request) = if pit {
+                        ("_search/point_in_time", json!({"pit_id": [id]}))
+                    } else {
+                        ("_search/scroll", json!({"scroll_id": [id]}))
+                    };
+                    let (deleted, reply) = c.call("DELETE", path, Some(request)).await;
+                    assert!(deleted < 300, "dropping own context: {deleted} {reply}");
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+                Reply::json(status, body.to_string())
+            }
+        })
+        .start()
+        .await;
+    let out = tmp_path("expiry", "json");
+    let input = format!("{}/{index}", proxy.url());
+    let mode = if pit { "pit" } else { "scroll" };
+    let output = run_loud(s(&[
+        "--input",
+        &input,
+        "--output",
+        out.to_str().unwrap(),
+        "--limit",
+        "5",
+        "--searchType",
+        mode,
+        "--scrollTime",
+        "1m",
+        "--pitKeepAlive",
+        "1m",
+        "--retryDelay",
+        "1",
+    ]))
+    .await;
+    assert_eq!(dropped.load(Ordering::SeqCst), 1, "one own context deleted");
+    (output, out)
+}
+
+// L-618 (TST-BRK-SRV-007): a real scroll/PIT context disappears mid-dump (as
+// after expiry). Clearing only the captured ID keeps this meaningful without
+// affecting another run. A second live context proves the deletion is scoped.
 #[tokio::test]
 async fn l618_lost_search_context_names_the_keep_alive_flag() {
     let c = Cluster::from_env();
     let index = unique("expiry");
     seed_index(&c, &index, 60).await;
-    let (o, out) = dump_and_lose_context(
-        &c,
-        &index,
-        &["--scrollTime", "1m"],
-        Duration::from_millis(2500),
-        ("DELETE", "_search/scroll/_all", None),
-    )
-    .await;
+    let other = c
+        .ok(
+            "POST",
+            &format!("{index}/_search?scroll=1m"),
+            Some(json!({"size": 1})),
+        )
+        .await;
+    let (o, out) = dump_and_drop_own_context(&c, &index, false).await;
     let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    let (survived, next) = c
+        .call(
+            "POST",
+            "_search/scroll",
+            Some(json!({"scroll": "1m", "scroll_id": other["_scroll_id"]})),
+        )
+        .await;
+    let _ = c
+        .call(
+            "DELETE",
+            "_search/scroll",
+            Some(json!({"scroll_id": [next.get("_scroll_id").unwrap_or(&other["_scroll_id"])]})),
+        )
+        .await;
+    assert_eq!(survived, 200, "unrelated scroll must survive: {next}");
     assert_eq!(o.status.code(), Some(1), "scroll: {err}");
     assert!(
         err.contains("the scroll context no longer exists") && err.contains("--scrollTime"),
@@ -72,17 +149,31 @@ async fn l618_lost_search_context_names_the_keep_alive_flag() {
     );
     assert!(!out.exists(), "scroll: nothing committed");
 
-    let opensearch = matches!(engine(), Engine::OpenSearch);
-    if c.has_pit().await && opensearch {
-        let (o, out) = dump_and_lose_context(
-            &c,
-            &index,
-            &["--searchType", "pit", "--pitKeepAlive", "1m"],
-            Duration::from_millis(2500),
-            ("DELETE", "_search/point_in_time/_all", None),
-        )
-        .await;
+    if c.has_pit().await && matches!(engine(), Engine::OpenSearch) {
+        let other = c
+            .ok(
+                "POST",
+                &format!("{index}/_search/point_in_time?keep_alive=1m"),
+                None,
+            )
+            .await;
+        let (o, out) = dump_and_drop_own_context(&c, &index, true).await;
         let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        let (survived, next) = c
+            .call(
+                "POST",
+                "_search",
+                Some(json!({"size": 1, "pit": {"id": other["pit_id"], "keep_alive": "1m"}})),
+            )
+            .await;
+        let _ = c
+            .call(
+                "DELETE",
+                "_search/point_in_time",
+                Some(json!({"pit_id": [other["pit_id"]]})),
+            )
+            .await;
+        assert_eq!(survived, 200, "unrelated PIT must survive: {next}");
         assert_eq!(o.status.code(), Some(1), "pit: {err}");
         assert!(
             err.contains("the point-in-time context no longer exists")
@@ -91,9 +182,7 @@ async fn l618_lost_search_context_names_the_keep_alive_flag() {
         );
         assert!(!out.exists(), "pit: nothing committed");
     } else {
-        println!(
-            "SKIP (PIT part): needs OpenSearch >= 2.4 (DELETE _search/point_in_time/_all); Elasticsearch has no delete-all for PITs"
-        );
+        println!("SKIP (PIT part): needs OpenSearch >= 2.4; Elasticsearch has a different PIT API");
     }
     c.delete_index(&index).await;
 }

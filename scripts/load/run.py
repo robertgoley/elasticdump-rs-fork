@@ -107,6 +107,13 @@ def tool_path(name):
     sys.exit(f"load: {name} not built: run cargo +1.85.1 build --release --workspace --bins")
 
 
+class RequestError(RuntimeError):
+    """An HTTP rejection (keep its status for the seeder's bounded 429 retry)."""
+    def __init__(self, method, path, status, body):
+        self.status = status
+        super().__init__(f"{method} {path}: HTTP {status}: {body[:500]!r}")
+
+
 class Cluster:
     def __init__(self, url, user=None, pw=None, ca=None):
         self.url = url.rstrip("/")
@@ -117,7 +124,20 @@ class Cluster:
         if self.url.startswith("https"):
             self.ctx = ssl.create_default_context(cafile=ca) if ca else ssl._create_unverified_context()
 
-    def req(self, method, path, body=None, ctype="application/json", ok404=False):
+    def req(self, method, path, body=None, ctype="application/json", ok404=False, retry_429=True):
+        # Refresh/count/stats can also be rejected while the JVM recovers from
+        # indexing pressure. Retry only an explicit HTTP 429, outside tool timing.
+        for attempt in range(7):
+            try:
+                return self._req_once(method, path, body, ctype, ok404)
+            except RequestError as e:
+                if e.status != 429 or not retry_429 or attempt == 6:
+                    raise
+                delay = min(0.25 * 2 ** attempt, 4.0)
+                log(f"{method} {path} throttled (429); retry {attempt + 1}/6 in {delay:g}s")
+                time.sleep(delay)
+
+    def _req_once(self, method, path, body=None, ctype="application/json", ok404=False):
         data = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
         r = urllib.request.Request(self.url + path, data=data, method=method)
         if data is not None:
@@ -130,7 +150,7 @@ class Cluster:
         except urllib.error.HTTPError as e:
             if ok404 and e.code == 404:
                 return None
-            raise RuntimeError(f"{method} {path}: HTTP {e.code}: {e.read()[:500]!r}") from None
+            raise RequestError(method, path, e.code, e.read()) from None
         return json.loads(raw) if raw else None
 
 
@@ -220,58 +240,102 @@ def engine_mapping_flavour(engine):
     return "es"
 
 
-def seed_index(cl, edgen, s, flavour):
+def seed_bulk(cl, batch):
+    """One synchronous bulk at a time. Retry only rejected items, never successes.
+
+    A request-level 400 rejects the whole bulk (e.g. an oversized edge-case ID);
+    isolate it pair by pair. Request/item 429s are pressure, not invalid documents:
+    retry with capped exponential backoff, and fail after seven attempts.
+    """
+    pending, finished = batch, []
+    for attempt in range(7):
+        try:
+            reply = cl.req("POST", "/_bulk", b"".join(pending), "application/x-ndjson", retry_429=False)
+        except RequestError as e:
+            if e.status == 400:
+                if len(pending) == 2:
+                    return finished + [dict(status=400, error=dict(type="request_400"))]
+                for i in range(0, len(pending), 2):
+                    finished.extend(seed_bulk(cl, pending[i:i + 2]))
+                return finished
+            if e.status != 429:
+                raise
+        else:
+            items = reply["items"]
+            if len(items) * 2 != len(pending):
+                raise RuntimeError("seeding bulk response item count differs from request")
+            retry = []
+            for i, item in enumerate(items):
+                res = next(iter(item.values()))
+                if res.get("status") == 429:
+                    retry.extend(pending[2 * i:2 * i + 2])
+                else:
+                    finished.append(res)
+            pending = retry
+            if not pending:
+                return finished
+        if attempt == 6:
+            raise RuntimeError("seeding bulk still receives HTTP/item 429 after 7 attempts")
+        delay = min(0.25 * 2 ** attempt, 4.0)
+        log(f"seed bulk throttled (429); retry {attempt + 1}/6 in {delay:g}s")
+        time.sleep(delay)
+
+
+def seed_batches(lines, max_docs, max_bytes):
+    """Keep pairs intact; oversized docs go alone, duplicate IDs start a new bulk.
+
+    Finishing each bulk before the next keeps duplicate-ID last-wins ordering even
+    when only some items receive 429 and are retried after successful neighbours.
+    """
+    if max_docs <= 0 or max_bytes <= 0:
+        raise ValueError("seed bulk limits must be positive")
+    batch, size, ids = [], 0, set()
+    it = iter(lines)
+    for action in it:
+        source = next(it, None)
+        if source is None:
+            raise RuntimeError("edgen emitted an incomplete bulk action/source pair")
+        meta = next(iter(json.loads(action).values()))
+        key = (meta.get("_index"), meta.get("_id"), meta.get("routing", meta.get("_routing")))
+        duplicate = key[1] is not None and key in ids
+        pair_size = len(action) + len(source)
+        if batch and (len(batch) // 2 >= max_docs or size + pair_size > max_bytes or duplicate):
+            yield batch
+            batch, size, ids = [], 0, set()
+        if key[1] is not None:
+            ids.add(key)
+        batch.extend((action, source))
+        size += pair_size
+        if len(batch) // 2 >= max_docs or size >= max_bytes:
+            yield batch
+            batch, size, ids = [], 0, set()
+    if batch:
+        yield batch
+
+
+def seed_index(cl, edgen, s, flavour, *, max_docs=5000, max_bytes=8 << 20):
     m = json.loads(subprocess.run([edgen, "mapping", "--profile", s["profile"], "--engine", flavour],
                                   check=True, capture_output=True).stdout)
     cl.req("PUT", "/" + s["index"], m)
     p = subprocess.Popen([edgen, "gen", "--profile", s["profile"], "--seed", str(s["seed"]),
                           "--count", str(s["docs"]), "--format", "bulk", "--index", s["index"]],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    batch, n, rejected, reasons = [], 0, 0, {}
+    rejected, reasons = 0, {}
     t0 = time.time()
-
-    def flush():
-        nonlocal rejected
-        if not batch:
-            return
-        try:
-            items = [cl.req("POST", "/_bulk", b"".join(batch), "application/x-ndjson")]
-        except RuntimeError as e:
-            if "HTTP 400" not in str(e):
-                raise
-            # A request-level validation error (e.g. the >512-byte _id edge case)
-            # rejects the whole batch: resend pair by pair to isolate it.
-            items = []
-            for i in range(0, len(batch), 2):
-                try:
-                    items.append(cl.req("POST", "/_bulk", b"".join(batch[i:i + 2]), "application/x-ndjson"))
-                except RuntimeError as e2:
-                    if "HTTP 400" not in str(e2):
-                        raise
-                    rejected += 1
-                    reasons["request_400"] = reasons.get("request_400", 0) + 1
-        for r in items:
-            if not r.get("errors"):
-                continue
-            for it in r["items"]:
-                res = next(iter(it.values()))
+    try:
+        for batch in seed_batches(p.stdout, max_docs, max_bytes):
+            for res in seed_bulk(cl, batch):
                 if res.get("status", 200) >= 300:
                     rejected += 1
                     t = (res.get("error") or {}).get("type", str(res.get("status")))
                     reasons[t] = reasons.get(t, 0) + 1
-        batch.clear()
-
-    size = 0
-    for line in p.stdout:
-        batch.append(line)
-        size += len(line)
-        n += 1
-        if n % 2 == 0 and (len(batch) >= 10000 or size > 8 << 20):
-            flush()
-            size = 0
-    flush()
-    if p.wait() != 0:
-        raise RuntimeError("edgen gen failed")
+        if p.wait() != 0:
+            raise RuntimeError("edgen gen failed")
+    finally:
+        p.stdout.close()
+        if p.poll() is None:
+            p.terminate()
+        p.wait()
     cl.req("POST", f"/{s['index']}/_refresh")
     count = cl.req("GET", f"/{s['index']}/_count")["count"]
     cl.req("POST", f"/{s['index']}/_flush")
@@ -281,7 +345,8 @@ def seed_index(cl, edgen, s, flavour):
                 # same-_id edge cases overwrite each other (not an error)
                 overwritten=s["docs"] - count - rejected,
                 store_ratio=round(store / max(1, s["docs"] * AVG_DOC.get(s["profile"], 1000)), 3), reject_reasons=reasons,
-                seconds=round(time.time() - t0, 2), mapping_engine=flavour)
+                seconds=round(time.time() - t0, 2), mapping_engine=flavour,
+                bulk_max_docs=max_docs, bulk_max_bytes=max_bytes)
 
 
 def cpu_list(spec):
@@ -497,7 +562,10 @@ def main():
 
         for s in plan["seeds"]:
             log(f"seeding {s['index']}: {s['docs']} {s['profile']} docs (seed {s['seed']})")
-            result["seeds"].append(seed_index(cl, edgen, s, flavour))
+            # L0 uses a 1 GB heap. Smaller synchronous bulks avoid large transient
+            # allocations during seed (outside the measured dump/restore steps).
+            limits = dict(max_docs=500, max_bytes=1 << 20) if a.tier == "L0" else {}
+            result["seeds"].append(seed_index(cl, edgen, s, flavour, **limits))
         expected = {s["index"] for s in plan["seeds"]}
 
         def verify(name, a_src, b_src, extra=()):

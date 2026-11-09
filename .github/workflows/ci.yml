@@ -99,7 +99,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           if [[ -z "$BASE" || "$BASE" == 0000000000000000000000000000000000000000 ]] || \
-             ! git diff --quiet "$BASE" HEAD -- src Cargo.toml Cargo.lock scripts/load; then
+             ! git diff --quiet "$BASE" HEAD -- src Cargo.toml Cargo.lock scripts/load tools/edgen tools/edverify .github/workflows/ci.yml; then
             echo "run=1" >> "$GITHUB_OUTPUT"
           else
             echo "run=0" >> "$GITHUB_OUTPUT"
@@ -109,6 +109,8 @@ jobs:
         with: { toolchain: 1.91.1 }
       - if: steps.touched.outputs.run == '1'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - if: steps.touched.outputs.run == '1'
+        run: python3 -m unittest discover -s scripts/load -p 'test_*.py'
       - if: steps.touched.outputs.run == '1'
         run: cargo build --release --workspace --bins
       - if: steps.touched.outputs.run == '1'
