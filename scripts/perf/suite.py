@@ -170,6 +170,16 @@ def skip_reason(engine, case, tool):
     return None
 
 
+def engine_heap_mb(engine, tier_heap_mb):
+    """Per-engine heap override. OpenSearch 2/3 trip the parent circuit breaker on L0
+    datasets that fit elsewhere at 1024 MB: seed fails at 1g, big fills a 2g heap, and
+    edge (10k large-array docs) fills a 3g heap so even DELETE/scroll return HTTP 429.
+    Give them 4096 MB (place.box max). Other engines keep the tier heap."""
+    if engine.startswith(("os2-", "os3-")):
+        return max(tier_heap_mb, 4096)
+    return tier_heap_mb
+
+
 def make_plan(a):
     tiers = tomllib.loads((LOAD / "scenarios/tiers.toml").read_text())
     if a.place not in tiers["place"]:
@@ -195,7 +205,8 @@ def make_plan(a):
     for e in engines:
         profile, env = engine_env(e)
         image = env["OS_IMAGE"] if profile.startswith("opensearch") else env["ES_IMAGE"]
-        result["engines"].append(dict(engine=e, profile=profile, image=image, cases=[
+        result["engines"].append(dict(engine=e, profile=profile, image=image,
+                                        heap_mb=engine_heap_mb(e, fit["heap_mb"]), cases=[
             dict(c, tools={t: skip_reason(e, c, t) or "RUN" for t in (["rs"] if a.skip_node else ["rs", "node"])})
             for c in cs]))
     return result
@@ -337,9 +348,18 @@ class EngineRun:
         self.work.mkdir(mode=0o700)
         profile, self.env = engine_env(engine["engine"])
         self.profile = profile
+        # Prefer the per-engine heap (os2/os3 need 4g); fall back to the tier default.
+        self.heap_mb = engine.get("heap_mb", plan["heap_mb"])
+        # Cgroup limit must cover heap + off-heap; place.box's 6g is tight for a 4g heap.
+        place_cmem = plan["place_config"]["container_mem"]
+        need_cmem_mb = self.heap_mb * 2 + 512
+        # place_cmem is like "6g" / "1536m"; compare in MB without importing guards.sh.
+        _u = place_cmem.strip().lower()
+        _place_mb = int(float(_u[:-1]) * (1024 if _u.endswith("g") else 1)) if _u[-1] in "gm" else int(_u)
+        cmem = place_cmem if _place_mb >= need_cmem_mb else f"{need_cmem_mb}m"
         self.env.update(IT_DIR=str(self.work / "it"), IT_LOCK_HELD="1", RUN_ID=f"perf-{os.getpid()}-{engine['engine']}",
-                        ES_HEAP=f"{plan['heap_mb']}m", OS_HEAP=f"{plan['heap_mb']}m", PORT="19222",
-                        IT_CONTAINER_MEM=plan["place_config"]["container_mem"], IT_CONTAINER_CPUS=str(os.cpu_count()))
+                        ES_HEAP=f"{self.heap_mb}m", OS_HEAP=f"{self.heap_mb}m", PORT="19222",
+                        IT_CONTAINER_MEM=cmem, IT_CONTAINER_CPUS=str(os.cpu_count()))
         self.result = dict(engine=engine["engine"], image=engine["image"], runs=[], summary=[], failures=[], seeds=[])
         self.cl = None
 
@@ -632,7 +652,8 @@ class EngineRun:
 def execute_engine(a, plan, entry, tools, directory):
     er = EngineRun(a, plan, entry, tools, directory)
     identity = dict(protocol=PROTOCOL, host=os.environ.get("PERF_HOST_ID", platform.node()), tier=a.tier,
-                    place=a.place, image=entry["image"], heap_mb=plan["heap_mb"], limit=LIMIT,
+                    place=a.place, image=entry["image"],
+                    heap_mb=entry.get("heap_mb", plan["heap_mb"]), limit=LIMIT,
                     sizes=plan["sizes"], case_manifest=CASES, controller=os.environ.get("PERF_CONTROLLER_ID", "local"),
                     generator_sources=hashlib.sha256(b"".join(p.read_bytes() for p in sorted(
                         (ROOT / "tools/edgen/src").rglob("*.rs")))).hexdigest())
@@ -755,7 +776,13 @@ def main():
                           tool_hashes={k: hashlib.sha256(Path(v).read_bytes()).hexdigest() for k, v in tools.items()},
                           node_runtime=capture(["node", "--version"]) if not a.skip_node else None)
             for entry in plan["engines"]:
-                if R.meminfo_avail_mb() < need_mem or R.disk_free_mb(str(outdir)) < plan["need_disk_mb"]:
+                # Guard against the engine's own heap, not only the tier default (os2/os3 use 4g).
+                # Observed container RSS is ~1.1-1.3× heap for these images; keep 2× for small
+                # heaps and 1.5× once heap ≥ 2g so place.box can still host the OS 2/3 override.
+                _h = entry.get("heap_mb", plan["heap_mb"])
+                _mult = 1.5 if _h >= 2048 else 2
+                eng_need = int(_h * _mult) + 512 + plan["place_config"]["tool_mem_mb"] + 256
+                if R.meminfo_avail_mb() < eng_need or R.disk_free_mb(str(outdir)) < plan["need_disk_mb"]:
                     result["engines"].append(dict(engine=entry["engine"], failures=["RAM/disk resource guard refused engine"],
                                                          summary=[dict(case=c["id"], status="REFUSED: resources") for c in entry["cases"]]))
                     continue

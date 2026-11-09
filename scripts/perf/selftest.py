@@ -38,6 +38,19 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(all('@sha256:' in e['image'] for e in plan['engines']))
         self.assertEqual(S.make_plan(args(tier='L1'))['heap_mb'], 4096)
 
+    def test_opensearch_23_heap_override(self):
+        # OS 2/3 need 4g on L0 to clear the parent circuit breaker; other engines keep 1024.
+        p = S.make_plan(args(tier='L0', place='box', engines='os2-plain,os3-secure,es717-plain,os13-plain'))
+        self.assertEqual(p['heap_mb'], 1024)
+        by = {e['engine']: e['heap_mb'] for e in p['engines']}
+        self.assertEqual(by['os2-plain'], 4096)
+        self.assertEqual(by['os3-secure'], 4096)
+        self.assertEqual(by['es717-plain'], 1024)
+        self.assertEqual(by['os13-plain'], 1024)
+        # L1 already asks for 4g; the override must not lower it.
+        p1 = S.make_plan(args(tier='L1', place='big', engines='os2-plain'))
+        self.assertEqual(p1['engines'][0]['heap_mb'], 4096)
+
     def test_selection_and_exclusions(self):
         p = S.make_plan(args(engines='os3-secure,es710-plain', cases='copy,dump-pit-s4'))
         self.assertEqual(p['engine_order'], ['es710-plain', 'os3-secure'])
