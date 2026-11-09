@@ -449,6 +449,19 @@ def open_text(path):
     return open(path, encoding="utf-8")
 
 
+def positive_int(value):
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return n
+
+
+def verification_limits(tier, size=None, slices=None):
+    # Only the small 1 GB smoke changes. Larger tiers keep edverify's defaults.
+    return dict(size=size if size is not None else (100 if tier == "L0" else 1000),
+                slices=slices if slices is not None else (1 if tier == "L0" else 4))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tier")
@@ -457,9 +470,12 @@ def main():
     ap.add_argument("--engine", default=None)
     ap.add_argument("--run-id", default=None)
     ap.add_argument("--docs", type=int, default=None, help="override the tier's doc count (smoke runs)")
+    ap.add_argument("--verify-size", type=positive_int, help="edverify page size (L0: 100, other tiers: 1000)")
+    ap.add_argument("--verify-slices", type=positive_int, help="edverify scroll slices (L0: 1, other tiers: 4)")
     ap.add_argument("--keep", action="store_true", help="keep the cluster and work dir")
     ap.add_argument("--dry-run", action="store_true", help="only print the fit decision")
     a = ap.parse_args()
+    verification = verification_limits(a.tier, a.verify_size, a.verify_slices)
 
     tiers = tomllib.load(open(os.path.join(HERE, "scenarios", "tiers.toml"), "rb"))
     spath = a.scenario if os.path.exists(a.scenario) else os.path.join(HERE, "scenarios", a.scenario + ".toml")
@@ -475,7 +491,7 @@ def main():
     if a.dry_run:
         print(json.dumps(dict(scenario=scenario["name"], tier=a.tier, place=a.place, engine=engine,
                               seeds=plan["seeds"], need_disk_mb=plan["need_disk_mb"], heap_mb=plan["heap_mb"],
-                              scaled=plan["scaled"]), indent=1))
+                              scaled=plan["scaled"], verification=verification), indent=1))
         return 0
 
     # Guards: lock, memory and disk (TST-INF-007).
@@ -530,7 +546,7 @@ def main():
     result = dict(schema="edrs-load/v1", run_id=run_id, scenario=scenario["name"], tier=a.tier,
                   place=a.place, engine=engine, up_profile=up_profile,
                   image=env.get("ES_IMAGE") or env.get("OS_IMAGE"), heap=heap, scaled=plan["scaled"],
-                  cpus=sorted(os.sched_getaffinity(0)),
+                  cpus=sorted(os.sched_getaffinity(0)), verification=verification,
                   git=subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
                                      capture_output=True, text=True).stdout.strip(),
                   tool=subprocess.run([tool, "--version"], capture_output=True, text=True).stdout.strip(),
@@ -572,7 +588,9 @@ def main():
             rep = os.path.join(resdir, f"verify-{name}.json")
             b_src = [b_src] if isinstance(b_src, str) else list(b_src)
             p = subprocess.run([edverify, "diff", "--a", a_src, "--b", *b_src, "--index-as", "x",
-                                "--out", rep, *tls_edv, *extra], env=tenv, capture_output=True, text=True)
+                                "--out", rep, "--size", str(verification["size"]),
+                                "--slices", str(verification["slices"]),
+                                *tls_edv, *extra], env=tenv, capture_output=True, text=True)
             v = json.load(open(rep)) if os.path.exists(rep) else {}
             ok = p.returncode == 0
             if not ok:

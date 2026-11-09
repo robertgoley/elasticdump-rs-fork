@@ -54,7 +54,7 @@ LOAD_PLACE=runner scripts/load/run.sh L1R dump-restore-logs
 
 **Seeding.** The runner seeds each index from `edgen` through its own `_bulk` client. Edge-case documents that the engine rejects are recorded per reason in `seeds[].reject_reasons`, together with `seeds[].overwritten`; they are not counted as failures. The reference for verification is always the digest of what the engine stored.
 
-**Correctness (LOAD-002).** After every step, `edverify diff --index-as x` compares the source index with the step's output (a dump file or a target index). Any mismatch fails the run, and the failure names the first 10 differing ids.
+**Correctness (LOAD-002).** After every step, `edverify diff --index-as x` compares the source index with the step's output (a dump file or a target index). Any mismatch fails the run, and the failure names the first 10 differing ids. L0 verification uses one scroll slice with 100 docs per page to fit the unchanged 1 GB heap; other tiers keep 4 slices / 1000 docs. Override with `--verify-size N --verify-slices N` (positive values); the selected limits are recorded in result JSON under `verification`. edverify retries explicit HTTP 429s with bounded backoff and clears its own scroll IDs on success and error; a failed cleanup fails the verification. All documents, digest and leak assertions remain unchanged.
 
 **Metrics (LOAD-003).** Each tool step runs under `measure.sh` and is schema-validated. The tool's max RSS must stay under the place's `tool_mem_mb`. `Total Writes` must equal the source count, and `Failed Writes` must be 0.
 

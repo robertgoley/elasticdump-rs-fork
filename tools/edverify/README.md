@@ -16,7 +16,9 @@ An input is one of:
   - A line with a `_source` member is an elasticdump or hit record.
   - Any other line is treated as a bare source document.
 - **A cluster index.** `http(s)://[user:pass@]host:port/<index>`.
-  - edverify reads it with its own sliced scroll (`--slices`, `--size`).
+  - edverify reads it with its own sliced scroll (`--slices`, `--size`). Defaults remain 4 slices and 1000 docs per page.
+  - HTTP 429 responses retry up to six times with 250/500/1000/2000/4000/4000 ms backoff; transport errors and other HTTP errors are not retried (a lost continuation response may already have advanced the scroll).
+  - Every returned scroll ID is tracked before page processing. All slice tasks are joined even when one errors or panics, then only their own IDs are cleared before returning success/error or checking `_count`. Cleanup 429s use the same retry budget; failed cleanup is reported, not ignored. Already-freed IDs (HTTP 404) are harmless. No cluster-wide clear is used. edverify opens scrolls only, never PITs; network loss/process termination can still prevent remote cleanup, which must not be mistaken for a successful verification.
   - It then checks the number of documents read against `_count`.
   - Credentials can also come from `EDV_USER` and `EDV_PASSWORD`. Use `--insecure` or `--ca` for TLS.
 

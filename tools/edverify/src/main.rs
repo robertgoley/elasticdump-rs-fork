@@ -14,6 +14,7 @@ use edverify::*;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 #[derive(Parser)]
 #[command(
@@ -193,6 +194,12 @@ fn client(c: &Common) -> Result<reqwest::Client> {
     Ok(b.build()?)
 }
 
+const HTTP_RETRIES: usize = 6;
+
+fn retry_delay(attempt: usize) -> std::time::Duration {
+    std::time::Duration::from_millis((250u64 << attempt.min(4)).min(4000))
+}
+
 async fn send(
     cl: &reqwest::Client,
     t: &Target,
@@ -200,24 +207,115 @@ async fn send(
     path: &str,
     body: String,
 ) -> Result<Vec<u8>> {
+    send_request(cl, t, method, path, body, false).await
+}
+
+async fn send_request(
+    cl: &reqwest::Client,
+    t: &Target,
+    method: reqwest::Method,
+    path: &str,
+    body: String,
+    allow_missing: bool,
+) -> Result<Vec<u8>> {
     let url = t.base.join(path)?;
-    let mut rq = cl
-        .request(method, url)
-        .header("content-type", "application/json")
-        .body(body);
-    if let Some(u) = &t.user {
-        rq = rq.basic_auth(u, t.pass.as_deref());
+    for attempt in 0..=HTTP_RETRIES {
+        let mut rq = cl
+            .request(method.clone(), url.clone())
+            .header("content-type", "application/json")
+            .body(body.clone());
+        if let Some(u) = &t.user {
+            rq = rq.basic_auth(u, t.pass.as_deref());
+        }
+        // Do not retry transport failures: a continuation may already have
+        // advanced the scroll. An explicit 429 is a rejected request, safe to retry.
+        let r = rq.send().await?;
+        let st = r.status();
+        let b = r.bytes().await?.to_vec();
+        if st == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < HTTP_RETRIES {
+            drop(b);
+            tokio::time::sleep(retry_delay(attempt)).await;
+            continue;
+        }
+        if allow_missing && st == reqwest::StatusCode::NOT_FOUND {
+            // All supplied scroll IDs already expired/were freed.
+            return Ok(Vec::new());
+        }
+        if !st.is_success() {
+            bail!(
+                "{path}: HTTP {st}: {}",
+                String::from_utf8_lossy(&b[..b.len().min(300)])
+            );
+        }
+        return Ok(b);
     }
-    let r = rq.send().await?;
-    let st = r.status();
-    let b = r.bytes().await?.to_vec();
-    if !st.is_success() {
-        bail!(
-            "{path}: HTTP {st}: {}",
-            String::from_utf8_lossy(&b[..b.len().min(300)])
-        );
+    unreachable!("the last failed request returns an error")
+}
+
+type ScrollIds = Arc<Mutex<HashSet<String>>>;
+type SliceResult = (SetDigest, Collect);
+
+async fn clear_scrolls(cl: &reqwest::Client, t: &Target, seen: &ScrollIds) -> Result<()> {
+    let mut ids: Vec<_> = seen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .cloned()
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
     }
-    Ok(b)
+    ids.sort();
+    let body = serde_json::json!({"scroll_id": ids}).to_string();
+    let reply = send_request(cl, t, reqwest::Method::DELETE, "_search/scroll", body, true).await?;
+    if !reply.is_empty() {
+        let v: serde_json::Value = serde_json::from_slice(&reply)?;
+        if v.get("succeeded").and_then(serde_json::Value::as_bool) == Some(false) {
+            bail!("server reported scroll cleanup unsuccessful");
+        }
+    }
+    Ok(())
+}
+
+// Drain every slice even after an error/panic. Returning on the first error drops
+// JoinSet and aborts its siblings, which can own live contexts. Register IDs before
+// any fallible page processing, then await cleanup once all tasks have finished.
+async fn join_slices(
+    mut set: tokio::task::JoinSet<Result<SliceResult>>,
+    cl: &reqwest::Client,
+    t: &Target,
+    seen: ScrollIds,
+    sel: Option<HashSet<usize>>,
+    buckets: usize,
+) -> Result<SliceResult> {
+    let mut dig = SetDigest::new(buckets);
+    let mut col = Collect {
+        buckets: sel,
+        ..Default::default()
+    };
+    let mut error = None;
+    while let Some(r) = set.join_next().await {
+        match r.map_err(anyhow::Error::from).and_then(|r| r) {
+            Ok((d, c2)) => {
+                dig.merge(&d);
+                for (k, mut v) in c2.docs {
+                    col.docs.entry(k).or_default().append(&mut v);
+                }
+            }
+            Err(e) => {
+                error.get_or_insert(e);
+            }
+        }
+    }
+    let cleanup = clear_scrolls(cl, t, &seen).await;
+    if let Some(error) = error {
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(e) => error.context(format!("scroll cleanup also failed: {e:#}")),
+        });
+    }
+    cleanup.context("scroll cleanup failed")?;
+    Ok((dig, col))
 }
 
 fn enc(s: &str) -> String {
@@ -239,11 +337,13 @@ async fn scan_cluster(
     o: &Opts,
     sel: Option<HashSet<usize>>,
 ) -> Result<(SetDigest, Collect)> {
-    let t = std::sync::Arc::new(target(input)?);
+    let t = Arc::new(target(input)?);
     let cl = client(c)?;
     let slices = c.slices.max(1);
     let mut set = tokio::task::JoinSet::new();
+    let seen: ScrollIds = Arc::new(Mutex::new(HashSet::new()));
     for i in 0..slices {
+        let seen = Arc::clone(&seen);
         let (t, cl, o, sel, size) = (t.clone(), cl.clone(), o.clone(), sel.clone(), c.size);
         set.spawn(async move {
             let mut dig = SetDigest::new(o.buckets());
@@ -262,15 +362,17 @@ async fn scan_cluster(
                 enc(&t.index)
             );
             let mut page = send(&cl, &t, reqwest::Method::POST, &path, body).await?;
-            let mut ids: Vec<String> = Vec::new();
             loop {
                 let sid = sonic_rs::get(page.as_slice(), &["_scroll_id"])
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string));
                 if let Some(s) = &sid {
-                    if ids.last() != Some(s) {
-                        ids.push(s.clone());
+                    if s.is_empty() || s == "_all" {
+                        bail!("server returned an invalid scroll ID");
                     }
+                    seen.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(s.clone());
                 }
                 let failed = sonic_rs::get(page.as_slice(), &["_shards", "failed"])
                     .ok()
@@ -314,25 +416,10 @@ async fn scan_cluster(
                 );
                 page = send(&cl, &t, reqwest::Method::POST, "_search/scroll", body).await?;
             }
-            if !ids.is_empty() {
-                let body = format!(r#"{{"scroll_id":{}}}"#, sonic_rs::to_string(&ids)?);
-                let _ = send(&cl, &t, reqwest::Method::DELETE, "_search/scroll", body).await;
-            }
             Ok::<_, anyhow::Error>((dig, col))
         });
     }
-    let mut dig = SetDigest::new(o.buckets());
-    let mut col = Collect {
-        buckets: sel,
-        ..Default::default()
-    };
-    while let Some(r) = set.join_next().await {
-        let (d, c2) = r??;
-        dig.merge(&d);
-        for (k, mut v) in c2.docs {
-            col.docs.entry(k).or_default().append(&mut v);
-        }
-    }
+    let (dig, col) = join_slices(set, &cl, &t, seen, sel, o.buckets()).await?;
     // Cross-check with _count (catches a reader that silently stopped early).
     let cnt = send(
         &cl,
@@ -480,3 +567,11 @@ fn run() -> Result<i32> {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../tests/support/router_mock.rs"]
+mod router_mock;
+
+#[cfg(test)]
+mod cluster_tests;

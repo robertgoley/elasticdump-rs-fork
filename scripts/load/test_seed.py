@@ -20,6 +20,19 @@ def reply(*statuses):
 
 
 class SeedTests(unittest.TestCase):
+    def test_verification_defaults_only_reduce_l0(self):
+        self.assertEqual(R.verification_limits("L0"), dict(size=100, slices=1))
+        for tier in ["L1S", "L1L", "L1", "L2"]:
+            self.assertEqual(R.verification_limits(tier), dict(size=1000, slices=4))
+
+    def test_verification_limits_are_configurable(self):
+        self.assertEqual(R.verification_limits("L0", 250, 2), dict(size=250, slices=2))
+        self.assertEqual(R.verification_limits("L1", slices=1), dict(size=1000, slices=1))
+        self.assertEqual(R.positive_int("5"), 5)
+        for value in ["0", "-1"]:
+            with self.assertRaises(R.argparse.ArgumentTypeError):
+                R.positive_int(value)
+
     def test_request_status_is_preserved(self):
         error = urllib.error.HTTPError("http://localhost/_bulk", 429, "busy", {}, io.BytesIO(b"breaker"))
         with patch.object(R.urllib.request, "urlopen", side_effect=error):
