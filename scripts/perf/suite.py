@@ -171,10 +171,12 @@ def skip_reason(engine, case, tool):
 
 
 def engine_heap_mb(engine, tier_heap_mb):
-    """Per-engine heap. OpenSearch 2/3 used to need 2–4g here because query-insights
-    top_queries collectors (on by default since 2.16) retained large query payloads and
-    tripped the parent breaker; scripts/it/up.sh now disables those collectors, so the
-    tier heap is enough again. Hook kept for a future per-engine override."""
+    """Per-engine heap. OpenSearch 2/3 still need a modest raise after query-insights is
+    disabled in up.sh: L0 restore-big keeps source+dest huge-doc indices resident and
+    trips the 1g parent breaker (HTTP 429 even on DELETE /_search/scroll/_all). 2048 MB
+    clears big+edge; other engines keep the tier heap."""
+    if engine.startswith(("os2-", "os3-")):
+        return max(tier_heap_mb, 2048)
     return tier_heap_mb
 
 

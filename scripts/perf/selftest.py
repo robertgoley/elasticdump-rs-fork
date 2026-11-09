@@ -38,13 +38,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(all('@sha256:' in e['image'] for e in plan['engines']))
         self.assertEqual(S.make_plan(args(tier='L1'))['heap_mb'], 4096)
 
-    def test_opensearch_23_uses_tier_heap(self):
-        # After up.sh disables query-insights top_queries, OS 2/3 share the tier heap.
+    def test_opensearch_23_heap_with_insights_disabled(self):
+        # Insights off in up.sh; OS 2/3 still need 2g for L0 restore-big (src+dst resident).
         p = S.make_plan(args(tier='L0', place='box', engines='os2-plain,os3-secure,es717-plain,os13-plain'))
         self.assertEqual(p['heap_mb'], 1024)
         by = {e['engine']: e['heap_mb'] for e in p['engines']}
-        self.assertEqual(by['os2-plain'], 1024)
-        self.assertEqual(by['os3-secure'], 1024)
+        self.assertEqual(by['os2-plain'], 2048)
+        self.assertEqual(by['os3-secure'], 2048)
         self.assertEqual(by['es717-plain'], 1024)
         self.assertEqual(by['os13-plain'], 1024)
         p1 = S.make_plan(args(tier='L1', place='big', engines='os2-plain'))
