@@ -174,9 +174,10 @@ def engine_heap_mb(engine, tier_heap_mb):
     """Per-engine heap. OpenSearch 2/3 still need a modest raise after query-insights is
     disabled in up.sh: L0 restore-big keeps source+dest huge-doc indices resident and
     trips the 1g parent breaker (HTTP 429 even on DELETE /_search/scroll/_all). 2048 MB
-    clears big+edge; other engines keep the tier heap."""
+    still tripped it while reading back big; 4096 MB is the current setting; other
+    engines keep the tier heap."""
     if engine.startswith(("os2-", "os3-")):
-        return max(tier_heap_mb, 2048)
+        return max(tier_heap_mb, 4096)
     return tier_heap_mb
 
 
