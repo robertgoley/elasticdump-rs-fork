@@ -259,21 +259,145 @@ def row_summary(case, results, base, threshold, directory):
 
 
 def markdown(results):
-    lines = ["# Sequential speed suite", "", "Wall median seconds; ratio = rs / Node (lower is better).",
-             "Node SLOWER is a warning, never a baseline failure. Missing baselines are not regression-tested.",
-             "NODE_DIFF = Node's output differs in value from the source (e.g. integers above 2^53);",
-             "NODE_FAIL = Node errored; NODE_TIMEOUT = Node exceeded the per-command limit and was killed.",
-             "All three are recorded for comparison only and never fail an rs case.", ""]
-    def fmt(x, suffix=""):
-        return "—" if x is None else f"{x:.3f}{suffix}"
-    for engine in results["engines"]:
-        lines += [f"## {engine['engine']}", "", "| Case | rs median | Node median | rs/Node | Baseline wall delta | Status |",
-                  "|---|---:|---:|---:|---:|---|"]
-        for row in engine.get("summary", []):
-            lines.append(f"| {row['case']} | {fmt((row.get('rs') or {}).get('wall_s'))} | "
-                         f"{fmt((row.get('node') or {}).get('wall_s'))} | {fmt(row.get('rs_over_node'))} | "
-                         f"{fmt(row.get('baseline_delta_pct'), '%')} | {row['status']}"
-                         f"{'; ' + row['node_status'] if row.get('node_status') else ''} |")
+    engines = results.get("engines") or []
+    names = [e.get("engine", "?") for e in engines]
+    title = "searchdump sequential speed suite"
+    if len(names) == 1:
+        title += f" — {names[0]}"
+        ver = engines[0].get("engine_version")
+        if ver:
+            title += f" ({ver})"
+    lines = [f"# {title}", ""]
+
+    def wall(m):
+        return None if not m or m.get("wall_s") is None else m["wall_s"]
+
+    def fmt_s(v, flag_low=False):
+        if v is None:
+            return "—"
+        mark = " †" if flag_low and v < 0.5 else ""
+        return f"{v:.3f}{mark}"
+
+    def fmt_x(rs_s, node_s):
+        if rs_s and node_s:
+            return f"{node_s / rs_s:.2f}×"
+        return "—"
+
+    def fmt_docs(m):
+        if not m or m.get("docs_per_s") is None:
+            return "—"
+        return f"{m['docs_per_s']:.0f}"
+
+    def fmt_rss(m):
+        if not m or m.get("max_rss_kb") is None:
+            return "—"
+        return f"{m['max_rss_kb'] / 1024:.1f}"
+
+    def fmt_delta(v):
+        return "—" if v is None else f"{v:.3f}%"
+
+    n_pass = n_fail = n_skip = n_base = 0
+    ratios = []
+    low = False
+    for engine in engines:
+        for row in engine.get("summary") or []:
+            st = row.get("status") or ""
+            if "NO_BASELINE" in st:
+                n_base += 1
+            if st.startswith("PASS"):
+                n_pass += 1
+            elif st.startswith("SKIP") or st.startswith("NOT_RUN") or st.startswith("REFUSED"):
+                n_skip += 1
+            else:
+                n_fail += 1
+            rs_s, nd_s = wall(row.get("rs")), wall(row.get("node"))
+            if rs_s and nd_s:
+                ratios.append(nd_s / rs_s)
+            if (rs_s is not None and rs_s < 0.5) or (nd_s is not None and nd_s < 0.5):
+                low = True
+
+    head = f"**Results:** {n_pass} PASS, {n_fail} FAIL, {n_skip} skipped/not-run"
+    if n_base:
+        head += f", {n_base} NO_BASELINE"
+    if ratios:
+        head += f"; × faster median {statistics.median(ratios):.2f}× over {len(ratios)} Node-compared cases"
+    lines += [head, ""]
+
+    meta = []
+    if results.get("git"):
+        meta.append(f"git `{results['git']}`")
+    if results.get("started"):
+        finished = results.get("finished") or "in progress"
+        meta.append(f"started {results['started']}, finished {finished}")
+    plan = results.get("plan") or {}
+    bits = []
+    if plan.get("tier"):
+        bits.append(f"tier {plan['tier']}")
+    if plan.get("limit") is not None:
+        bits.append(f"limit {plan['limit']}")
+    if plan.get("heap_mb") is not None:
+        bits.append(f"heap {plan['heap_mb']} MB")
+    if plan.get("reps") is not None:
+        bits.append(f"{plan['reps']} reps")
+    if bits:
+        meta.append(", ".join(bits))
+    hashes = results.get("tool_hashes") or {}
+    for key in ("searchdump", "elasticdump-rs", "searchdump-multi", "multielasticdump"):
+        if key in hashes:
+            meta.append(f"{key} sha256 `{hashes[key][:12]}…`")
+    if results.get("node_runtime"):
+        meta.append(f"Node {results['node_runtime']}")
+    if meta:
+        lines += ["- " + x for x in meta] + [""]
+
+    lines += [
+        'Legend: "× faster" is Node wall / searchdump wall (higher means searchdump is faster).',
+        "NODE_DIFF = Node's output differs in value from the source (e.g. integers above 2^53);",
+        "NODE_FAIL = Node errored; NODE_TIMEOUT = Node exceeded the per-command limit and was killed.",
+        "All three are recorded for comparison only and never fail a searchdump case.",
+        "Node SLOWER is a warning, never a baseline failure. Missing baselines are not regression-tested.",
+    ]
+    if low:
+        lines.append(
+            "† Wall time is below 0.5 s (around the 0.1 s timer resolution); treat that ratio as indicative only."
+        )
+    lines.append("")
+
+    setup_prefixes = ("FAIL: setup", "REFUSED:", "NOT_RUN:", "FAIL: orchestration")
+
+    def is_setup(row):
+        st = row.get("status") or ""
+        return any(st.startswith(p) for p in setup_prefixes)
+
+    for engine in engines:
+        heading = f"## searchdump × {engine.get('engine', '?')}"
+        if engine.get("engine_version"):
+            heading += f" ({engine['engine_version']})"
+        lines += [heading, ""]
+        summary = engine.get("summary") or []
+        if summary and all(is_setup(row) for row in summary):
+            st = summary[0].get("status", "setup failure")
+            lines += [f"**Setup failure:** {len(summary)} cases not run (`{st}`). Collapsed; they share the same cause.", ""]
+            for error in engine.get("failures", []):
+                lines.append("Failure: " + str(error).replace("\n", " ").replace("|", "/"))
+            if engine.get("failures"):
+                lines.append("")
+            continue
+        lines += [
+            "| Case | searchdump s | Node s | × faster | searchdump docs/s | peak RSS MB | Baseline wall delta | Status |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
+        ]
+        for row in summary:
+            rs, nd = row.get("rs") or {}, row.get("node") or {}
+            rs_s, nd_s = wall(rs), wall(nd)
+            status = row.get("status") or ""
+            if row.get("node_status"):
+                status = f"{status}; {row['node_status']}"
+            lines.append(
+                f"| {row['case']} | {fmt_s(rs_s, True)} | {fmt_s(nd_s, True)} | "
+                f"{fmt_x(rs_s, nd_s)} | {fmt_docs(rs)} | {fmt_rss(rs)} | "
+                f"{fmt_delta(row.get('baseline_delta_pct'))} | {status} |"
+            )
         for error in engine.get("failures", []):
             lines.append("\nFailure: " + str(error).replace("\n", " ").replace("|", "/"))
         for note in engine.get("node_differences", []):
