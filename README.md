@@ -80,7 +80,8 @@ Restoring split dumps takes one invocation per part (as in Node): `for f in dump
 
 `elasticdump-rs --help` lists everything. Groups:
 
-* **Endpoints/types:** `--input`, `--output` (URL, file, or `$`), `--input-index`/`--output-index` (`index[/type]`),
+* **Endpoints/types:** `--input`, `--output` (URL, file, `$`, or a storage URL `s3://`, `b2://`, `sftp://`, `fs://`;
+  see "Object storage and SFTP"), `--inputStorageConfig`/`--outputStorageConfig`, `--input-index`/`--output-index` (`index[/type]`),
   `--type data|mapping|settings|index|analyzer|alias|template|component_template|index_template|policy|script`,
   `--overwrite`, `--prefix`/`--suffix`, `--quiet`, `--debug`, `--format human`.
 * **Retrieval:** `--limit` (default 100), `--offset`, `--size`, `--searchBody` (JSON or `@file`),
@@ -414,6 +415,109 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
   metadata). Tested against the real elasticdump 6.125.1 npm package both ways.
 - Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers; set `NODE_ED_BIN` to the
   `node_modules/.bin` of an elasticdump 6.x install to add the Node checks).
+
+## Object storage and SFTP (OpenDAL)
+
+Besides Elasticsearch/OpenSearch URLs, `$` and plain paths, `--input` and `--output` accept storage URLs. They go
+through [OpenDAL](https://opendal.apache.org) 0.57; plain paths keep the native file code and do not change.
+
+| URL | Store |
+|---|---|
+| `s3://BUCKET/KEY` | S3 and S3-compatible servers (MinIO, RustFS, ...) |
+| `b2://BUCKET/KEY` | Backblaze B2 (native API) |
+| `sftp://USER@HOST:PORT/ABSOLUTE/PATH` | SFTP over the system `ssh` client |
+| `fs:///PATH` or `file:///PATH` | local files through OpenDAL (mostly for testing) |
+
+`http(s)://` is still a cluster and a bare path is still a native file. Compression (`--compressionType`, `.gz`/`.zst`
+names) and splitting (`--fileSize`, `--maxRows`, parts `KEY.split-0.json.gz`, ...) work as for files, in both
+directions; S3 and B2 writes are multipart uploads (`chunk_mb`, default 16, `concurrent`, default 4).
+
+```sh
+# dump to MinIO with zstd in 1 GB parts; credentials from the INI file
+elasticdump-rs --input=https://src:9200/logs --output='s3://backups/logs/logs.json?endpoint=https://minio:9000' \
+  --outputStorageConfig=/etc/edrs/s3.ini --compressionType=zstd --fileSize=1gb
+
+# restore from SFTP
+elasticdump-rs --input=sftp://backup@vault:22/srv/dumps/logs.json --output=https://dst:9200/logs
+
+# copy a file between stores (no cluster): s3 -> sftp
+elasticdump-rs --inputStorageConfig=s3.ini --input=s3://backups/logs/logs.json \
+  --output=sftp://backup@vault:22/srv/dumps/logs.json
+```
+
+**Secrets never go in the URL.** A URL with a password (`user:pw@`) or a secret query parameter
+(`secret_access_key`, `session_token`, `sse_c_key`, `application_key`) is refused with a usage error that says where to
+put it. Each setting is looked up in this order, first match wins:
+
+1. a URL query parameter (non-secret settings only): `?endpoint=...&region=...`;
+2. the INI file given with `--inputStorageConfig` / `--outputStorageConfig` (or `ELASTICDUMP_INPUT_STORAGE_CONFIG` /
+   `ELASTICDUMP_OUTPUT_STORAGE_CONFIG`), the storage counterpart of `--httpAuthFile`: top-level `key = value` lines,
+   overridden by a `[s3]` / `[b2]` / `[sftp]` section and then by a `[s3.BUCKET]` / `[sftp.HOST]` section. Unknown
+   keys get a warning;
+3. the environment: `ELASTICDUMP_<SCHEME>_<SETTING>` (`ELASTICDUMP_S3_ENDPOINT`, `ELASTICDUMP_SFTP_KEY`, ...), then
+   the standard names: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_ENDPOINT_URL_S3` /
+   `AWS_ENDPOINT_URL`, `AWS_REGION` / `AWS_DEFAULT_REGION`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`.
+
+```ini
+# s3.ini (chmod 600)
+endpoint = https://minio.example:9000
+region = us-east-1
+key = 
+secret = 
+ca_file = /etc/edrs/minio-ca.pem
+sse_c_key_file = /etc/edrs/sse-c.key
+```
+
+Settings (INI aliases in brackets):
+
+- `s3`: `endpoint`, `region` (default `us-east-1`), `access_key_id` (`key`), `secret_access_key` (`secret`),
+  `session_token` (`token`), `virtual_host_style` (default path style), `allow_anonymous` (unsigned requests),
+  `disable_config_load` (ignore `~/.aws`), `storage_class`, `sse_c_algorithm`, `sse_c_key`, `sse_c_key_file`,
+  `ca_file`, `insecure`, `chunk_mb`, `concurrent`.
+- `b2`: `application_key_id` (`key`), `application_key` (`secret`), `bucket_id` (B2 needs the bucket id as well as
+  the name), `chunk_mb`, `concurrent`.
+- `sftp`: `key` (`key_file`; a private key file, otherwise ssh-agent / `~/.ssh` defaults), `user` (or `USER@` in the
+  URL), `known_hosts` = `strict` (default; the host must already be in `~/.ssh/known_hosts`), `add` (trust a new host
+  once and record it) or `accept` (trust any host key; avoid).
+
+Every secret (keys, tokens, the SSE-C key) is masked in logs, `--debug` output and errors, like the cluster
+passwords, and any storage URL that is printed has its userinfo password and secret query values masked. An INI file or SSE-C key file readable by other users is used
+with a warning.
+
+**SSE-C** (S3 server-side encryption with a customer key; MinIO and RustFS support it): set `sse_c_key_file` (a file
+with the 32 raw key bytes or their base64) or `sse_c_key` (base64, INI or env only); `sse_c_algorithm` defaults to
+`AES256`. It is applied with OpenDAL's `server_side_encryption_with_customer_key`. The server does the encryption:
+the key is sent with every request (so use `https://`; MinIO refuses SSE-C over plain HTTP), the server does not
+store it, and the object cannot be read without the same key (a read without it or with another key fails). Losing
+the key loses the data. Reads need the same setting as the write.
+
+Other behaviour:
+
+- `--overwrite` is needed to replace an existing object, as for files. A split set on a store is not atomic: parts
+  appear one by one, and a failed run deletes the parts it wrote (an interrupted one may leave some).
+- `sftp://` needs the `ssh` client on `PATH` (OpenSSH; the server side can be any SFTP server, tested with OpenSSH
+  and Dropbear + OpenSSH's `sftp-server`). A connection failure hints at the usual causes (host key, user, key).
+- Requests time out after 300 s of no progress and are retried 5 times with jittered backoff. TLS uses the same
+  rustls setup as cluster connections (`ca_file`, `insecure` per store).
+- Cargo features `opendal` (S3, B2, fs) and `opendal-sftp` are on by default; a build without them refuses storage
+  URLs with a clear error.
+
+### multielasticdump with storage
+
+- `--direction dump --output=s3://BUCKET/PREFIX` dumps to a local staging directory (`--stagingDir`, default a temp
+  dir) and uploads the finished tree only when every item succeeded; otherwise the staging directory is kept and the
+  error says how to `--resume` with `--stagingDir`.
+- `--direction load --input=sftp://...` downloads the tree to the staging directory first, then loads as usual.
+- `--direction copy --input=SRC --output=DST` copies a whole dump directory between any two of local paths, `s3://`,
+  `b2://`, `sftp://` and `fs://` byte for byte (format, compression, split parts, manifest and `_cluster/` as they
+  are), checking each object's size; existing targets are refused unless `--overwrite`. No cluster is involved, and
+  layout is not converted.
+- `--inputStorageConfig` / `--outputStorageConfig` as above; `--metaDir` is refused with storage URLs.
+
+Tests: unit tests in `src/remote.rs`, fs round trips in the lib tests, and container scripts in
+`scripts/opendal-tests/` (`run-all.sh`; S3 on MinIO and RustFS with SSE-C, SFTP on OpenSSH and Dropbear, cross-store
+and OpenSearch runs; see TESTING-COMPLETED.md). B2 is only unit tested (no mock exists); `b2-real.sh` is for a real
+account.
 
 ## Renaming indices
 

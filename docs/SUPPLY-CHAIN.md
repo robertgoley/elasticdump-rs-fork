@@ -24,7 +24,7 @@ Each section names the gate that enforces it and how to run it locally.
 - **Sources:** crates.io only; unknown registries and git sources are denied.
 - **Duplicates:** `multiple-versions = "deny"`. The skip list has three
   entries, each with the crate that pulls in the old version: base64 0.22,
-  hashbrown 0.14 and getrandom 0.2.
+  hashbrown 0.14 and getrandom 0.2, plus the OpenDAL set (L-809a, see below).
 - **Banned crates:** OpenSSL and native-tls, libgit2, curl, other HTTP clients,
   and `libz-sys`.
 - **Build scripts** (`[bans.build]`): only the 29 crates listed under
@@ -467,3 +467,25 @@ sources). What each gate sees:
   inventory update and a native allow-list entry.
 
 Measurements and the recommendation: `results/local/L-802a.md`.
+
+## OpenDAL storage path (L-809a)
+
+`opendal` =0.57.0 (features `opendal`, `opendal-sftp`, on by default; the last release that builds with
+rust-version 1.85) adds S3/B2/SFTP/fs storage. What each gate sees:
+
+- `cargo deny`: licences pass. `crc32c` (rustc version probe, CRC tables into `OUT_DIR`) and `rustversion`
+  (runs `$RUSTC --version`) are added to `allow-build-scripts` after review. Duplicates skipped with reasons:
+  reqwest 0.13 (OpenDAL's own HTTP client, built with `rustls-no-provider`; we inject our rustls/ring config, so
+  there is still one TLS stack and no aws-lc), quick-xml 0.39, the RustCrypto 0.11 generation used by reqsign for
+  SigV4 (sha2, hmac, digest, crypto-common, block-buffer, const-oid, cpufeatures), getrandom 0.4 and syn 2.
+- Advisories (owner decision pending): RUSTSEC-2026-0194 and -0195 (quick-xml 0.39 in opendal-core; quadratic
+  or allocation-heavy parsing, reachable only through XML replies of the S3 endpoint the user configured) and
+  RUSTSEC-2026-0385 (ctutils 0.4.2, non-constant-time masks in local HMAC signing). Ignored with reasons in
+  `deny.toml` and `.cargo/audit.toml`. Fix: raise rust-version to 1.91 and move to opendal >= 0.58 (quick-xml
+  0.41, ctutils >= 0.4.4).
+- `cargo vet`: 80 exemptions at exact versions, note `L-809a` (not audited).
+- Build-time inventory and geiger baselines updated (new build scripts/proc-macros reviewed: crc32c, rustversion,
+  getrandom 0.4, num-traits, parking_lot_core are cfg/version probes; proc-macros derive_destructure2, num-derive,
+  futures-macro, pin-project-internal, tracing-attributes). Used unsafe rose 27264 -> 32860 (parking_lot, triomphe,
+  thin-vec, rustix features, ...). The geiger baseline was produced with cargo-geiger on Rust 1.85.1, not nightly.
+- Native code: none new (OpenDAL's SFTP runs the system `ssh` binary as a child process, through the `openssh` crate).
