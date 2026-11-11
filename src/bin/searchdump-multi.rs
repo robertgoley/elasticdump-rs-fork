@@ -122,6 +122,28 @@ const DATA_FLAGS: &[&str] = &[
     "--maxResponseMb=0",
 ];
 
+/// The flag name of an argument (`--limit=5` / `--limit` -> `--limit`), or None for a value.
+fn flag_name(arg: &str) -> Option<&str> {
+    if !arg.starts_with("--") || arg == "--" {
+        return None;
+    }
+    Some(arg.split_once('=').map_or(arg, |(n, _)| n))
+}
+
+/// Default data flags followed by the arguments after `--`. A flag given after `--` replaces
+/// the default of the same name (`-- --limit=200` runs with `--limit=200`, not both), so
+/// every default can be overridden without `--noDefaultDataFlags`.
+fn merge_data_flags(defaults: &[&str], extra: &[String]) -> Vec<String> {
+    let given: std::collections::HashSet<&str> =
+        extra.iter().filter_map(|a| flag_name(a)).collect();
+    defaults
+        .iter()
+        .filter(|d| flag_name(d).is_none_or(|n| !given.contains(n)))
+        .map(|d| d.to_string())
+        .chain(extra.iter().cloned())
+        .collect()
+}
+
 /// Per-index item types, in the order they are dumped and loaded.
 pub const TYPE_ORDER: &[&str] = &["settings", "analyzer", "mapping", "alias", "data"];
 
@@ -326,7 +348,8 @@ pub struct Args {
     /// directory, or DIR.meta beside it with --nodeCompat. Load looks in DIR, then DIR.meta
     #[arg(long = "metaDir")]
     pub meta_dir: Option<PathBuf>,
-    /// Extra searchdump arguments for every data run
+    /// Extra searchdump arguments for every data run; a flag given here replaces the default
+    /// data flag of the same name (e.g. `-- --limit=200`)
     #[arg(last = true)]
     pub extra: Vec<String>,
 }
@@ -2145,12 +2168,14 @@ async fn run_local(args: Args) -> Result<i32> {
     if let Some(f) = &args.http_auth_file {
         common.push(format!("--httpAuthFile={f}"));
     }
-    let mut data_flags: Vec<String> = if args.no_default_data_flags {
-        vec![]
-    } else {
-        strings(DATA_FLAGS)
-    };
-    data_flags.extend(args.extra.iter().cloned());
+    let data_flags = merge_data_flags(
+        if args.no_default_data_flags {
+            &[]
+        } else {
+            DATA_FLAGS
+        },
+        &args.extra,
+    );
     let cancelled = Arc::new(AtomicBool::new(false));
     {
         let c = cancelled.clone();
@@ -2538,6 +2563,26 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extra_flags_override_default_data_flags() {
+        let extra: Vec<String> = ["--limit=200", "--scrollTime", "1m", "--noRefresh"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let got = super::merge_data_flags(super::DATA_FLAGS, &extra);
+        assert!(!got.iter().any(|a| a == "--limit=5000"), "{got:?}");
+        assert!(!got.iter().any(|a| a == "--scrollTime=10m"), "{got:?}");
+        assert_eq!(got.iter().filter(|a| a.starts_with("--limit")).count(), 1);
+        assert!(got.contains(&"--retryAttempts=5".to_string()));
+        assert!(got.ends_with(&extra));
+        // no extras: the defaults unchanged
+        assert_eq!(
+            super::merge_data_flags(super::DATA_FLAGS, &[]),
+            super::strings(super::DATA_FLAGS)
+        );
+        assert!(super::merge_data_flags(&[], &[]).is_empty());
+    }
+
     use super::*;
 
     #[test]
