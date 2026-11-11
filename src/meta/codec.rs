@@ -132,23 +132,22 @@ pub fn repair_lone_surrogates(s: &str) -> Option<String> {
             i += 1;
             continue;
         }
-        if b.get(i + 1) == Some(&b'u') {
-            if let Some(cp) = hex4(&b[i + 2..]) {
-                let low_next = b.get(i + 6) == Some(&b'\\')
-                    && b.get(i + 7) == Some(&b'u')
-                    && hex4(&b[(i + 8).min(b.len())..])
-                        .is_some_and(|c| (0xdc00..=0xdfff).contains(&c));
-                if (0xd800..=0xdbff).contains(&cp) && low_next {
-                    out.extend_from_slice(&b[i..i + 12]);
-                    i += 12;
-                    continue;
-                }
-                if (0xd800..=0xdfff).contains(&cp) {
-                    out.extend_from_slice(b"\\ufffd");
-                    fixed += 1;
-                    i += 6;
-                    continue;
-                }
+        if b.get(i + 1) == Some(&b'u')
+            && let Some(cp) = hex4(&b[i + 2..])
+        {
+            let low_next = b.get(i + 6) == Some(&b'\\')
+                && b.get(i + 7) == Some(&b'u')
+                && hex4(&b[(i + 8).min(b.len())..]).is_some_and(|c| (0xdc00..=0xdfff).contains(&c));
+            if (0xd800..=0xdbff).contains(&cp) && low_next {
+                out.extend_from_slice(&b[i..i + 12]);
+                i += 12;
+                continue;
+            }
+            if (0xd800..=0xdfff).contains(&cp) {
+                out.extend_from_slice(b"\\ufffd");
+                fixed += 1;
+                i += 6;
+                continue;
             }
         }
         // any other escape: copy the backslash and the escaped character together

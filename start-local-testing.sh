@@ -5,9 +5,9 @@
 #   ./start-local-testing.sh [options]
 #
 # Steps (in order; pick with --steps):
-#   prep    check/install host tools, Rust 1.85.1, pinned Node elasticdump 6.125.1
+#   prep    check/install host tools, Rust 1.91.1, pinned Node elasticdump 6.125.1
 #   images  pull every pinned image in scripts/it/images.lock, check the pins
-#   build   cargo +1.85.1 build --release --workspace --bins
+#   build   cargo +1.91.1 build --release --workspace --bins
 #   it      integration suite on every pinned profile (scripts/it/run.sh matrix)
 #   load    load matrix with the sample data sets on every engine, plain + secure,
 #           plus the L1L (1M doc) tier on es717-plain
@@ -41,7 +41,7 @@ ROOT=$PWD
 STEPS="prep,images,build,it,load,extra,perf"
 ENGINES="es710,es717,es819,elasticsearch8,elasticsearch,os13,opensearch"
 TIER=L0 REPS=3 PLACE=big UPDATE_BASELINES=0 HOST_TOOLS=0 INSTALL_DEPS=0 PULL=1 DRY=0
-TOOLCHAIN=1.85.1
+TOOLCHAIN=1.91.1
 NODE_DIR="${NODE_DIR:-$HOME/.cache/elasticdump-rs/node-ed}"
 
 while [[ $# -gt 0 ]]; do

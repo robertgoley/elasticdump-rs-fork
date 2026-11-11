@@ -43,12 +43,11 @@ impl Registry {
                 .to_string(),
         );
         forms.push(url::form_urlencoded::byte_serialize(trimmed.as_bytes()).collect());
-        if let Ok(mut u) = url::Url::parse("http://h/") {
-            if u.set_password(Some(trimmed)).is_ok() {
-                if let Some(p) = u.password() {
-                    forms.push(p.to_string());
-                }
-            }
+        if let Ok(mut u) = url::Url::parse("http://h/")
+            && u.set_password(Some(trimmed)).is_ok()
+            && let Some(p) = u.password()
+        {
+            forms.push(p.to_string());
         }
         if let Ok(json) = serde_json::to_string(trimmed) {
             forms.push(json[1..json.len() - 1].to_string());

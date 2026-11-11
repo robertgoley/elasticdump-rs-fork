@@ -44,14 +44,14 @@ pub async fn file_to_sink(
             let (slice, docs) = window.apply(&batch.buf, batch.docs);
             sink.set_next_doc(seen + skipped + 1);
             seen += batch.docs;
-            if docs > 0 {
-                if let Err(e) = sink.write_all(slice).await {
-                    if sink.is_stdout() && crate::output::is_broken_pipe(&e) {
-                        log::info!("stdout closed by reader; stopping early");
-                        return Ok(false);
-                    }
-                    return Err(e);
+            if docs > 0
+                && let Err(e) = sink.write_all(slice).await
+            {
+                if sink.is_stdout() && crate::output::is_broken_pipe(&e) {
+                    log::info!("stdout closed by reader; stopping early");
+                    return Ok(false);
                 }
+                return Err(e);
             }
             if window.is_exhausted() {
                 return Ok(false);
@@ -82,11 +82,11 @@ pub async fn file_to_sink(
             Err(crate::signals::interrupted_error())
         }
         Ok(false) => {
-            if let Err(e) = sink.flush().await {
-                if !(sink.is_stdout() && crate::output::is_broken_pipe(&e)) {
-                    sink.abort().await;
-                    return Err(e);
-                }
+            if let Err(e) = sink.flush().await
+                && !(sink.is_stdout() && crate::output::is_broken_pipe(&e))
+            {
+                sink.abort().await;
+                return Err(e);
             }
             sink.finalize().await
         }

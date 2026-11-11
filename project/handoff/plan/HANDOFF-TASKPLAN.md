@@ -127,7 +127,7 @@ To take a newer gate later: `git fetch ../elasticdump-rs-h2.bundle rewrite:refs/
 ## 5. Prerequisites and tools
 
 - **Containers:** podman ≥ 4.9 (or docker ≥ 24) with compose; `sysctl vm.max_map_count=262144`.
-- **Rust:** rustup with **1.85.1** (the project's `rust-version`; edition 2024) plus **nightly** (cargo-fuzz, ASan).
+- **Rust:** rustup with **1.91.1** (the project's `rust-version` is 1.91 since L-809d; edition 2024) plus **nightly** (cargo-fuzz, ASan).
 - **Cargo tools:** `cargo install --locked cargo-nextest cargo-fuzz cargo-deny cargo-cyclonedx`.
 - **Node.js 20+:** `npm i -g elasticdump@6` (the reference tool for the comparison tests), installed in a container or as an unprivileged user.
 - **CLI utilities:** `jq`, `zstd`, `pbzip2` (or `lbzip2`), `pigz`, `curl`, `python3` (≥ 3.10) with `requests`, `hyperfine`, `sysstat` (`pidstat`), `strace`, and `bpftrace` for B12.
@@ -155,7 +155,7 @@ for img in docker.io/opensearchproject/opensearch:1.3.20 docker.io/opensearchpro
   - `scripts/it/run.sh` and `up.sh` in the bundle are the source of truth for profile variants (plain/secure) and environment settings.
   - Heap per node: 2 GB for L1 and 4–8 GB for L2 (`ES_JAVA_OPTS=-Xms4g -Xmx4g`), and a container `--memory` of heap × 2.
   - Single-node: `discovery.type=single-node`. For multi-node (B8), use a 3-node compose with dedicated volumes.
-- **Build:** build the tool and test binaries in a container (`rust:1.85` image, or the Dockerfile builder stage) with `--network none` after `cargo fetch --locked`. Run them on `edb-internal`.
+- **Build:** build the tool and test binaries in a container (`rust:1.91` image or newer, or the Dockerfile builder stage) with `--network none` after `cargo fetch --locked`. Run them on `edb-internal`.
 - **Ports:** never publish them on 0.0.0.0. Use `127.0.0.1:` binds when host access is needed.
 
 ## 7. Datasets (links verified by curl on 2026-10-29)

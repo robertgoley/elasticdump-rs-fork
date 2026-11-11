@@ -611,10 +611,11 @@ pub fn data_parts(dir: &Path, index: &str) -> Result<Vec<PathBuf>> {
     for ent in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
         let ent = ent?;
         let name = ent.file_name().to_string_lossy().into_owned();
-        if let Some((i, c, Some(n))) = parse_data_file(&name) {
-            if i == index && ent.file_type()?.is_file() {
-                parts.push((n, c, ent.path()));
-            }
+        if let Some((i, c, Some(n))) = parse_data_file(&name)
+            && i == index
+            && ent.file_type()?.is_file()
+        {
+            parts.push((n, c, ent.path()));
         }
     }
     parts.sort_by_key(|p| p.0);
@@ -907,10 +908,10 @@ pub fn discover(root: &Path, meta: &Path) -> Result<Vec<Found>> {
             if name.ends_with(".datastream.json") {
                 entry.datastream = true;
             }
-            if let Some((_, _, part)) = data {
-                if fs::metadata(&path)?.len() > 0 || part.is_some() {
-                    entry.data.push(path);
-                }
+            if let Some((_, _, part)) = data
+                && (fs::metadata(&path)?.len() > 0 || part.is_some())
+            {
+                entry.data.push(path);
             }
         }
     }
@@ -1746,18 +1747,19 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             .collect();
         // A Node-layout dump carries the legacy templates next to each index; load them
         // first, as Node does (the same templates again for each index is harmless).
-        if ctx.types.cluster.contains(&"template") && !f.datastream {
-            if let Some((p, gz)) = meta_file(&f.dir, &f.index, "template") {
-                let mut extra = cluster_flags(&ctx.args, "template", true);
-                if gz {
-                    extra.push("--fsCompress".into());
-                }
-                let input = p.to_string_lossy().into_owned();
-                let runner = &ctx.runner;
-                tokio::task::block_in_place(|| {
-                    runner.run(&f.index, "template", &input, &cluster.child_base, &extra)
-                })?;
+        if ctx.types.cluster.contains(&"template")
+            && !f.datastream
+            && let Some((p, gz)) = meta_file(&f.dir, &f.index, "template")
+        {
+            let mut extra = cluster_flags(&ctx.args, "template", true);
+            if gz {
+                extra.push("--fsCompress".into());
             }
+            let input = p.to_string_lossy().into_owned();
+            let runner = &ctx.runner;
+            tokio::task::block_in_place(|| {
+                runner.run(&f.index, "template", &input, &cluster.child_base, &extra)
+            })?;
         }
         for kind in kinds {
             if kind == "data" {
@@ -2309,13 +2311,13 @@ async fn run_local(args: Args) -> Result<i32> {
                 );
             }
             m.node_compat = ctx.args.node_compat;
-            if let Some(prev) = m.compression.filter(|c| *c != ctx.args.compression) {
-                if !m.indices.is_empty() {
-                    eprintln!(
-                        "warning: this directory already holds a {prev:?} dump; new indices use {:?}",
-                        ctx.args.compression
-                    );
-                }
+            if let Some(prev) = m.compression.filter(|c| *c != ctx.args.compression)
+                && !m.indices.is_empty()
+            {
+                eprintln!(
+                    "warning: this directory already holds a {prev:?} dump; new indices use {:?}",
+                    ctx.args.compression
+                );
             }
             m.tool = "multielasticdump".into();
             m.version = env!("CARGO_PKG_VERSION").into();

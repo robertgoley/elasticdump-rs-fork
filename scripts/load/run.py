@@ -104,7 +104,7 @@ def tool_path(name):
         p = os.path.join(ROOT, "target", d, name)
         if os.path.exists(p):
             return p
-    sys.exit(f"load: {name} not built: run cargo +1.85.1 build --release --workspace --bins")
+    sys.exit(f"load: {name} not built: run cargo +1.91.1 build --release --workspace --bins")
 
 
 class RequestError(RuntimeError):

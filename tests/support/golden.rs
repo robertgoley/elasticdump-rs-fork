@@ -93,12 +93,11 @@ impl Normaliser {
     /// Learn scroll/PIT ids from a response body (call before [`Self::apply`]).
     pub fn learn(&self, path: &str, v: &Value) {
         let pit_open = path.ends_with("/_pit") || path.ends_with("/_search/point_in_time");
-        if let Value::Object(m) = v {
-            if pit_open {
-                if let Some(Value::String(s)) = m.get("id") {
-                    self.token("pit", s);
-                }
-            }
+        if let Value::Object(m) = v
+            && pit_open
+            && let Some(Value::String(s)) = m.get("id")
+        {
+            self.token("pit", s);
         }
         self.learn_walk(v, None);
         if path.contains("/_ism/") {
@@ -518,13 +517,13 @@ impl Meta {
         let text = std::fs::read_to_string(dir.join("meta.toml")).expect("meta.toml");
         let mut kv = HashMap::new();
         for l in text.lines() {
-            if let Some((k, v)) = l.split_once(" = ") {
-                if !k.starts_with('#') {
-                    kv.insert(
-                        k.trim().to_string(),
-                        serde_json::from_str::<Value>(v.trim()).expect(l),
-                    );
-                }
+            if let Some((k, v)) = l.split_once(" = ")
+                && !k.starts_with('#')
+            {
+                kv.insert(
+                    k.trim().to_string(),
+                    serde_json::from_str::<Value>(v.trim()).expect(l),
+                );
             }
         }
         let st = |k: &str| {

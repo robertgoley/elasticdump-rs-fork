@@ -243,11 +243,11 @@ async fn pump(
             (None, None) => None,
         };
         let mut stop = None;
-        if let Some((lim, is_cut)) = limit {
-            if sent + chunk.len() as u64 >= lim {
-                chunk = &chunk[..(lim - sent) as usize];
-                stop = Some(is_cut);
-            }
+        if let Some((lim, is_cut)) = limit
+            && sent + chunk.len() as u64 >= lim
+        {
+            chunk = &chunk[..(lim - sent) as usize];
+            stop = Some(is_cut);
         }
         if let Some(kbps) = p.bw_kbps {
             tokio::time::sleep(Duration::from_secs_f64(

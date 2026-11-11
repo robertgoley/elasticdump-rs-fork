@@ -12,9 +12,6 @@
   "const-random-macro@0.1.16": [
    "proc-macro"
   ],
-  "crc32c@0.6.9": [
-   "build.rs"
-  ],
   "crc32fast@1.5.3": [
    "build.rs"
   ],
@@ -222,11 +219,11 @@
  },
  "counts": {
   "all": {
-   "build.rs": 50,
+   "build.rs": 49,
    "proc-macro": 25
   },
   "linux": {
-   "build.rs": 32,
+   "build.rs": 31,
    "proc-macro": 16
   }
  },
@@ -242,9 +239,6 @@
   ],
   "const-random-macro@0.1.16": [
    "proc-macro"
-  ],
-  "crc32c@0.6.9": [
-   "build.rs"
   ],
   "crc32fast@1.5.3": [
    "build.rs"
@@ -379,7 +373,6 @@
   "anyhow@1.0.104": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "clap_derive@4.6.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "const-random-macro@0.1.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
-  "crc32c@0.6.9": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crc32fast@1.5.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crunchy@0.2.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "derive_destructure2@0.1.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",

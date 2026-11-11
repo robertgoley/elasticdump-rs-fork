@@ -4908,17 +4908,17 @@ fn l650_run(
         if let Some(st) = child.try_wait().unwrap() {
             break st;
         }
-        if let (false, Some((sig, k))) = (sent, signal) {
-            if bulks.load(Ordering::SeqCst) >= base + k {
-                assert!(
-                    Command::new("kill")
-                        .args([&format!("-{sig}"), &child.id().to_string()])
-                        .status()
-                        .unwrap()
-                        .success()
-                );
-                sent = true;
-            }
+        if let (false, Some((sig, k))) = (sent, signal)
+            && bulks.load(Ordering::SeqCst) >= base + k
+        {
+            assert!(
+                Command::new("kill")
+                    .args([&format!("-{sig}"), &child.id().to_string()])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            sent = true;
         }
         if start.elapsed() > Duration::from_secs(90) {
             let _ = child.kill();

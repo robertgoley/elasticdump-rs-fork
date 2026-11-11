@@ -142,7 +142,7 @@ async fn insert_large_dataset_bulk(
                 "name": format!("Bulk Test Document {}", doc_id),
                 "description": format!("This is a bulk test document with ID {}", doc_id),
                 "timestamp": "2023-06-15T12:00:00Z",
-                "tags": ["test", "bulk", if doc_id % 2 == 0 { "even" } else { "odd" }],
+                "tags": ["test", "bulk", if doc_id.is_multiple_of(2) { "even" } else { "odd" }],
                 "extra": extra_content, // Use generated random text
                 "nested_field": {
                     "value1": format!("nested value {}", doc_id),
@@ -173,10 +173,10 @@ async fn insert_large_dataset_bulk(
             let mut errors = Vec::new();
             if let Some(items) = response_body["items"].as_array() {
                 for item in items {
-                    if let Some(op_type) = item.as_object().and_then(|obj| obj.keys().next()) {
-                        if let Some(error) = item[op_type]["error"].as_object() {
-                            errors.push(error.clone());
-                        }
+                    if let Some(op_type) = item.as_object().and_then(|obj| obj.keys().next())
+                        && let Some(error) = item[op_type]["error"].as_object()
+                    {
+                        errors.push(error.clone());
                     }
                 }
             }

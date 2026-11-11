@@ -292,7 +292,7 @@ Run 2026-11-02 at 37fa3ac (read-only). Moved from TESTING-TODO §2.
 
 ## OpenDAL storage path (L-809a, Grok Bot, 2026-11-11)
 
-Rootless podman 5.4.2 with `--network=host`, debug build, Rust 1.85.1. Scripts in `scripts/opendal-tests/` (`run-all.sh` runs them all; `KEEP=1` keeps the work dir; `ODT_START_ONLY=1` only starts a server and writes its settings).
+Rootless podman 5.4.2 with `--network=host`, debug build, Rust 1.85.1 (L-809a) and 1.91.1 (L-809d). Scripts in `scripts/opendal-tests/` (`run-all.sh` runs them all; `KEEP=1` keeps the work dir; `ODT_START_ONLY=1` only starts a server and writes its settings).
 
 | Test | Result | Where |
 |---|---|---|
@@ -304,4 +304,5 @@ Rootless podman 5.4.2 with `--network=host`, debug build, Rust 1.85.1. Scripts i
 | SFTP on Dropbear (alpine 3.24.3, Dropbear paired with OpenSSH's `/usr/lib/ssh/sftp-server`, since Dropbear has no SFTP subsystem of its own) | 14/14, same checks | `scripts/opendal-tests/sftp.sh dropbear` |
 | Cross-store and cluster (MinIO + OpenSSH + OpenSearch 2 in an isolated podman store) | 20/20: elasticdump-rs local -> s3 -> sftp -> local (gzip kept); multielasticdump `--direction copy` local -> s3 -> sftp -> local byte-exact incl. `_cluster/` and manifest; elasticdump-rs OpenSearch -> s3 zstd in `--maxRows` parts, mapping to s3, s3 mapping + parts -> OpenSearch with all documents; multielasticdump dump OpenSearch -> `s3://` (staged), copy s3 -> sftp, load `sftp://` -> OpenSearch with `--suffix` and matching counts | `scripts/opendal-tests/cross.sh` |
 | Supply-chain gates with the new dependencies | cargo deny (advisories with 3 documented ignores, bans, licenses, sources), cargo audit `--deny warnings` (same ignores in `.cargo/audit.toml`), cargo machete, cargo vet (80 new exemptions), native-code check, build inventory and geiger baselines updated, THIRD-PARTY-NOTICES regenerated: all pass | `deny.toml`, `supply-chain/` |
+| L-809d re-run after rust-version 1.91 and opendal 0.59.5 (Rust 1.91.1) | fs 7/7, MinIO 24/24, RustFS 24/24 (both with SSE-C), OpenSSH 14/14, Dropbear 14/14, cross-store + OpenSearch 2 20/20; `cargo test --workspace --all-targets` 481 passed, 0 failed; clippy `-D warnings` clean for default, `--no-default-features`, `--no-default-features --features opendal` and the CI `--features elasticdump-rs/load` set (39 collapsible-if lints now firing at MSRV 1.91 fixed with let-chains, one `is_multiple_of`); cargo deny and cargo audit `--deny warnings` with no advisory ignores; machete, vet, native-code, build inventory, geiger, notices pass | `scripts/opendal-tests/run-all.sh` |
 | Backblaze B2 | not run: no usable mock (OpenDAL's B2 service authorizes against the fixed `https://api.backblazeb2.com`); real account pending, see TESTING-TODO | `scripts/opendal-tests/b2-real.sh` |

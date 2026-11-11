@@ -189,19 +189,18 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
     let mut states: Vec<Value> = Vec::new();
     let mut rolled_over = false;
     // a non-zero min_age on the first phase becomes a waiting state
-    if let Some((first, def)) = present.first() {
-        if let Some(age) = def.get("min_age").and_then(Value::as_str) {
-            if !is_zero_age(age) {
-                states.push(json!({
-                    "name": "pending",
-                    "actions": [],
-                    "transitions": [{"state_name": first, "conditions": {"min_index_age": age}}]
-                }));
-                cx.notes.push(format!(
-                    "phase '{first}' min_age {age} became a 'pending' state with a min_index_age transition"
-                ));
-            }
-        }
+    if let Some((first, def)) = present.first()
+        && let Some(age) = def.get("min_age").and_then(Value::as_str)
+        && !is_zero_age(age)
+    {
+        states.push(json!({
+            "name": "pending",
+            "actions": [],
+            "transitions": [{"state_name": first, "conditions": {"min_index_age": age}}]
+        }));
+        cx.notes.push(format!(
+            "phase '{first}' min_age {age} became a 'pending' state with a min_index_age transition"
+        ));
     }
     for (i, (phase, def)) in present.iter().enumerate() {
         let empty = Map::new();

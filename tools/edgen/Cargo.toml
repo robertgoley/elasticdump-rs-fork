@@ -2,7 +2,7 @@
 name = "edgen"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 description = "Seeded, byte-reproducible test-data generator and dataset converter for elasticdump-rs (TST-INF-009, TST-DATA-001/005/010)"
 license = "MIT"
 publish = false

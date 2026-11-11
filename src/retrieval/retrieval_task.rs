@@ -276,15 +276,15 @@ pub fn spawn_retrieval_task(
             SearchType::SearchAfter => search_after::run_search_after_slice(&ctx, &mut state).await,
         };
 
-        if let Err(error) = &result {
-            if !is_cancelled(error) {
-                log::debug!(
-                    "Slice {}: failing fast, cancelling remaining pipeline work: {:#}",
-                    slice_id,
-                    error
-                );
-                ctx.cancel.cancel();
-            }
+        if let Err(error) = &result
+            && !is_cancelled(error)
+        {
+            log::debug!(
+                "Slice {}: failing fast, cancelling remaining pipeline work: {:#}",
+                slice_id,
+                error
+            );
+            ctx.cancel.cancel();
         }
 
         result

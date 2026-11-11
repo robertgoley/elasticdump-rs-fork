@@ -785,12 +785,11 @@ pub fn prescan_out_of_scope(args: Vec<String>) -> Result<(Vec<String>, Vec<Strin
             }
             Some((OosAction::Warn, why)) => {
                 warnings.push(format!("Ignoring --{name}: {why} by elasticdump-rs"));
-                if !has_inline_value {
-                    if let Some(next) = iter.peek() {
-                        if !next.starts_with("--") {
-                            iter.next();
-                        }
-                    }
+                if !has_inline_value
+                    && let Some(next) = iter.peek()
+                    && !next.starts_with("--")
+                {
+                    iter.next();
                 }
             }
             None => out.push(arg),

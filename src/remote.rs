@@ -458,11 +458,11 @@ fn resolve_settings(
         let env = std::iter::once(env_name(scheme, key))
             .chain(standard_env(scheme, key).iter().map(|s| s.to_string()));
         for name in env {
-            if let Ok(v) = std::env::var(&name) {
-                if !v.is_empty() {
-                    out.insert(key.to_string(), v);
-                    break;
-                }
+            if let Ok(v) = std::env::var(&name)
+                && !v.is_empty()
+            {
+                out.insert(key.to_string(), v);
+                break;
             }
         }
     }
@@ -625,10 +625,10 @@ impl RemoteSpec {
                 }
             }
             Scheme::Sftp => {
-                if let Some(v) = self.setting("known_hosts") {
-                    if !matches!(v.to_ascii_lowercase().as_str(), "strict" | "accept" | "add") {
-                        bail!("{self}: known_hosts must be strict, accept or add");
-                    }
+                if let Some(v) = self.setting("known_hosts")
+                    && !matches!(v.to_ascii_lowercase().as_str(), "strict" | "accept" | "add")
+                {
+                    bail!("{self}: known_hosts must be strict, accept or add");
                 }
             }
             Scheme::Fs => {}
@@ -661,19 +661,21 @@ mod op {
             .tls_backend_preconfigured(tls)
             .build()
             .map_err(|e| anyhow!("{spec}: HTTP client: {e}"))?;
+        // Per-operator transport: no process-wide default is installed (the facade's
+        // auto-registration is off), so a request can only go through this client.
+        let transport = opendal::HttpTransporter::new(
+            opendal_http_transport_reqwest::ReqwestTransport::new(client),
+        );
         Ok(Operator::new(b)
             .map_err(|e| anyhow!("{e}"))?
-            .layer(opendal::layers::HttpClientLayer::new(
-                opendal::raw::HttpClient::with(client),
-            ))
+            .with_context(opendal::OperationContext::new().with_http_transport(transport))
             .layer(TimeoutLayer::new().with_io_timeout(std::time::Duration::from_secs(300)))
             .layer(
                 RetryLayer::new()
                     .with_max_times(5)
                     .with_jitter()
                     .with_min_delay(std::time::Duration::from_millis(500)),
-            )
-            .finish())
+            ))
     }
 
     impl RemoteSpec {

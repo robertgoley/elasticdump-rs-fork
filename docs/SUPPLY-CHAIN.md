@@ -468,24 +468,28 @@ sources). What each gate sees:
 
 Measurements and the recommendation: `results/local/L-802a.md`.
 
-## OpenDAL storage path (L-809a)
+## OpenDAL storage path (L-809a, L-809d)
 
-`opendal` =0.57.0 (features `opendal`, `opendal-sftp`, on by default; the last release that builds with
-rust-version 1.85) adds S3/B2/SFTP/fs storage. What each gate sees:
+`opendal` =0.59.5 (features `opendal`, `opendal-sftp`, on by default) adds S3/B2/SFTP/fs storage.
+L-809a used 0.57 under rust-version 1.85; the owner raised rust-version to 1.91 for everything
+(L-809d, 2026-11-11), which allowed 0.59 and removed the three advisories 0.57 carried
+(RUSTSEC-2026-0194/0195, quick-xml 0.39; RUSTSEC-2026-0385, ctutils 0.4.2). quick-xml is now 0.42
+and ctutils 0.4.8; `deny.toml` and cargo audit have no advisory ignores. What each gate sees:
 
-- `cargo deny`: licences pass. `crc32c` (rustc version probe, CRC tables into `OUT_DIR`) and `rustversion`
-  (runs `$RUSTC --version`) are added to `allow-build-scripts` after review. Duplicates skipped with reasons:
-  reqwest 0.13 (OpenDAL's own HTTP client, built with `rustls-no-provider`; we inject our rustls/ring config, so
-  there is still one TLS stack and no aws-lc), quick-xml 0.39, the RustCrypto 0.11 generation used by reqsign for
-  SigV4 (sha2, hmac, digest, crypto-common, block-buffer, const-oid, cpufeatures), getrandom 0.4 and syn 2.
-- Advisories (owner decision pending): RUSTSEC-2026-0194 and -0195 (quick-xml 0.39 in opendal-core; quadratic
-  or allocation-heavy parsing, reachable only through XML replies of the S3 endpoint the user configured) and
-  RUSTSEC-2026-0385 (ctutils 0.4.2, non-constant-time masks in local HMAC signing). Ignored with reasons in
-  `deny.toml` and `.cargo/audit.toml`. Fix: raise rust-version to 1.91 and move to opendal >= 0.58 (quick-xml
-  0.41, ctutils >= 0.4.4).
-- `cargo vet`: 80 exemptions at exact versions, note `L-809a` (not audited).
-- Build-time inventory and geiger baselines updated (new build scripts/proc-macros reviewed: crc32c, rustversion,
-  getrandom 0.4, num-traits, parking_lot_core are cfg/version probes; proc-macros derive_destructure2, num-derive,
-  futures-macro, pin-project-internal, tracing-attributes). Used unsafe rose 27264 -> 32860 (parking_lot, triomphe,
-  thin-vec, rustix features, ...). The geiger baseline was produced with cargo-geiger on Rust 1.85.1, not nightly.
-- Native code: none new (OpenDAL's SFTP runs the system `ssh` binary as a child process, through the `openssh` crate).
+- HTTP: `opendal-http-transport-reqwest` with `rustls-no-provider` (OpenDAL's own `reqwest-rustls-*`
+  facade features would also enable rustls' aws-lc provider). Each operator gets our reqwest 0.13
+  client through `OperationContext::with_http_transport`, built from the same rustls/ring config as
+  cluster connections (`ca_file`, `insecure`). No process-wide default transport is installed, so a
+  request cannot go through any other client. One TLS stack, no aws-lc.
+- `cargo deny`: licences pass. `rustversion` (runs `$RUSTC --version`, proc-macro via arc-swap in
+  the SFTP client) is in `allow-build-scripts`. Duplicates skipped with reasons: reqwest 0.13, the
+  RustCrypto 0.11 generation used by reqsign for SigV4 (sha2, hmac, digest, crypto-common,
+  block-buffer, const-oid, cpufeatures), getrandom 0.4 and syn 2.
+- Native code: `crc-fast` (S3 checksums) is pure Rust with SIMD intrinsics; it ships one C header for
+  its optional C ABI (not compiled, no build script) and is on the native-code allow-list for that.
+  Its default `ffi` feature exports `extern "C"` CRC functions into the binary (unused). SFTP runs
+  the system `ssh` binary as a child process (`openssh` crate).
+- `cargo vet`: exemptions at exact versions, notes `L-809a` / `L-809d` (not audited).
+- Build-time inventory and geiger baselines updated. Used unsafe rose 27264 -> 35383 in total
+  (crc-fast SIMD 2991, parking_lot, triomphe, thin-vec, spin, rustix features, ...). The geiger
+  baseline was produced with cargo-geiger on Rust 1.91.1, not nightly.

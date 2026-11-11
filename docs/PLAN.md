@@ -39,7 +39,7 @@
 ### 1.1 Layout and dependencies
 
 ```
-Cargo.toml          edition 2024, rust-version 1.85, single package, lib + bin "elasticdump-rs"
+Cargo.toml          edition 2024, rust-version 1.91 (1.85 until L-809d), single package, lib + bin "elasticdump-rs"
 docker-compose.yaml ES 7.17.28 single node (benchmark/integration target)
 scripts/benchmark/compare-with-elasticdump.sh  (1.5k lines; Node vs Rust, taskset/cpulimit)
 src/

@@ -85,9 +85,9 @@ criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
 [[exemptions.asyncband]]
-version = "0.6.7"
+version = "0.7.4"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.autocfg]]
 version = "1.5.1"
@@ -248,10 +248,10 @@ version = "0.2.17"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
-[[exemptions.crc32c]]
-version = "0.6.9"
+[[exemptions.crc-fast]]
+version = "1.10.0"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.crc32fast]]
 version = "1.5.3"
@@ -269,9 +269,9 @@ criteria = "safe-to-deploy"
 notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.ctutils]]
-version = "0.4.2"
+version = "0.4.8"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.defmt]]
 version = "1.2.0"
@@ -333,11 +333,6 @@ version = "1.0.3"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
-[[exemptions.fastpool]]
-version = "1.1.2"
-criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
-
 [[exemptions.fastrand]]
 version = "2.5.0"
 criteria = "safe-to-deploy"
@@ -372,11 +367,6 @@ notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/
 version = "0.3.34"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
-
-[[exemptions.futures-executor]]
-version = "0.3.34"
-criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.futures-io]]
 version = "0.3.34"
@@ -603,11 +593,6 @@ version = "0.11.0"
 criteria = "safe-to-deploy"
 notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
-[[exemptions.mea]]
-version = "0.6.7"
-criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
-
 [[exemptions.memchr]]
 version = "2.8.3"
 criteria = "safe-to-deploy"
@@ -663,44 +648,49 @@ criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
 [[exemptions.opendal]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-core]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
+
+[[exemptions.opendal-http-transport-reqwest]]
+version = "0.59.5"
+criteria = "safe-to-deploy"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-layer-retry]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-layer-timeout]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-service-b2]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-service-fs]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-service-s3]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.opendal-service-sftp]]
-version = "0.57.0"
+version = "0.59.5"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.openssh]]
 version = "0.11.6"
@@ -817,14 +807,9 @@ criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
 [[exemptions.quick-xml]]
-version = "0.39.4"
+version = "0.42.0"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
-
-[[exemptions.quick-xml]]
-version = "0.41.0"
-criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.quinn]]
 version = "0.11.12"
@@ -904,19 +889,19 @@ criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
 
 [[exemptions.reqsign-aws-core]]
-version = "3.1.1"
+version = "3.2.0"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.reqsign-aws-v4]]
-version = "3.3.0"
-criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
-
-[[exemptions.reqsign-core]]
 version = "3.3.1"
 criteria = "safe-to-deploy"
-notes = "L-809a 2026-11-11: OpenDAL storage path (opendal 0.57, feature opendal/opendal-sftp, on by default); not audited, review before release"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
+
+[[exemptions.reqsign-core]]
+version = "3.3.2"
+criteria = "safe-to-deploy"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.reqsign-file-read-tokio]]
 version = "3.0.6"
@@ -1127,6 +1112,11 @@ notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (o
 version = "0.1.4"
 criteria = "safe-to-deploy"
 notes = "L-201 baseline 2026-10-29: in the lock graph before cargo-vet; audit (or import an audit) before the next version bump"
+
+[[exemptions.spin]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+notes = "L-809d 2026-11-11: OpenDAL storage path (opendal 0.59, feature opendal/opendal-sftp, on by default); not audited, review before release"
 
 [[exemptions.spki]]
 version = "0.7.3"

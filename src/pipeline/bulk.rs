@@ -638,24 +638,24 @@ impl BulkSink {
                 anyhow!("document has no _index and no output index was given (--output-index)")
             })?,
         };
-        if self.opts.index.is_none() {
-            if let Some(stream) = data_stream_of(&base) {
-                match self.opts.action {
-                    // update/delete must address the backing index itself
-                    BulkAction::Update | BulkAction::Delete => {}
-                    BulkAction::Create => base = stream.to_string(),
-                    BulkAction::Index => {
-                        return Err(anyhow::Error::new(FatalDoc(format!(
-                            "document from '{base}', a backing index of data stream '{stream}': data streams accept only --bulkAction create (written to the stream '{stream}', which picks the backing index); with index it would land in a plain index named '{base}' instead of the stream"
-                        ))));
-                    }
+        if self.opts.index.is_none()
+            && let Some(stream) = data_stream_of(&base)
+        {
+            match self.opts.action {
+                // update/delete must address the backing index itself
+                BulkAction::Update | BulkAction::Delete => {}
+                BulkAction::Create => base = stream.to_string(),
+                BulkAction::Index => {
+                    return Err(anyhow::Error::new(FatalDoc(format!(
+                        "document from '{base}', a backing index of data stream '{stream}': data streams accept only --bulkAction create (written to the stream '{stream}', which picks the backing index); with index it would land in a plain index named '{base}' instead of the stream"
+                    ))));
                 }
             }
         }
-        if self.opts.index.is_none() {
-            if let Some(r) = &self.opts.rename {
-                return r.index(&base);
-            }
+        if self.opts.index.is_none()
+            && let Some(r) = &self.opts.rename
+        {
+            return r.index(&base);
         }
         let out = format!("{}{}{}", self.opts.prefix, base, self.opts.suffix);
         if self.opts.index.is_none() {
@@ -690,11 +690,9 @@ impl BulkSink {
         out.extend_from_slice(action.as_str().as_bytes());
         out.extend_from_slice(b"\":{\"_index\":");
         push_json_str(out, &self.index_for(&top)?);
-        if is_hit {
-            if let Some(id) = top.get("_id") {
-                out.extend_from_slice(b",\"_id\":");
-                push_id_like(out, "_id", id)?;
-            }
+        if is_hit && let Some(id) = top.get("_id") {
+            out.extend_from_slice(b",\"_id\":");
+            push_id_like(out, "_id", id)?;
         }
         if self.opts.info.has_types() {
             let ty = self
@@ -728,15 +726,15 @@ impl BulkSink {
                     }
                 }
             }
-            if self.opts.handle_version {
-                if let Some(v) = top.get("_version").or_else(|| top.get("version")) {
-                    let version = checked_version(v.as_raw_str())?;
-                    out.extend_from_slice(b",\"version\":");
-                    out.extend_from_slice(version.to_string().as_bytes());
-                    if let Some(vt) = &self.opts.version_type {
-                        out.extend_from_slice(b",\"version_type\":");
-                        push_json_str(out, vt);
-                    }
+            if self.opts.handle_version
+                && let Some(v) = top.get("_version").or_else(|| top.get("version"))
+            {
+                let version = checked_version(v.as_raw_str())?;
+                out.extend_from_slice(b",\"version\":");
+                out.extend_from_slice(version.to_string().as_bytes());
+                if let Some(vt) = &self.opts.version_type {
+                    out.extend_from_slice(b",\"version_type\":");
+                    push_json_str(out, vt);
                 }
             }
         }
@@ -1770,12 +1768,12 @@ mod prop_bulk {
         if let Some(r) = doc.get("_routing") {
             meta.insert("routing".into(), as_id(r));
         }
-        if c.handle_version {
-            if let Some(v) = doc.get("_version") {
-                meta.insert("version".into(), v.clone());
-                if let Some(vt) = &c.version_type {
-                    meta.insert("version_type".into(), json!(vt));
-                }
+        if c.handle_version
+            && let Some(v) = doc.get("_version")
+        {
+            meta.insert("version".into(), v.clone());
+            if let Some(vt) = &c.version_type {
+                meta.insert("version_type".into(), json!(vt));
             }
         }
         let action = json!({ c.action.as_str(): meta });

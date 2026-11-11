@@ -25,7 +25,7 @@
 # --preflight IMG  (repeatable) only run the prerequisite checks for these base images, then exit
 #             (used by the Makefile image targets).
 # Prerequisites: podman (or docker with buildx); no host Rust (crates are vendored in a container;
-# VENDOR_ON_HOST=1 uses host cargo >= 1.85 instead). For dhi.io bases a pull
+# VENDOR_ON_HOST=1 uses host cargo >= 1.91 instead). For dhi.io bases a pull
 # login first: podman login dhi.io (checked up front; or use make image-public for public bases).
 #
 # Offline build (L-808i): crates are fetched on the HOST (scripts/vendor-crates.sh into the
@@ -109,13 +109,13 @@ run() { printf '+'; printf ' %q' "$@"; printf '\n'; [[ $dry == 1 ]] || "$@"; }
 preflight() {
   command -v "${C%% *}" >/dev/null 2>&1 || die "container tool '$C' not found; install podman (preferred) or docker, or set CONTAINER="
   if [[ "${VENDOR_ON_HOST:-0}" == 1 ]]; then   # default: crates are vendored in a container (no host Rust)
-    command -v cargo >/dev/null 2>&1 || die "cargo not found on the host: the offline build vendors crates on the host (install Rust >= 1.85 via rustup)"
+    command -v cargo >/dev/null 2>&1 || die "cargo not found on the host: the offline build vendors crates on the host (install Rust >= 1.91 via rustup)"
     local cvo
     cvo=$(cargo --version 2>&1) || die "cargo at $(command -v cargo) does not run from $PWD: ${cvo##*$'\n'}
     If cargo is a distrobox/toolbox wrapper (podman exec into a container), that container cannot see this
     directory. Clone under \$HOME, add this path to the container's mounts, or install Rust on the host (rustup)."
     local cv; cv=$(printf '%s\n' "$cvo" | sed -n 's/^cargo 1\.\([0-9]*\).*/\1/p')
-    [[ -z "$cv" || "$cv" -ge 85 ]] || die "host cargo is 1.$cv; Cargo.lock v4 / rust-version need cargo >= 1.85 (rustup update)"
+    [[ -z "$cv" || "$cv" -ge 91 ]] || die "host cargo is 1.$cv; Cargo.lock v4 / rust-version need cargo >= 1.91 (rustup update)"
   fi
   if [[ "$C" == *docker* ]]; then
     export DOCKER_BUILDKIT=1   # RUN --network=none / --mount need BuildKit

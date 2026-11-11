@@ -320,10 +320,11 @@ fn check_input_name(path: &std::path::Path) -> Result<()> {
         }
         if let Some(r) = n.strip_prefix(&prefix) {
             let d = r.bytes().take_while(u8::is_ascii_digit).count();
-            if d > 0 && &r[d..] == suffix {
-                if let Ok(k) = r[..d].parse::<u64>() {
-                    parts.push(k);
-                }
+            if d > 0
+                && &r[d..] == suffix
+                && let Ok(k) = r[..d].parse::<u64>()
+            {
+                parts.push(k);
             }
         }
     }
@@ -462,12 +463,12 @@ fn read_loop(
                     e.valid_up_to()
                 ));
             }
-            if docs_read == 0 {
-                if let Some(found) = crate::meta::metadata_dump_type(&line) {
-                    return Err(anyhow::Error::new(crate::UsageError(format!(
-                        "{name}: this input looks like a --type {found} dump, not --type data (its first line is {found} metadata, which would be indexed as a document); use --type {found}. Nothing was written"
-                    ))));
-                }
+            if docs_read == 0
+                && let Some(found) = crate::meta::metadata_dump_type(&line)
+            {
+                return Err(anyhow::Error::new(crate::UsageError(format!(
+                    "{name}: this input looks like a --type {found} dump, not --type data (its first line is {found} metadata, which would be indexed as a document); use --type {found}. Nothing was written"
+                ))));
             }
             batch.buf.extend_from_slice(&line);
             batch.buf.push(b'\n');

@@ -650,10 +650,10 @@ fn register_early_secrets(cli: &Cli) {
 /// Register every credential of this run so logs and errors never show it.
 fn register_secrets(cli: &Cli, eps: [&Endpoint; 2], auth_file: Option<&(String, String)>) {
     for ep in eps {
-        if let Endpoint::Es(ep) = ep {
-            if let Some(p) = &ep.password {
-                secrets::register_basic(ep.username.as_deref(), p);
-            }
+        if let Endpoint::Es(ep) = ep
+            && let Some(p) = &ep.password
+        {
+            secrets::register_basic(ep.username.as_deref(), p);
         }
     }
     if let Some((u, p)) = auth_file {
@@ -1147,20 +1147,20 @@ pub async fn run() -> Result<()> {
         Ok(report) => report,
         Err(e) => {
             // L-647: a restore stopped by a signal still reports what it wrote
-            if let Some(stopped) = e.downcast_ref::<signals::Stopped>() {
-                if !cli.quiet() {
-                    let mut err = std::io::stderr().lock();
-                    let _ = writeln!(err, "Total Writes: {}", stopped.written);
-                    if stopped.overwritten > 0 {
-                        let _ = writeln!(
-                            err,
-                            "Overwritten: {} (documents that replaced one with the same _id; included in Total Writes)",
-                            stopped.overwritten
-                        );
-                    }
-                    if stopped.failed > 0 {
-                        let _ = writeln!(err, "Failed Writes: {}", stopped.failed);
-                    }
+            if let Some(stopped) = e.downcast_ref::<signals::Stopped>()
+                && !cli.quiet()
+            {
+                let mut err = std::io::stderr().lock();
+                let _ = writeln!(err, "Total Writes: {}", stopped.written);
+                if stopped.overwritten > 0 {
+                    let _ = writeln!(
+                        err,
+                        "Overwritten: {} (documents that replaced one with the same _id; included in Total Writes)",
+                        stopped.overwritten
+                    );
+                }
+                if stopped.failed > 0 {
+                    let _ = writeln!(err, "Failed Writes: {}", stopped.failed);
                 }
             }
             return Err(e);

@@ -15,7 +15,10 @@ import json, os, subprocess, sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ALLOW = {"zstd-sys": "libzstd (vendored C), reviewed L-213", "ring": "BoringSSL-derived C/asm crypto, reviewed L-213",
          # L-808b (user decision): mimalloc is the default global allocator on *-linux-gnu.
-         "libmimalloc-sys": "mimalloc (vendored C, MIT), default allocator on glibc Linux, added L-808b"}
+         "libmimalloc-sys": "mimalloc (vendored C, MIT), default allocator on glibc Linux, added L-808b",
+         # L-809d: opendal S3 checksums. Pure Rust (SIMD intrinsics); the only C file is
+         # libcrc_fast.h, the header of its optional C ABI. No build script, nothing compiled.
+         "crc-fast": "pure Rust; ships only libcrc_fast.h (C ABI header, not compiled), reviewed L-809d"}
 NATIVE_BUILD = {"cc", "cmake", "bindgen", "pkg-config", "autotools", "vcpkg"}
 EXT = (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".S", ".s", ".asm")
 

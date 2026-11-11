@@ -85,19 +85,17 @@ impl ValueSplitter {
     pub fn next_value(&mut self, eof: bool) -> Result<Option<Vec<u8>>, String> {
         loop {
             if self.pos >= self.buf.len() {
-                if eof {
-                    if let Some(start) = self.start {
-                        if self.scalar && !self.in_string {
-                            self.check_size(self.buf.len() - start)?;
-                            let v = self.buf[start..].to_vec();
-                            self.reset_value();
-                            self.buf.clear();
-                            release_excess(&mut self.buf);
-                            self.pos = 0;
-                            return Ok(Some(v));
-                        }
-                        return Err("unexpected end of input inside a JSON value".to_string());
+                if eof && let Some(start) = self.start {
+                    if self.scalar && !self.in_string {
+                        self.check_size(self.buf.len() - start)?;
+                        let v = self.buf[start..].to_vec();
+                        self.reset_value();
+                        self.buf.clear();
+                        release_excess(&mut self.buf);
+                        self.pos = 0;
+                        return Ok(Some(v));
                     }
+                    return Err("unexpected end of input inside a JSON value".to_string());
                 }
                 if let Some(start) = self.start {
                     self.check_size(self.buf.len() - start)?;
@@ -182,7 +180,7 @@ impl ValueSplitter {
 }
 
 fn human_size(n: usize) -> String {
-    if n >= 1 << 20 && n % (1 << 20) == 0 {
+    if n >= 1 << 20 && n.is_multiple_of(1 << 20) {
         format!("{} MB", n >> 20)
     } else {
         format!("{n} bytes")

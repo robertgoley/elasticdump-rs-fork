@@ -165,23 +165,23 @@ pub fn normalize(doc: &Value, kind: TemplateKind) -> Result<Vec<(String, Value)>
     let Value::Object(m) = doc else {
         bail!("{} document must be a JSON object", kind.type_name());
     };
-    if let Some((key, item)) = list_key(kind) {
-        if let Some(list) = m.get(key) {
-            let Some(list) = list.as_array() else {
-                bail!("'{key}' must be an array");
-            };
-            return list
-                .iter()
-                .map(|it| {
-                    let name = it.get("name").and_then(Value::as_str);
-                    let body = it.get(item);
-                    match (name, body) {
-                        (Some(n), Some(b)) => Ok((n.to_string(), b.clone())),
-                        _ => bail!("{key} entry without name/{item}: {it}"),
-                    }
-                })
-                .collect();
-        }
+    if let Some((key, item)) = list_key(kind)
+        && let Some(list) = m.get(key)
+    {
+        let Some(list) = list.as_array() else {
+            bail!("'{key}' must be an array");
+        };
+        return list
+            .iter()
+            .map(|it| {
+                let name = it.get("name").and_then(Value::as_str);
+                let body = it.get(item);
+                match (name, body) {
+                    (Some(n), Some(b)) => Ok((n.to_string(), b.clone())),
+                    _ => bail!("{key} entry without name/{item}: {it}"),
+                }
+            })
+            .collect();
     }
     Ok(m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
 }
@@ -305,20 +305,20 @@ pub fn prepare(
             }
             sec.insert("settings".into(), def["settings"].clone());
         }
-        if !info.has_types() {
-            if let Some(m) = sec.get("mappings") {
-                let m = typeless_mapping(m);
-                sec.insert("mappings".into(), m);
-            }
+        if !info.has_types()
+            && let Some(m) = sec.get("mappings")
+        {
+            let m = typeless_mapping(m);
+            sec.insert("mappings".into(), m);
         }
-        if opts.rename_aliases {
-            if let Some(Value::Object(aliases)) = sec.get("aliases") {
-                let mut out = Map::new();
-                for (a, o) in aliases {
-                    out.insert(dst.renamer.alias(a)?, o.clone());
-                }
-                sec.insert("aliases".into(), Value::Object(out));
+        if opts.rename_aliases
+            && let Some(Value::Object(aliases)) = sec.get("aliases")
+        {
+            let mut out = Map::new();
+            for (a, o) in aliases {
+                out.insert(dst.renamer.alias(a)?, o.clone());
             }
+            sec.insert("aliases".into(), Value::Object(out));
         }
     }
     if opts.rename_patterns {

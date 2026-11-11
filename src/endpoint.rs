@@ -182,12 +182,12 @@ fn url_typo(raw: &str) -> Option<String> {
         return Some("is a URL with leading or trailing whitespace".into());
     }
     for scheme in ["https", "http"] {
-        if let Some(rest) = lower.strip_prefix(scheme) {
-            if rest.starts_with(':') || rest.starts_with("//") {
-                return Some(format!(
-                    "starts with '{scheme}' but not '{scheme}://', so it looks like a mistyped URL"
-                ));
-            }
+        if let Some(rest) = lower.strip_prefix(scheme)
+            && (rest.starts_with(':') || rest.starts_with("//"))
+        {
+            return Some(format!(
+                "starts with '{scheme}' but not '{scheme}://', so it looks like a mistyped URL"
+            ));
         }
     }
     let (head, _) = raw.split_once("://")?;

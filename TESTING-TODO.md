@@ -90,7 +90,6 @@ Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, int
 
 - **Real Backblaze B2** (needs the owner's account; B2 is not allowed without approval): `B2_APPLICATION_KEY_ID= B2_APPLICATION_KEY= B2_BUCKET= B2_BUCKET_ID= scripts/opendal-tests/b2-real.sh` (values from the environment only, never in the repo). It covers a gzip round trip, split parts, refusal of an existing object, a wrong key failing without printing it, and multielasticdump copy to and from B2. Only parsing and settings are unit tested today; no B2 mock exists that OpenDAL can use.
 - **Real AWS S3** (needs owner approval and a named sandbox account, as B13): SigV4 against AWS itself, virtual-host style, `AWS_SESSION_TOKEN`, a bucket in a non-default region, SSE-C, and a large (multi-GB) multipart upload with `--fileSize`.
-- CI on Rust 1.91.1: clippy and tests were run locally on 1.85.1 only.
 - Break tests: kill the S3/SFTP server mid-upload (retries, abort of the multipart upload, partial split sets), slow links with `tc`, and a full disk on the SFTP server.
 - multielasticdump reads and writes storage URLs through a local staging directory; staging space equals the dump size. Direct streaming without staging is not built.
 - Note: the shared rootless podman store on the Grok Bot box has damaged layers for the OpenSearch and Elasticsearch images (not repaired, since other agents use it); `cross.sh` used an isolated store via `ODT_OS_PODMAN_ARGS="--root ~/.local/share/edrs-odt-podman --runroot /tmp/edrs-odt-podman/run"`.

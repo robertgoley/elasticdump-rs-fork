@@ -268,10 +268,9 @@ fn scrub(v: &mut Value) {
             ] {
                 if let Some(Value::Object(_) | Value::String(_) | Value::Number(_) | Value::Null) =
                     o.get(k)
+                    && (k != "routing" || o.get(k).is_some_and(Value::is_object))
                 {
-                    if k != "routing" || o.get(k).is_some_and(Value::is_object) {
-                        o.remove(k);
-                    }
+                    o.remove(k);
                 }
             }
             for (_, x) in o.iter_mut() {

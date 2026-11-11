@@ -26,7 +26,7 @@ if [[ "$host_tools" == 1 ]]; then
   command -v podman >/dev/null || { echo 'podman is required (rootless; no sudo).' >&2; exit 2; }
   command -v python3 >/dev/null || { echo 'host-tools mode needs Python 3.11+.' >&2; exit 2; }
   if [[ -z "${PERF_BIN_DIR:-}" ]]; then
-    cargo "+${PERF_TOOLCHAIN:-1.85.1}" build --release --bins -p elasticdump-rs -p edgen -p edverify \
+    cargo "+${PERF_TOOLCHAIN:-1.91.1}" build --release --bins -p elasticdump-rs -p edgen -p edverify \
       -j "${PERF_BUILD_JOBS:-2}" >&2
     export PERF_BIN_DIR="$root/target/release"
   fi

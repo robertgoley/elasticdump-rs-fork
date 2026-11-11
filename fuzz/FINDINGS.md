@@ -45,7 +45,7 @@ peak 70 MB; 2 GiB whitespace bombs (zst 32000:1, gzip 1000:1) exit 0, peak 4 MB;
 
 ruzstd (decode only), measured on a 49.6 MB NDJSON dump compressed to 7.7 MB: libzstd 1.5.7 about
 1600 MB/s, ruzstd 0.7.3 about 480 MB/s (both far above restore throughput). ruzstd 0.8 needs rustc 1.87
-(MSRV here is 1.85). Decision (recorded, for the owner): keep libzstd for decode as well, since it stays linked
+(MSRV here was 1.85; 1.91 since L-809d). Decision (recorded, for the owner): keep libzstd for decode as well, since it stays linked
 for compression anyway, with the explicit window cap and these fuzz targets; switching the restore path
 to ruzstd 0.7 is a small, optional change if untrusted `.zst` input becomes a primary threat.
 

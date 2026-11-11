@@ -37,38 +37,36 @@ pub fn observe(buf: &[u8]) {
     let docs = memchr::memchr_iter(b'\n', buf).count().max(1) as u64;
     let avg = buf.len() as u64 / docs;
     let need = estimate(plan.batches, plan.limit, avg);
-    if let Some((avail, what)) = available() {
-        if need > avail {
-            log::warn!(
-                "memory: this run may need ~{} MB ((bufferSize + slices + concurrency) {} x --limit {} x ~{} B per document x 1.5 + 10 MB) but only {} MB are available ({what}); lower --limit, --bufferSize, --concurrency or --slices to avoid an out-of-memory kill",
-                need >> 20,
-                plan.batches,
-                plan.limit,
-                avg,
-                avail >> 20
-            );
-        }
+    if let Some((avail, what)) = available()
+        && need > avail
+    {
+        log::warn!(
+            "memory: this run may need ~{} MB ((bufferSize + slices + concurrency) {} x --limit {} x ~{} B per document x 1.5 + 10 MB) but only {} MB are available ({what}); lower --limit, --bufferSize, --concurrency or --slices to avoid an out-of-memory kill",
+            need >> 20,
+            plan.batches,
+            plan.limit,
+            avg,
+            avail >> 20
+        );
     }
 }
 
 /// The tighter of this process's cgroup v2 `memory.max` (walking up) and `MemAvailable`.
 fn available() -> Option<(u64, &'static str)> {
     let mut best: Option<(u64, &'static str)> = None;
-    if let Ok(cg) = std::fs::read_to_string("/proc/self/cgroup") {
-        if let Some(rel) = cg.lines().find_map(|l| l.strip_prefix("0::")) {
-            let mut p =
-                std::path::PathBuf::from("/sys/fs/cgroup").join(rel.trim_start_matches('/'));
-            loop {
-                if let Ok(v) = std::fs::read_to_string(p.join("memory.max")) {
-                    if let Ok(n) = v.trim().parse::<u64>() {
-                        if best.is_none_or(|(b, _)| n < b) {
-                            best = Some((n, "cgroup memory.max"));
-                        }
-                    }
-                }
-                if !p.pop() || p == std::path::Path::new("/sys/fs") {
-                    break;
-                }
+    if let Ok(cg) = std::fs::read_to_string("/proc/self/cgroup")
+        && let Some(rel) = cg.lines().find_map(|l| l.strip_prefix("0::"))
+    {
+        let mut p = std::path::PathBuf::from("/sys/fs/cgroup").join(rel.trim_start_matches('/'));
+        loop {
+            if let Ok(v) = std::fs::read_to_string(p.join("memory.max"))
+                && let Ok(n) = v.trim().parse::<u64>()
+                && best.is_none_or(|(b, _)| n < b)
+            {
+                best = Some((n, "cgroup memory.max"));
+            }
+            if !p.pop() || p == std::path::Path::new("/sys/fs") {
+                break;
             }
         }
     }

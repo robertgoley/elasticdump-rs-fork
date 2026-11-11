@@ -154,13 +154,13 @@ fn server_error_summary(body: &str) -> Option<String> {
         "{ty}: {}",
         e.get("reason").and_then(|r| r.as_str()).unwrap_or("")
     );
-    if let Some(c) = e.get("caused_by") {
-        if let (Some(cty), Some(cr)) = (
+    if let Some(c) = e.get("caused_by")
+        && let (Some(cty), Some(cr)) = (
             c.get("type").and_then(|x| x.as_str()),
             c.get("reason").and_then(|x| x.as_str()),
-        ) {
-            out.push_str(&format!(" (caused by {cty}: {cr})"));
-        }
+        )
+    {
+        out.push_str(&format!(" (caused by {cty}: {cr})"));
     }
     if out.len() > MAX_ERROR_BODY / 2 {
         out = truncate_at(&out, MAX_ERROR_BODY / 2).to_string() + "…";

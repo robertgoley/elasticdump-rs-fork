@@ -308,7 +308,7 @@ def prerequisites(a, plan):
             raise ValueError("Build in the controller via run-suite.sh, or set PERF_BIN_DIR")
         # Run Cargo even when binaries exist, so source changes cannot benchmark stale executables.
         target = bindir.parent
-        checked(["cargo", "+1.85.1", "build", "--locked", "--release", "--workspace", "--bins",
+        checked(["cargo", "+1.91.1", "build", "--locked", "--release", "--workspace", "--bins",
                  "--jobs", os.environ.get("PERF_BUILD_JOBS", "2"), "--target-dir", target], cwd=ROOT)
     tools = {b: str(bindir / b) for b in binaries}
     if not a.skip_node:

@@ -8,7 +8,7 @@
 # By default `cargo vendor` runs INSIDE a container (podman, or docker) from the pinned Rust
 # builder image (BUILDER_IMAGE:BUILDER_TAG in the Makefile), with the repo mounted, so the host
 # needs only the container tool, no Rust. Overrides:
-#   VENDOR_ON_HOST=1     use the host's cargo instead (>= 1.85)
+#   VENDOR_ON_HOST=1     use the host's cargo instead (>= 1.91)
 #   VENDOR_IMAGE=img:tag use another image that has cargo
 #   CONTAINER=podman|docker
 #   VENDOR_NETWORK=...   container network for the fetch (default host; DNS must work there)

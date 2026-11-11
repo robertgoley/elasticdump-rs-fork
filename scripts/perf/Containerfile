@@ -5,7 +5,7 @@ RUN perl -pi -e 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sour
     && apt-get update \
     && apt-get install -y --no-install-recommends python3 podman curl openssl nodejs npm git \
     && rm -rf /var/lib/apt/lists/* \
-    && rustup toolchain install 1.85.1 --profile minimal
+    && rustup toolchain install 1.91.1 --profile minimal
 COPY node-package.json /opt/node-ed/package.json
 COPY node-package-lock.json /opt/node-ed/package-lock.json
 RUN cd /opt/node-ed && npm ci --ignore-scripts --no-audit --no-fund

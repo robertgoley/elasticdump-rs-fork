@@ -1,0 +1,7 @@
+# Minimum and pinned build toolchain (owner decision 2026-11-11, L-809d): rust-version 1.91,
+# the same 1.91.1 as CI. Only the channel is pinned (no components), so offline/minimal
+# installs never need to download extra components. Explicit `cargo +nightly ...` (fuzz,
+# udeps, geiger) still overrides it. Container builds do not copy this file; their builder
+# images (rust 1.99) are newer than the minimum.
+[toolchain]
+channel = "1.91.1"

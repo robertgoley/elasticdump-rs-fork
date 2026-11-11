@@ -396,13 +396,13 @@ impl FileSink {
         match (&sink.opts.path, sink.opts.split) {
             (Some(_), Some(_)) if sink.opts.remote.is_some() => {}
             (Some(root), Some(_)) => {
-                if !sink.opts.overwrite {
-                    if let Some(p) = existing_parts(root).first() {
-                        bail!(
-                            "File `{}` already exists, quitting (use --overwrite to replace split parts)",
-                            p.display()
-                        );
-                    }
+                if !sink.opts.overwrite
+                    && let Some(p) = existing_parts(root).first()
+                {
+                    bail!(
+                        "File `{}` already exists, quitting (use --overwrite to replace split parts)",
+                        p.display()
+                    );
                 }
             }
             (None, Some(_)) => bail!("--fileSize/--maxRows require a file --output"),
@@ -439,11 +439,11 @@ impl FileSink {
     }
 
     async fn rotate(&mut self) -> Result<()> {
-        if let Some(part) = self.current.take() {
-            if let Some(sealed) = part.seal().await? {
-                log::info!("Created {}", sealed.final_path().display());
-                self.sealed.push(sealed);
-            }
+        if let Some(part) = self.current.take()
+            && let Some(sealed) = part.seal().await?
+        {
+            log::info!("Created {}", sealed.final_path().display());
+            self.sealed.push(sealed);
         }
         Ok(())
     }

@@ -47,14 +47,14 @@ pub fn finalize_search_body(body: Value, limit: usize, size: Option<u64>) -> Val
         _ => limit as u64,
     };
     let obj = final_search_body.as_object_mut().unwrap();
-    if let Some(user_size) = obj.get(&"size") {
-        if user_size.as_u64() != Some(page_size) {
-            log::warn!(
-                "Overriding searchBody size {} with --limit {}",
-                sonic_rs::to_string(user_size).unwrap_or_default(),
-                page_size
-            );
-        }
+    if let Some(user_size) = obj.get(&"size")
+        && user_size.as_u64() != Some(page_size)
+    {
+        log::warn!(
+            "Overriding searchBody size {} with --limit {}",
+            sonic_rs::to_string(user_size).unwrap_or_default(),
+            page_size
+        );
     }
     obj.insert(&"size", json!(page_size));
 

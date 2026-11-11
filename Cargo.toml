@@ -2,7 +2,7 @@
 name = "elasticdump-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 description = "High-performance Elasticsearch data dumper"
 authors = ["TenYears <opensource@tenyears.tech>"]
 license = "MIT"
@@ -84,12 +84,15 @@ regex = { version = "1.11", default-features = false, features = ["std", "unicod
 tikv-jemallocator = { version = "0.7", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
 # Second, separate write/read path for s3://, b2://, sftp://, fs:// URLs (feature `opendal`).
-# 0.57 is the last release with rust-version 1.85 (0.58+ needs 1.91).
+# Pinned exactly (L-809d: 0.59.5, rust-version 1.91); upgrades go through the supply-chain gates.
 futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
 # OpenDAL's own HTTP client version, given our rustls config (same CA/--insecure handling and
 # ring provider as the cluster side).
 reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
-opendal = { version = "=0.57.0", default-features = false, features = ["reqwest-rustls-no-provider-tls", "executors-tokio", "layers-retry", "layers-timeout"], optional = true }
+# The reqwest transport, constructed per operator with our client (default features would also
+# pull rustls' aws-lc provider; the no-provider feature keeps ring only).
+opendal-http-transport-reqwest = { version = "=0.59.5", default-features = false, optional = true }
+opendal = { version = "=0.59.5", default-features = false, features = ["http-transport-reqwest-rustls-no-provider", "executors-tokio", "layers-retry", "layers-timeout"], optional = true }
 
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
@@ -106,7 +109,7 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 default = ["encrypted-keys", "opendal", "opendal-sftp"]
 # OpenDAL storage path (L-809a): s3:// (incl. MinIO/RustFS, SSE-C), b2://, fs:// / file:// for
 # --input/--output. `opendal-sftp` adds sftp:// (needs the OpenSSH `ssh` client at run time).
-opendal = ["dep:opendal", "dep:futures", "dep:reqwest013", "opendal/services-s3", "opendal/services-b2", "opendal/services-fs"]
+opendal = ["dep:opendal", "dep:opendal-http-transport-reqwest", "dep:futures", "dep:reqwest013", "opendal/services-s3", "opendal/services-b2", "opendal/services-fs"]
 opendal-sftp = ["opendal", "opendal/services-sftp"]
 # Decrypt encrypted PKCS#8 client keys (`--key` + `--pass`). Pulls in the RustCrypto
 # aes/scrypt/pbkdf2/sha2 stack; `--no-default-features` builds leave it out (SUP-023).

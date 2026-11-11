@@ -441,10 +441,10 @@ pub fn digest_one(obj: &[u8], opts: &Opts, dig: &mut SetDigest, col: &mut Collec
             let h = doc_hash(&d);
             let b = bucket_of(&d, dig.buckets.len());
             dig.add(b, &h);
-            if let Some(sel) = &col.buckets {
-                if sel.contains(&b) {
-                    col.docs.entry((d.index, d.id)).or_default().push(h);
-                }
+            if let Some(sel) = &col.buckets
+                && sel.contains(&b)
+            {
+                col.docs.entry((d.index, d.id)).or_default().push(h);
             }
         }
         Err(_) => dig.bad_lines += 1,

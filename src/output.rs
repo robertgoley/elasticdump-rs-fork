@@ -132,16 +132,16 @@ impl OutputTarget {
 
         match self.mode {
             OutputMode::Stdout => {
-                if let Some(mut writer) = writer {
-                    if let Err(error) = writer.flush().await {
-                        let error = anyhow::Error::from(error);
-                        // A vanished pipe reader is not our problem to report;
-                        // there is nothing left to flush to.
-                        if is_broken_pipe(&error) {
-                            return Ok(None);
-                        }
-                        return Err(error).context("Failed to flush stdout");
+                if let Some(mut writer) = writer
+                    && let Err(error) = writer.flush().await
+                {
+                    let error = anyhow::Error::from(error);
+                    // A vanished pipe reader is not our problem to report;
+                    // there is nothing left to flush to.
+                    if is_broken_pipe(&error) {
+                        return Ok(None);
                     }
+                    return Err(error).context("Failed to flush stdout");
                 }
                 Ok(None)
             }
@@ -213,10 +213,9 @@ impl OutputTarget {
         #[cfg(feature = "opendal")]
         if let (Some(SinkWriter::Remote(mut w)), OutputMode::Remote(r)) =
             (self.writer.take(), &self.mode)
+            && let Err(e) = w.writer.abort().await
         {
-            if let Err(e) = w.writer.abort().await {
-                log::warn!("could not abort the upload of {r}: {e}");
-            }
+            log::warn!("could not abort the upload of {r}: {e}");
         }
         self.close_writer();
 
@@ -431,14 +430,14 @@ pub fn is_broken_pipe(error: &anyhow::Error) -> bool {
 /// Remove a staged output file, ignoring a missing file and warning on anything
 /// else. Shared by `finalize`'s error paths and `abort`.
 async fn remove_staging(staging_path: &Path) {
-    if let Err(error) = tokio_fs::remove_file(staging_path).await {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            log::warn!(
-                "Failed to remove staged output '{}': {}",
-                staging_path.display(),
-                error
-            );
-        }
+    if let Err(error) = tokio_fs::remove_file(staging_path).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!(
+            "Failed to remove staged output '{}': {}",
+            staging_path.display(),
+            error
+        );
     }
 }
 

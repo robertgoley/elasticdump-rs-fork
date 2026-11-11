@@ -275,10 +275,10 @@ impl Route {
     }
 
     fn matches(&self, req: &Recorded) -> bool {
-        if let Some(m) = &self.method {
-            if !m.eq_ignore_ascii_case(&req.method) {
-                return false;
-            }
+        if let Some(m) = &self.method
+            && !m.eq_ignore_ascii_case(&req.method)
+        {
+            return false;
         }
         let ok = match &self.path {
             PathMatch::Any => true,
@@ -296,10 +296,10 @@ impl Route {
                 _ => {}
             }
         }
-        if let Some(p) = &self.body {
-            if !p(&req.body) {
-                return false;
-            }
+        if let Some(p) = &self.body
+            && !p(&req.body)
+        {
+            return false;
         }
         !(self.once && self.served.load(Ordering::SeqCst) >= self.replies.len())
     }

@@ -560,12 +560,12 @@ pub fn clean_ism(mut p: Value, dst: &MetaTarget, opts: &MetaOptions) -> Result<V
         let fix = |t: &mut Value| -> Result<()> {
             if let Value::Object(t) = t {
                 t.shift_remove("last_updated_time");
-                if opts.rename_patterns {
-                    if let Some(Value::Array(ps)) = t.get_mut("index_patterns") {
-                        for x in ps.iter_mut() {
-                            if let Value::String(s) = x {
-                                *s = dst.renamer.pattern(s)?;
-                            }
+                if opts.rename_patterns
+                    && let Some(Value::Array(ps)) = t.get_mut("index_patterns")
+                {
+                    for x in ps.iter_mut() {
+                        if let Value::String(s) = x {
+                            *s = dst.renamer.pattern(s)?;
                         }
                     }
                 }

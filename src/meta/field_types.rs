@@ -306,14 +306,14 @@ pub fn unportable(mappings: &Value, target: &ClusterInfo) -> Vec<Unportable> {
 }
 
 fn check(def: &Value, path: &str, target: &ClusterInfo, out: &mut Vec<Unportable>) {
-    if let Some(ty) = def.get("type").and_then(Value::as_str) {
-        if let Some(reason) = refusal(ty, def, target) {
-            out.push(Unportable {
-                path: path.to_string(),
-                ty: ty.to_string(),
-                reason,
-            });
-        }
+    if let Some(ty) = def.get("type").and_then(Value::as_str)
+        && let Some(reason) = refusal(ty, def, target)
+    {
+        out.push(Unportable {
+            path: path.to_string(),
+            ty: ty.to_string(),
+            reason,
+        });
     }
 }
 

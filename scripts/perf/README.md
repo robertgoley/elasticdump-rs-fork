@@ -33,7 +33,7 @@ run-suite.sh [--engines LIST] [--cases LIST] [--tier L0|L1] [--reps N]
 run, so no apt/npm access is needed inside a container (use it when a proxy breaks the
 Containerfile's `apt-get`). `suite.py` runs directly on the host (Python 3.11+, podman, bash,
 curl, openssl, git). Unless `PERF_BIN_DIR` is set it builds the four release binaries with
-`cargo +${PERF_TOOLCHAIN:-1.85.1} build --release` and uses `target/release`. `NODE_ED_BIN`
+`cargo +${PERF_TOOLCHAIN:-1.91.1} build --release` and uses `target/release`. `NODE_ED_BIN`
 defaults to `/workspace/node-ed/node_modules/.bin` (Node elasticdump 6.125.1, installed with
 `npm ci --ignore-scripts`). Baselines record `controller=local`. The container controller
 stays the default.
@@ -61,13 +61,13 @@ Offline `--dry-run`/`--help` additionally need host Python **3.11+**, but do not
    error, not a silently skipped engine. `../it/check-pins.sh` remains authoritative.
 2. The entrypoint builds `localhost/elasticdump-rs-perf:1` if absent, using
    `Containerfile`: the existing public Rust/Debian builder digest, Python, curl,
-   OpenSSL, a Podman remote client, Node/npm, and Rust **1.85.1**. npm uses the checked-in
+   OpenSSL, a Podman remote client, Node/npm, and Rust **1.91.1**. npm uses the checked-in
    integrity-locked dependency graph, exact elasticdump 6.125.1, and `--ignore-scripts`.
    Lifecycle scripts are never executed. The apt-provided Node/runtime packages are not
    digest-pinned independently: retain the built controller image for comparable runs.
 3. Release `elasticdump-rs`, `multielasticdump`, `edgen`, `edverify` are built **inside
    that controller**, before starting any engine, with
-   `cargo +1.85.1 build --locked --release --workspace --bins`. The persistent target is
+   `cargo +1.91.1 build --locked --release --workspace --bins`. The persistent target is
    `results/perf/build`; Cargo runs on every invocation to avoid stale executables.
 4. The controller uses a **private, temporary host Podman API socket**, starting sibling
    containers in the host's existing rootless image store, not nested Podman storage.

@@ -338,7 +338,7 @@ pub fn geo(rng: &mut ChaCha20Rng, i: u64, j: &mut J) {
         String::from_utf8(t.b).unwrap()
     };
     j.key("area");
-    if i % 2 == 0 {
+    if i.is_multiple_of(2) {
         j.str(&format!(
             "POLYGON (({a} {b}, {c} {b}, {c} {e}, {a} {e}, {a} {b}))",
             a = f(lo),
