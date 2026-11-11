@@ -10,10 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "Image bases: dhi (default; dhi.io static glibc + mimalloc), dhi-alpine, dhi-debian, alpine (public), debian (public)"
+        description: "Image bases: dhi-debian (default; dhi.io Debian 13 with a shell, glibc + mimalloc, amd64), dhi (dhi.io static glibc), dhi-alpine, alpine (public), debian (public)"
         type: choice
-        options: [dhi, dhi-alpine, dhi-debian, alpine, debian]
-        default: dhi
+        options: [dhi-debian, dhi, dhi-alpine, alpine, debian]
+        default: dhi-debian
   schedule:
     - cron: "17 6 * * 1"   # weekly: catches advisories published after the last push
 
@@ -69,13 +69,13 @@ jobs:
           fetch grype "$GRYPE_URL" "$GRYPE_SHA256"
           fetch syft "$SYFT_URL" "$SYFT_SHA256"
           fetch trivy "$TRIVY_URL" "$TRIVY_SHA256"
-      # The default target is the dhi.io image (`make image`). Docker Hardened
+      # The default target is the dhi.io Debian image (`make image`, L-810c). Docker Hardened
       # Images need a pull login: add repository secrets DHI_USERNAME (Docker
       # ID) and DHI_TOKEN (a read-only/pull access token). No values live in
       # this repo; the login is pull-only and never reaches an image layer.
       # Without the secrets, run manually with base=alpine (public bases).
       - name: Log in to dhi.io (pull only)
-        if: startsWith(inputs.base || 'dhi', 'dhi')
+        if: startsWith(inputs.base || 'dhi-debian', 'dhi')
         env:
           DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
           DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
@@ -89,21 +89,22 @@ jobs:
       # allow-list.
       - name: Build image (local only)
         env:
-          BASE: ${{ inputs.base || 'dhi' }}
+          BASE: ${{ inputs.base || 'dhi-debian' }}
         run: |
           case "$BASE" in
-            dhi) make image CONTAINER=podman ;;
+            dhi-debian) make image CONTAINER=podman ;;
+            dhi) make image-dhi-static CONTAINER=podman ;;
             dhi-alpine) make image-dhi-alpine CONTAINER=podman ;;
-            dhi-debian) make image-dhi-debian CONTAINER=podman ;;
             debian) make image-public CONTAINER=podman ;;
             alpine) make image-alpine CONTAINER=podman ;;
-            *) echo "::error::unknown base '$BASE' (allowed: dhi, dhi-alpine, dhi-debian, alpine, debian)"; exit 1 ;;
+            *) echo "::error::unknown base '$BASE' (allowed: dhi-debian, dhi, dhi-alpine, alpine, debian)"; exit 1 ;;
           esac
-      # L-211 / SUP-017: non-root, --read-only + /data, executable set, base digest.
+      # L-211 / SUP-017: non-root, --read-only + /data, executable set, base digest, and (L-810c)
+      # the elasticdump / elasticdump-rs / multielasticdump symlinks run as their targets.
       # IMAGE_VARIANT also picks the tag that sbom/scan read (Makefile SUFFIX_*).
       - name: Image hardening tests
         env:
-          BASE: ${{ inputs.base || 'dhi' }}
+          BASE: ${{ inputs.base || 'dhi-debian' }}
         run: |
           case "$BASE" in
             dhi) v=dhi-static ;; dhi-alpine) v=dhi-alpine ;; dhi-debian) v=dhi-debian ;; debian) v=public ;; alpine) v=alpine ;;

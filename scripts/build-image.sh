@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Build the searchdump container image (L-808b). Local build only unless --push is given.
 #
-#   scripts/build-image.sh [--variant glibc|alpine] [--platform linux/amd64|linux/arm64|both]
+#   scripts/build-image.sh [--type TYPE] [--platform linux/amd64|linux/arm64|both]
 #                          [--imagename REF] [--tag REF]... [--name REPO] [--jobs N] [--push]
 #                          [--dry-run] [--help]
 #
-# Variants (pins: Makefile; stages: Dockerfile):
-#   glibc   (default) dhi.io/rust:*-debian13-dev builder -> dhi.io/static:*-glibc-debian13 runtime,
-#           Dockerfile target `runtime` (COPY-only, no shell); mimalloc global allocator.
-#           Default tags: REPO:<version> and REPO:latest
-#   alpine  dhi.io/rust:*-alpine-dev builder -> dhi.io/alpine-base:*-dev runtime, target
-#           `runtime-shell` (bash, apk); musl's own allocator. Default tag: REPO:<version>-alpine
+# Build types (pins: Makefile; stages: Dockerfile):
+#   dhi-debian  (default, L-810c) dhi.io/rust:*-debian13-dev builder -> dhi.io/debian-base:*-debian13-dev
+#               runtime, target `runtime-shell` (bash, apt); mimalloc. Tags: REPO:<version>, REPO:latest
+#   dhi-static  dhi.io/rust:*-debian13-dev builder -> dhi.io/static:*-glibc-debian13 runtime, target
+#               `runtime` (COPY-only, no shell); mimalloc. Tag: REPO:<version>-static (default before L-810c)
+#   dhi-alpine  dhi.io/rust:*-alpine-dev builder -> dhi.io/alpine-base:*-dev runtime, target
+#               `runtime-shell` (bash, apk); musl's own allocator. Tag: REPO:<version>-alpine
+#   public      rust:*-trixie -> debian:trixie-slim (public bases, no login; not default).
+#               Tag: REPO:<version>-debian-public
+#   alpine      rust:*-alpine -> alpine (public bases, no login; not default). Tag: REPO:<version>-alpine-public
+# --variant glibc|alpine (before L-810c) still works: glibc = dhi-static, alpine = dhi-alpine.
+# Every type has the compatibility symlinks elasticdump, elasticdump-rs (-> searchdump) and
+# multielasticdump (-> searchdump-multi) in /usr/local/bin.
 # REPO defaults to localhost/searchdump-rs; <version> comes from Cargo.toml.
 #
-# --platform  linux/amd64 | linux/arm64 | both (default: the host's platform). A foreign platform
+# --platform  linux/amd64 | linux/arm64 | both (default: linux/amd64, L-810c). A foreign platform
 #             runs the Rust build under emulation (qemu-user-static / binfmt_misc on the host) and
 #             is slow; `both` builds a manifest list (podman build --manifest).
 # --imagename REF  full repository and tag for the image, e.g. registry.example.com/team/searchdump-rs:1.2.3;
@@ -26,7 +33,7 @@
 #             (used by the Makefile image targets).
 # Prerequisites: podman (or docker with buildx); no host Rust (crates are vendored in a container;
 # VENDOR_ON_HOST=1 uses host cargo >= 1.91 instead). For dhi.io bases a pull
-# login first: podman login dhi.io (checked up front; or use make image-public for public bases).
+# login first: podman login dhi.io (checked up front; --type public / alpine need no login).
 #
 # Offline build (L-808i): crates are fetched on the HOST (scripts/vendor-crates.sh into the
 # gitignored .vendor/, so the host needs cargo) and the builder's cargo step runs with
@@ -40,13 +47,17 @@ cd "$(dirname "$0")/.."
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "build-image.sh: $*" >&2; exit 2; }
+# --variant (before L-810c): glibc was the dhi.io static image, alpine the dhi.io Alpine image.
+old_variant() { case "$1" in glibc) echo dhi-static ;; alpine) echo dhi-alpine ;; *) echo "$1" ;; esac; }
 
-variant=glibc; platform=""; name=localhost/searchdump-rs; jobs=2; push=0; dry=0
+btype=dhi-debian; platform=linux/amd64; name=localhost/searchdump-rs; jobs=2; push=0; dry=0
 tags=(); pf_images=(); imagename="${SEARCHDUMP_IMAGE:-${ELASTICDUMP_IMAGE:-}}"  # ELASTICDUMP_IMAGE: deprecated alias (L-810a)
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --variant) [[ $# -ge 2 ]] || die "--variant needs a value"; variant="$2"; shift 2 ;;
-    --variant=*) variant="${1#*=}"; shift ;;
+    --type) [[ $# -ge 2 ]] || die "--type needs a value"; btype="$2"; shift 2 ;;
+    --type=*) btype="${1#*=}"; shift ;;
+    --variant) [[ $# -ge 2 ]] || die "--variant needs a value"; btype=$(old_variant "$2"); shift 2 ;;
+    --variant=*) btype=$(old_variant "${1#*=}"); shift ;;
     --platform) [[ $# -ge 2 ]] || die "--platform needs a value"; platform="$2"; shift 2 ;;
     --platform=*) platform="${1#*=}"; shift ;;
     --imagename) [[ $# -ge 2 ]] || die "--imagename needs a value"; imagename="$2"; shift 2 ;;
@@ -70,10 +81,13 @@ C="${CONTAINER:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docke
 
 # Pins live in the Makefile (one place, F-14 checked by scripts/lint-hygiene.sh).
 mk() { sed -n "s/^$1[[:space:]]*?=[[:space:]]*//p" Makefile | head -1; }
-case "$variant" in
-  glibc)  target=runtime;       pre="" ;;
-  alpine) target=runtime-shell; pre=DHI_ALPINE_ ;;
-  *) die "--variant must be glibc or alpine (got '$variant')" ;;
+case "$btype" in
+  dhi-debian) target=runtime-shell; pre="";          suffix="" ;;
+  dhi-static) target=runtime;       pre=DHI_STATIC_; suffix=-static ;;
+  dhi-alpine) target=runtime-shell; pre=DHI_ALPINE_; suffix=-alpine ;;
+  public)     target=runtime-shell; pre=PUBLIC_;     suffix=-debian-public ;;
+  alpine)     target=runtime-shell; pre=ALPINE_;     suffix=-alpine-public ;;
+  *) die "--type must be dhi-debian, dhi-static, dhi-alpine, public or alpine (got '$btype')" ;;
 esac
 builder_image=$(mk "${pre}BUILDER_IMAGE"); builder_tag=$(mk "${pre}BUILDER_TAG")
 base_image=$(mk "${pre}BASE_IMAGE"); base_tag=$(mk "${pre}BASE_TAG")
@@ -100,7 +114,7 @@ if [[ -n "$imagename" ]]; then
   tags=("$imagename" ${tags[@]+"${tags[@]}"})
 fi
 if [[ ${#tags[@]} -eq 0 ]]; then
-  if [[ "$variant" == glibc ]]; then tags=("$name:$version" "$name:latest"); else tags=("$name:$version-alpine"); fi
+  if [[ "$btype" == dhi-debian ]]; then tags=("$name:$version" "$name:latest"); else tags=("$name:$version$suffix"); fi
 fi
 
 run() { printf '+'; printf ' %q' "$@"; printf '\n'; [[ $dry == 1 ]] || "$@"; }
@@ -130,7 +144,7 @@ preflight() {
     if ! $C pull ${platforms:+--platform "${platforms%%,*}"} "$img" >/dev/null 2>/tmp/build-image-pull.$$; then
       if grep -qiE 'auth|denied|unauthorized|credential' /tmp/build-image-pull.$$; then
         rm -f /tmp/build-image-pull.$$
-        die "cannot pull ${img%%@*}: not logged in to ${img%%/*}. Run '$C login ${img%%/*}' (Docker account) first, or build from public bases with 'make image-public'"
+        die "cannot pull ${img%%@*}: not logged in to ${img%%/*}. Run '$C login ${img%%/*}' (Docker account) first, or build from public bases with --type public (not the default)"
       fi
       cat /tmp/build-image-pull.$$ >&2; rm -f /tmp/build-image-pull.$$; die "cannot pull $img (network/proxy?)"
     fi
@@ -151,7 +165,7 @@ args=(build --target "$target"
   --build-arg "CARGO_BUILD_JOBS=$jobs")
 [[ -n "$platforms" ]] && args+=(--platform "$platforms")
 
-echo "variant=$variant target=$target platform=${platforms:-host} builder=$builder_image:$builder_tag base=$base_image:$base_tag"
+echo "type=$btype target=$target platform=${platforms:-host} builder=$builder_image:$builder_tag base=$base_image:$base_tag"
 if [[ $multi == 1 ]]; then
   # A manifest list: build into the first tag, then tag the list with the others.
   if [[ $dry == 0 ]] && $C manifest exists "${tags[0]}" 2>/dev/null; then run $C manifest rm "${tags[0]}" >/dev/null; fi

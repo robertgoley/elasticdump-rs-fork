@@ -57,14 +57,16 @@ Container image (podman or docker; details in [Container image](#container-image
 
 ```bash
 podman login dhi.io                         # pull login for the hardened default bases
-scripts/build-image.sh                      # localhost/searchdump-rs:<version> and :latest
-scripts/build-image.sh --variant alpine     # :<version>-alpine (musl)
-make image-public                           # public Debian bases, no login needed
+scripts/build-image.sh                      # default: dhi.io Debian 13, amd64 -> localhost/searchdump-rs:<version>, :latest
+scripts/build-image.sh --type dhi-alpine    # :<version>-alpine (musl); also dhi-static, public, alpine
 podman run --rm -v "$PWD:/data" localhost/searchdump-rs --input=https://os:9200/logs --output=/data/logs.json
 ```
 
-The image's entrypoint is `searchdump`; `searchdump-multi` is next to it, and an `elasticdump` symlink points at
-`searchdump` for scripts written for the Node tool.
+The image's entrypoint is `searchdump`; `searchdump-multi` is next to it. Every image type also has compatibility
+symlinks in `/usr/local/bin`: `elasticdump` and `elasticdump-rs` point at `searchdump`, and `multielasticdump` points
+at `searchdump-multi`, so commands written for the old names keep working (`podman run --entrypoint multielasticdump
+…`, or `command: [multielasticdump]` in Kubernetes). Neither binary changes behaviour based on the name it was started
+under.
 
 Allocator: builds for glibc Linux (`*-linux-gnu`, the preferred release artifacts and the default container image)
 use mimalloc as the global allocator; musl builds (`*-linux-musl`, the Alpine image) keep musl's own allocator.
@@ -630,20 +632,23 @@ because the fat-LTO link peaks at ~1.5-2 GB) and one of two runtime stages. Buil
 same libc. Every build uses the same Dockerfile through the `BUILDER_IMAGE`/`BUILDER_TAG`/`BASE_IMAGE`/`BASE_TAG`
 build args and a `--target` (bases are pinned by multi-arch index digest in the Makefile):
 
-| Make target | Tag | Builder | Runtime (`--target`) | libc / allocator | Size | HIGH/CRITICAL CVEs (2026-11-01) |
+| Make target (`--type`) | Tag | Builder | Runtime (`--target`) | libc / allocator | Size | HIGH/CRITICAL CVEs (2026-11-01) |
 |---|---|---|---|---|---|---|
-| `make image` (**default**) | `:<ver>`, `:latest` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/static:20250419-glibc-debian13` (`runtime`, COPY-only, no shell) | glibc 2.41 / mimalloc | 24 MB | grype 5 High (glibc, libgcc-s; won't-fix / not-fixed upstream), trivy 0 |
-| `make image-dhi-alpine` | `:<ver>-alpine` | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 21 MB | **0** (0 at any severity) |
-| `make image-dhi-debian` | `:<ver>-debian-dev` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable (2026-10-29) |
-| `make image-alpine` | `:<ver>-alpine-public` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 20 MB | 0 (2026-10-29) |
-| `make image-public` | `:<ver>-debian-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 54 High matches (grype) / 43 (trivy), none fixable (2026-10-29) |
+| `make image` (`dhi-debian`, **default**, L-810c) | `:<ver>`, `:latest` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable (2026-10-29) |
+| `make image-dhi-static` (`dhi-static`; default until L-810c) | `:<ver>-static` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/static:20250419-glibc-debian13` (`runtime`, COPY-only, no shell) | glibc 2.41 / mimalloc | 24 MB | grype 5 High (glibc, libgcc-s; won't-fix / not-fixed upstream), trivy 0 |
+| `make image-dhi-alpine` (`dhi-alpine`) | `:<ver>-alpine` | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 21 MB | **0** (0 at any severity) |
+| `make image-alpine` (`alpine`, public bases, not default) | `:<ver>-alpine-public` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 20 MB | 0 (2026-10-29) |
+| `make image-public` (`public`, public bases, not default) | `:<ver>-debian-public` | `docker.io/library/rust:1.99-trixie` | `docker.io/library/debian:trixie-slim` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 54 High matches (grype) / 43 (trivy), none fixable (2026-10-29) |
 
-The default is the glibc + mimalloc build on the dhi.io `static` glibc base (L-808b). Of the dhi.io glibc bases it is
-the smallest (16 MB: glibc, libgcc_s, the CA bundle, tzdata and a `nonroot` 65532 user; no shell, no package manager),
-has the fewest CVEs (grype 5 High / 24 distinct against 14 / 46 for `debian-base:trixie-debian13` and 46 / 71 for the
-`-dev` base) and is published for amd64 and arm64; the comparison is in `results/local/L-808b.md` and
-[SECURITY-CVE.md](SECURITY-CVE.md). Without a shell the default image cannot run wrapper scripts inside the container;
-use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for that. On Alpine runtimes the Dockerfile
+Since L-810c (owner decision 2026-11-11) the default is the dhi.io Debian 13 image with a shell (`debian-base -dev`),
+glibc + mimalloc, built for linux/amd64: every default build uses dhi.io bases for both the builder and the runtime.
+It is larger than the shell-less `static` image and carries more (unfixable) CVEs, but it can run wrapper scripts
+inside the container. The `static` image (the default from L-808b to L-810c) is still built as `dhi-static`: the
+smallest (16 MB base: glibc, libgcc_s, the CA bundle, tzdata and a `nonroot` 65532 user; no shell, no package manager),
+with the fewest CVEs (grype 5 High / 24 distinct against 14 / 46 for `debian-base:trixie-debian13` and 46 / 71 for the
+`-dev` base); the comparison is in `results/local/L-808b.md` and [SECURITY-CVE.md](SECURITY-CVE.md). The Alpine
+variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) is the smallest image with a shell. The two public-base
+types (`public`, `alpine`) need no dhi.io login and are kept for that, but they are not the default. On Alpine runtimes the Dockerfile
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
@@ -662,26 +667,31 @@ crates.io access. The host needs no Rust (`VENDOR_ON_HOST=1` uses host cargo ins
 `HTTP_PROXY`, `NO_PROXY` and `CARGO_HTTP_PROXY` are passed into the vendoring container; the container tool still
 pulls the base images, and the Alpine stages still run `apk`, with its normal network.
 
-Every image contains `/usr/local/bin/searchdump` plus an `elasticdump` symlink, runs as uid
+Every image contains `/usr/local/bin/searchdump` and `searchdump-multi` plus the `elasticdump`, `elasticdump-rs`
+and `multielasticdump` symlinks, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,
 base name).
 
 ### `scripts/build-image.sh`
 
-Builds the two main variants locally (nothing is pushed unless `--push` is given):
+Builds any image type locally (nothing is pushed unless `--push` is given):
 
 ```bash
-scripts/build-image.sh                              # glibc + mimalloc on dhi.io/static: searchdump-rs:<ver>, :latest
-scripts/build-image.sh --variant alpine             # Alpine/musl, musl allocator: searchdump-rs:<ver>-alpine
+scripts/build-image.sh                              # default dhi-debian, amd64: searchdump-rs:<ver>, :latest
+scripts/build-image.sh --type dhi-static            # shell-less dhi.io/static: searchdump-rs:<ver>-static
+scripts/build-image.sh --type dhi-alpine            # Alpine/musl, musl allocator: searchdump-rs:<ver>-alpine
+scripts/build-image.sh --type public                # public Debian bases, no login (not default): <ver>-debian-public
 scripts/build-image.sh --platform both              # linux/amd64 + linux/arm64 manifest list (podman)
 scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:0.1.0-arm64
 scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:0.1.0 --push
-scripts/build-image.sh --dry-run --variant alpine   # print the podman commands only
+scripts/build-image.sh --dry-run --type dhi-alpine  # print the podman commands only
 scripts/build-image.sh --help
 ```
 
-Options: `--variant glibc|alpine` (default `glibc`), `--platform linux/amd64|linux/arm64|both` (default: the host's),
+Options: `--type dhi-debian|dhi-static|dhi-alpine|public|alpine` (default `dhi-debian`; the older
+`--variant glibc|alpine` still works and means `dhi-static` / `dhi-alpine`), `--platform linux/amd64|linux/arm64|both`
+(default `linux/amd64`; the Makefile targets take `PLATFORM=`),
 `--tag REF` (repeatable; replaces the default tags), `--name REPO` (default `localhost/searchdump-rs`), `--jobs N`
 (`CARGO_BUILD_JOBS`, default 2), `--push`, `--dry-run`. The base pins are read from the Makefile. A foreign platform
 runs the Rust build under emulation, so the host needs qemu-user-static (binfmt_misc) and it is slow; `both` builds a
@@ -689,14 +699,16 @@ podman manifest list. `--push` uses only the container tool's existing registry 
 the script never reads, takes or stores credentials. `CONTAINER=docker` works for single-platform builds.
 
 ```bash
-make image                 # default: dhi.io static glibc + mimalloc (after `podman login dhi.io`)
+make image                 # default: dhi.io Debian 13 -dev runtime with a shell, amd64 (after `podman login dhi.io`)
+make image-dhi-debian      # the same as `make image`
+make image-dhi-static      # dhi.io static glibc, no shell (:<ver>-static, after the login)
 make image-dhi-alpine      # dhi.io Alpine/musl (after the login)
-make image-dhi-debian      # dhi.io Debian 13 -dev runtime with a shell (after the login)
-make image-public          # public Debian 13 bases, no login
-make image-alpine          # public Alpine/musl bases, no login
-make test-image            # --version, --help, non-root, symlink, CA bundle, --read-only, executables, base digest
-make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-static, dhi-alpine,
-                                           # dhi-debian, public, alpine)
+make image-public          # public Debian 13 bases, no login (not default)
+make image-alpine          # public Alpine/musl bases, no login (not default)
+make test-image            # --version, --help, non-root, compat symlinks (each run by name), CA bundle,
+                           # --read-only, executables, base digest (default IMAGE_VARIANT=dhi-debian)
+make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-debian, dhi-static,
+                                           # dhi-alpine, public, alpine)
 make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL) of IMAGE_VARIANT
 make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=0.1.0
 

@@ -2,11 +2,14 @@
 # shellcheck disable=SC2329  # check() invokes the helper functions indirectly
 # Image hardening tests (TST-SUP-017, L-211, L-808b); `make test-image` runs this.
 #   scripts/test-image.sh <image> [variant] [--update]
-#     variant selects docker/image-binaries.<variant>.txt (default dhi-static; --update rewrites it
+#     variant selects docker/image-binaries.<variant>.txt (default dhi-debian; --update rewrites it
 #     after review). Images without /bin/sh (dhi-static) are inspected through `export`, not a shell.
 # Checks:
-#   1. --version / --help work; the entrypoint is searchdump; the elasticdump symlink and the CA
-#      bundle are present (plus bash on images that have a shell)
+#   1. --version / --help work; the entrypoint is searchdump; the compatibility symlinks
+#      (elasticdump, elasticdump-rs -> searchdump, multielasticdump -> searchdump-multi) exist and each
+#      runs as its target when used by bare name as the entrypoint (`--entrypoint multielasticdump`,
+#      like a k8s `command: [multielasticdump]`); the CA bundle is present (plus bash on images
+#      that have a shell)
 #   2. it runs as non-root (65532), and the working dir is /data
 #   3. read-only root filesystem: a file->file dump into a writable /data volume works under
 #      --read-only --cap-drop ALL --security-opt no-new-privileges, and writing anywhere else fails
@@ -15,7 +18,7 @@
 # Image package SBOM diff: scripts/sup/sbom-pr.sh with IMAGE_SBOM_BASE/HEAD (SUP-011).
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
-IMG="${1:?usage: test-image.sh <image> [variant] [--update]}"; VAR="${2:-dhi-static}"
+IMG="${1:?usage: test-image.sh <image> [variant] [--update]}"; VAR="${2:-dhi-debian}"
 C="${CONTAINER:-podman}"; fail=0
 ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; fail=1; }
 check() { local msg="$1"; shift; if "$@"; then ok "$msg"; else bad "$msg"; fi; }
@@ -35,7 +38,15 @@ has() { awk -v p="$1" '$6 == p' "$W/rootfs.lst" | grep -q .; }
 shell=0; has bin/sh && shell=1
 ca_size=$(awk '$6 == "etc/ssl/certs/ca-certificates.crt" {print $3}' "$W/rootfs.lst")
 check "searchdump-multi in /usr/local/bin" has usr/local/bin/searchdump-multi
-check "elasticdump symlink -> searchdump" grep -qE ' usr/local/bin/elasticdump -> (/usr/local/bin/)?searchdump$' "$W/rootfs.lst"
+# Compatibility symlinks (L-810c): present, pointing at the right binary, and runnable by bare name
+# (PATH lookup, as a k8s `command:` or `--entrypoint NAME` does); the version line names the target.
+ver=$($C run --rm "$IMG" --version 2>/dev/null | head -1); ver="${ver##* }"
+for pair in elasticdump:searchdump elasticdump-rs:searchdump multielasticdump:searchdump-multi; do
+  link="${pair%%:*}"; tgt="${pair#*:}"
+  check "$link symlink -> $tgt" grep -qE " usr/local/bin/$link -> (/usr/local/bin/)?$tgt\$" "$W/rootfs.lst"
+  out=$($C run --rm --entrypoint "$link" "$IMG" --version 2>&1 | head -1)
+  check "--entrypoint $link --version runs $tgt ($out)" test "$out" = "$tgt $ver"
+done
 check "CA bundle present (${ca_size:-0} bytes)" test "${ca_size:-0}" -gt 0
 check "THIRD-PARTY-NOTICES.md in /usr/share/doc/searchdump-rs" grep -qE ' usr/share/doc/searchdump-rs/THIRD-PARTY-NOTICES\.md$' "$W/rootfs.lst"
 check "LICENSE in /usr/share/doc/searchdump-rs" grep -qE ' usr/share/doc/searchdump-rs/LICENSE$' "$W/rootfs.lst"
