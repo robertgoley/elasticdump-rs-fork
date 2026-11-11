@@ -61,6 +61,12 @@ printf '127.0.0.1\tlocalhost %s\n::1\tlocalhost ip6-localhost ip6-loopback %s\n'
 : > "$OUT/dns.log"
 : > "$OUT/egress-summary.log"
 NS=(scripts/sup/netns-exec.sh "$POD")
+# Fill the registry cache (all features, incl. optional crates nextest's `cargo metadata
+# --all-features` resolves) while the host still has network; everything after this is offline.
+# A fresh CI runner has an empty cache (release.yml v1.0.0-beta1 failed here on `lipsum`).
+if ! cargo fetch --locked >/dev/null 2>&1; then
+  echo "egress: warning: cargo fetch --locked failed; continuing with the cached registry" >&2
+fi
 export CARGO_NET_OFFLINE=true
 
 cleanup() {

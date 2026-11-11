@@ -188,6 +188,9 @@ jobs:
           ref: refs/tags/${{ needs.meta.outputs.tag }}
       - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
       - run: cargo install --locked --version 0.9.150 cargo-nextest
+      # egress.sh runs cargo with CARGO_NET_OFFLINE=true; nextest's `cargo metadata --all-features`
+      # needs every optional crate (e.g. lipsum for `load`) in the registry cache first (as nightly.yml)
+      - run: cargo fetch --locked
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
       - name: Log in to dhi.io (pull only)
         env:
