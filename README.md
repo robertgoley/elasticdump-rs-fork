@@ -602,6 +602,11 @@ Other behaviour:
 - Cargo features `opendal` (S3, B2, fs) and `opendal-sftp` are on by default; a build without them refuses storage
   URLs with a clear error.
 
+**Known issue (1.0.0-beta1): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
+system OpenSSH `ssh` client, and the images do not include it (Dropbear's client is not compatible). SFTP works with
+the host binaries and the release archives on systems that have OpenSSH installed. `s3://`, `b2://` and `fs://` are
+not affected. A fix is tracked in FEATURES-TODO.md.
+
 ### searchdump-multi with storage
 
 - `--direction dump --output=s3://BUCKET/PREFIX` dumps to a local staging directory (`--stagingDir`, default a temp
@@ -690,6 +695,11 @@ and `multielasticdump` symlinks, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,
 base name).
+
+**Known issue (1.0.0-beta1): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
+system OpenSSH `ssh` client, and the images do not include it (Dropbear's client is not compatible). SFTP works with
+the host binaries and the release archives on systems that have OpenSSH installed. `s3://`, `b2://` and `fs://` are
+not affected. A fix is tracked in FEATURES-TODO.md.
 
 ### `scripts/build-image.sh`
 

@@ -434,6 +434,33 @@ existing crate gains or loses an owner, so a takeover or hand-over gets a human 
 New or removed crates are listed but do not fail the job; the SBOM diff (SUP-020) covers them. After review,
 refresh the snapshot with `cargo supply-chain json > sc.json && scripts/sup/publishers.py snapshot sc.json`.
 
+**Refresh 2026-11-11 (L-810f).** The `publishers` job on main 90d5eb0 (security.yml run 42994732897) failed with exit
+10. The snapshot was regenerated from that run's `sc.json` (`cargo supply-chain` 0.3.8): **331 crates, 189 distinct
+publishers** (was 220 / 142).
+- **Owner changes on existing crates (the alert).** Removals only, no additions; in each case `rust-lang-owner`
+  stays as the remaining owner:
+  - `flate2`: Byron, joshtriplett removed;
+  - `futures-channel`, `futures-core`, `futures-sink`, `futures-task`, `futures-util`: cramertj, taiki-e removed;
+  - `pkg-config`: joshtriplett, sdroege removed.
+  - This looks like the Rust project moving rust-lang crates to its bot owner, not a takeover. No action beyond
+    the refresh.
+- **New crates (113).** Mostly OpenDAL 0.59 and its dependencies (L-809a/L-809d):
+  - opendal, opendal-core, the opendal service and layer crates: Xuanwo, PsiACE, tisonkun, ClSlaid, oowl, silver-ymz;
+  - reqsign-*, backon: Xuanwo, tisonkun;
+  - the openssh / openssh-sftp-* crates, ssh_format, tokio-io-utility and a few small helpers (awaitable,
+    concurrent_arena, derive_destructure2, vec-strings, asyncband): NobodyXu, jonhoo, silver-ymz;
+  - crc-fast (onethumb), quick-xml, rustls-platform-verifier, hybrid-array/cmov/ctutils (RustCrypto).
+  - Many of the rest compile only on other platforms (windows-*, wasm-bindgen/js-sys/web-sys, core-foundation /
+    security-framework, jni, schannel, r-efi, redox_syscall). They are in the lockfile graph but not in Linux builds.
+  - Others are dev/test-only (proptest, lipsum, tempfile).
+- **Single-owner crates in the build graph** (a takeover would need one account):
+  - crc-fast (onethumb), backon and reqsign-aws-core (Xuanwo);
+  - ssh_format_error, derive_destructure2, vec-strings (NobodyXu);
+  - simd_cesu8 (seancroach), encode_unicode (tormol), hex (KokaKiwi);
+  - mimalloc and libmimalloc-sys (octavonce).
+  - They are covered by cargo-vet exemptions and the native-code / geiger gates like every other crate.
+- **Gone:** fnv, h2; publishers Byron, cramertj, joshtriplett, olix0r, sdroege.
+
 ## Non-hot unsafe trimmed (SUP-023, L-214)
 
 | Item | Decision | Effect |

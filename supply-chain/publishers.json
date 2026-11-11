@@ -30,8 +30,16 @@
    "epage",
    "github:rust-cli:maintainers"
   ],
+  "anstyle-wincon": [
+   "epage",
+   "github:rust-cli:maintainers"
+  ],
   "anyhow": [
    "dtolnay"
+  ],
+  "arc-swap": [
+   "github:rust-bus:maintainers",
+   "vorner"
   ],
   "async-compression": [
    "Nemo157",
@@ -39,9 +47,29 @@
    "robjtede",
    "yoshuawuyts"
   ],
+  "asyncband": [
+   "Xuanwo",
+   "andylokandy",
+   "tisonkun"
+  ],
   "atomic-waker": [
    "github:smol-rs:admins",
    "taiki-e"
+  ],
+  "autocfg": [
+   "cuviper",
+   "matklad"
+  ],
+  "awaitable": [
+   "NobodyXu",
+   "silver-ymz"
+  ],
+  "awaitable-error": [
+   "NobodyXu",
+   "silver-ymz"
+  ],
+  "backon": [
+   "Xuanwo"
   ],
   "base64": [
    "alicemaz",
@@ -117,9 +145,16 @@
    "github:clap-rs:admins",
    "github:rust-cli:maintainers"
   ],
+  "cmov": [
+   "github:rustcrypto:utils",
+   "tarcieri"
+  ],
   "colorchoice": [
    "epage",
    "github:rust-cli:maintainers"
+  ],
+  "combine": [
+   "Marwes"
   ],
   "compression-codecs": [
    "NobodyXu",
@@ -130,6 +165,10 @@
    "NobodyXu",
    "robjtede",
    "yoshuawuyts"
+  ],
+  "concurrent_arena": [
+   "NobodyXu",
+   "silver-ymz"
   ],
   "console": [
    "djc",
@@ -145,9 +184,23 @@
   "const-random-macro": [
    "tkaitchuck"
   ],
+  "core-foundation": [
+   "github:servo:cargo-publish",
+   "larsbergstrom",
+   "mbrubeck",
+   "metajack",
+   "pcwalton"
+  ],
+  "core-foundation-sys": [
+   "github:servo:cargo-publish",
+   "larsbergstrom"
+  ],
   "cpufeatures": [
    "github:rustcrypto:utils",
    "tarcieri"
+  ],
+  "crc-fast": [
+   "onethumb"
   ],
   "crc32fast": [
    "srijs"
@@ -158,6 +211,10 @@
   "crypto-common": [
    "github:rustcrypto:traits",
    "newpavlov"
+  ],
+  "ctutils": [
+   "github:rustcrypto:utils",
+   "tarcieri"
   ],
   "defmt": [
    "github:knurling-rs:crate-owners",
@@ -181,6 +238,9 @@
    "github:rustcrypto:formats",
    "tarcieri"
   ],
+  "derive_destructure2": [
+   "NobodyXu"
+  ],
   "digest": [
    "github:rustcrypto:traits",
    "newpavlov"
@@ -191,6 +251,9 @@
   ],
   "dlv-list": [
    "sgodwincs"
+  ],
+  "encode_unicode": [
+   "tormol"
   ],
   "env_filter": [
    "epage",
@@ -210,6 +273,10 @@
    "lambda-fairy",
    "sunfishcode"
   ],
+  "fastrand": [
+   "github:smol-rs:admins",
+   "taiki-e"
+  ],
   "faststr": [
    "PureWhiteWu"
   ],
@@ -217,13 +284,7 @@
    "rust-lang-owner"
   ],
   "flate2": [
-   "Byron",
-   "joshtriplett",
    "rust-lang-owner"
-  ],
-  "fnv": [
-   "SimonSapin",
-   "github:servo:cargo-publish"
   ],
   "foldhash": [
    "orlp"
@@ -233,30 +294,29 @@
    "github:servo:cargo-publish",
    "github:servo:rust-url"
   ],
+  "futures": [
+   "rust-lang-owner"
+  ],
   "futures-channel": [
-   "cramertj",
-   "rust-lang-owner",
-   "taiki-e"
+   "rust-lang-owner"
   ],
   "futures-core": [
-   "cramertj",
-   "rust-lang-owner",
-   "taiki-e"
+   "rust-lang-owner"
+  ],
+  "futures-io": [
+   "rust-lang-owner"
+  ],
+  "futures-macro": [
+   "rust-lang-owner"
   ],
   "futures-sink": [
-   "cramertj",
-   "rust-lang-owner",
-   "taiki-e"
+   "rust-lang-owner"
   ],
   "futures-task": [
-   "cramertj",
-   "rust-lang-owner",
-   "taiki-e"
+   "rust-lang-owner"
   ],
   "futures-util": [
-   "cramertj",
-   "rust-lang-owner",
-   "taiki-e"
+   "rust-lang-owner"
   ],
   "generic-array": [
    "fizyk20",
@@ -266,10 +326,9 @@
    "dhardy",
    "github:rust-random:maintainers"
   ],
-  "h2": [
-   "carllerche",
-   "olix0r",
-   "seanmonstar"
+  "gloo-timers": [
+   "Madoshakalaka",
+   "ranile"
   ],
   "hashbrown": [
    "rust-lang-owner"
@@ -277,6 +336,9 @@
   "heck": [
    "jplatte",
    "withoutboats"
+  ],
+  "hex": [
+   "KokaKiwi"
   ],
   "hmac": [
    "github:rustcrypto:macs",
@@ -296,6 +358,10 @@
   ],
   "httparse": [
    "seanmonstar"
+  ],
+  "hybrid-array": [
+   "github:rustcrypto:utils",
+   "tarcieri"
   ],
   "hyper": [
    "github:hyperium:core",
@@ -376,14 +442,51 @@
   "jiff-core": [
    "BurntSushi"
   ],
+  "jiff-static": [
+   "BurntSushi"
+  ],
+  "jiff-tzdb": [
+   "BurntSushi"
+  ],
+  "jiff-tzdb-platform": [
+   "BurntSushi"
+  ],
+  "jni": [
+   "dmitry-timofeev",
+   "jrobsonchase",
+   "rib",
+   "stanislav-tkach"
+  ],
+  "jni-macros": [
+   "rib"
+  ],
+  "jni-sys": [
+   "rib",
+   "sfackler"
+  ],
+  "jni-sys-macros": [
+   "rib"
+  ],
   "jobserver": [
    "rust-lang-owner"
+  ],
+  "js-sys": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
   ],
   "libc": [
    "rust-lang-owner"
   ],
+  "libmimalloc-sys": [
+   "octavonce"
+  ],
   "linux-raw-sys": [
    "sunfishcode"
+  ],
+  "lipsum": [
+   "mgeisler"
   ],
   "litemap": [
    "Manishearth",
@@ -399,8 +502,15 @@
   "lru-slab": [
    "Ralith"
   ],
+  "md-5": [
+   "github:rustcrypto:hashes",
+   "newpavlov"
+  ],
   "memchr": [
    "BurntSushi"
+  ],
+  "mimalloc": [
+   "octavonce"
   ],
   "miniz_oxide": [
    "Frommi",
@@ -416,9 +526,92 @@
   "munge_macro": [
    "djkoloski"
   ],
+  "num-derive": [
+   "cuviper"
+  ],
+  "num-traits": [
+   "cuviper"
+  ],
   "once_cell": [
    "matklad",
    "vorner"
+  ],
+  "once_cell_polyfill": [
+   "epage"
+  ],
+  "opendal": [
+   "ClSlaid",
+   "PsiACE",
+   "Xuanwo",
+   "oowl",
+   "silver-ymz",
+   "tisonkun"
+  ],
+  "opendal-core": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-http-transport-reqwest": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-layer-retry": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-layer-timeout": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-service-b2": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-service-fs": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-service-s3": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "opendal-service-sftp": [
+   "PsiACE",
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "openssh": [
+   "NobodyXu",
+   "jonhoo"
+  ],
+  "openssh-sftp-client": [
+   "NobodyXu",
+   "jonhoo",
+   "silver-ymz"
+  ],
+  "openssh-sftp-client-lowlevel": [
+   "NobodyXu",
+   "silver-ymz"
+  ],
+  "openssh-sftp-error": [
+   "NobodyXu",
+   "silver-ymz"
+  ],
+  "openssh-sftp-protocol": [
+   "NobodyXu",
+   "jonhoo",
+   "silver-ymz"
+  ],
+  "openssh-sftp-protocol-error": [
+   "NobodyXu",
+   "silver-ymz"
   ],
   "openssl-probe": [
    "alexcrichton",
@@ -449,6 +642,12 @@
    "github:servo:cargo-publish",
    "github:servo:rust-url"
   ],
+  "pin-project": [
+   "taiki-e"
+  ],
+  "pin-project-internal": [
+   "taiki-e"
+  ],
   "pin-project-lite": [
    "taiki-e"
   ],
@@ -463,11 +662,12 @@
    "tarcieri"
   ],
   "pkg-config": [
-   "joshtriplett",
-   "rust-lang-owner",
-   "sdroege"
+   "rust-lang-owner"
   ],
   "portable-atomic": [
+   "taiki-e"
+  ],
+  "portable-atomic-util": [
    "taiki-e"
   ],
   "potential_utf": [
@@ -481,11 +681,21 @@
   "proc-macro2": [
    "dtolnay"
   ],
+  "proptest": [
+   "AltSysrq",
+   "Centril",
+   "github:proptest-rs:publish"
+  ],
   "ptr_meta": [
    "djkoloski"
   ],
   "ptr_meta_derive": [
    "djkoloski"
+  ],
+  "quick-xml": [
+   "Mingun",
+   "dralley",
+   "tafia"
   ],
   "quinn": [
    "Ralith",
@@ -502,6 +712,9 @@
   ],
   "quote": [
    "dtolnay"
+  ],
+  "r-efi": [
+   "dvdhrm"
   ],
   "rancor": [
    "djkoloski"
@@ -521,6 +734,14 @@
   "rand_pcg": [
    "dhardy",
    "github:rust-random:maintainers"
+  ],
+  "rand_xorshift": [
+   "dhardy",
+   "github:rust-random:maintainers"
+  ],
+  "redox_syscall": [
+   "4lDO2",
+   "jackpot51"
   ],
   "ref-cast": [
    "dtolnay"
@@ -545,6 +766,21 @@
   "rend": [
    "djkoloski"
   ],
+  "reqsign-aws-core": [
+   "Xuanwo"
+  ],
+  "reqsign-aws-v4": [
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "reqsign-core": [
+   "Xuanwo",
+   "tisonkun"
+  ],
+  "reqsign-file-read-tokio": [
+   "Xuanwo",
+   "tisonkun"
+  ],
   "reqwest": [
    "seanmonstar"
   ],
@@ -563,6 +799,10 @@
   "rustc-hash": [
    "rust-lang-owner"
   ],
+  "rustc_version": [
+   "Kimundi",
+   "djc"
+  ],
   "rustix": [
    "sunfishcode"
   ],
@@ -580,10 +820,23 @@
    "djc",
    "github:rustls:publishers"
   ],
+  "rustls-platform-verifier": [
+   "complexspaces",
+   "djc",
+   "github:rustls:publishers"
+  ],
+  "rustls-platform-verifier-android": [
+   "complexspaces",
+   "djc",
+   "github:rustls:publishers"
+  ],
   "rustls-webpki": [
    "ctz",
    "djc",
    "github:rustls:publishers"
+  ],
+  "rustversion": [
+   "dtolnay"
   ],
   "ryu": [
    "dtolnay"
@@ -592,6 +845,13 @@
    "github:rustcrypto:stream-ciphers",
    "newpavlov"
   ],
+  "same-file": [
+   "BurntSushi"
+  ],
+  "schannel": [
+   "sfackler",
+   "steffengy"
+  ],
   "scopeguard": [
    "Amanieu",
    "bluss"
@@ -599,6 +859,14 @@
   "scrypt": [
    "github:rustcrypto:kdfs",
    "newpavlov"
+  ],
+  "security-framework": [
+   "djc",
+   "kornelski"
+  ],
+  "security-framework-sys": [
+   "djc",
+   "kornelski"
   ],
   "semver": [
    "dtolnay"
@@ -622,10 +890,18 @@
   "serde_urlencoded": [
    "nox"
   ],
+  "sha1": [
+   "github:rustcrypto:hashes",
+   "newpavlov",
+   "tarcieri"
+  ],
   "sha2": [
    "github:rustcrypto:hashes",
    "newpavlov",
    "tarcieri"
+  ],
+  "shell-escape": [
+   "sfackler"
   ],
   "shlex": [
    "comex",
@@ -637,6 +913,9 @@
   ],
   "simd-adler32": [
    "mcountryman"
+  ],
+  "simd_cesu8": [
+   "seancroach"
   ],
   "simdutf8": [
    "hkratz"
@@ -672,9 +951,20 @@
    "liuq19",
    "shenyj3"
   ],
+  "spin": [
+   "mvdnes",
+   "zesterer"
+  ],
   "spki": [
    "github:rustcrypto:formats",
    "tarcieri"
+  ],
+  "ssh_format": [
+   "NobodyXu",
+   "jonhoo"
+  ],
+  "ssh_format_error": [
+   "NobodyXu"
   ],
   "stable_deref_trait": [
    "Kimundi",
@@ -699,8 +989,16 @@
   "synstructure": [
    "mystor"
   ],
+  "tempfile": [
+   "Stebalien"
+  ],
   "terminal_size": [
    "eminence"
+  ],
+  "thin-vec": [
+   "Gankra",
+   "emilio",
+   "nicoburns"
   ],
   "thiserror": [
    "dtolnay"
@@ -725,6 +1023,10 @@
    "Darksonn",
    "carllerche",
    "github:tokio-rs:core"
+  ],
+  "tokio-io-utility": [
+   "NobodyXu",
+   "jonhoo"
   ],
   "tokio-macros": [
    "carllerche",
@@ -763,15 +1065,25 @@
    "github:tokio-rs:publish-tracing",
    "hawkw"
   ],
+  "tracing-attributes": [
+   "github:tokio-rs:publish-tracing",
+   "hawkw"
+  ],
   "tracing-core": [
    "github:tokio-rs:publish-tracing",
    "hawkw"
+  ],
+  "triomphe": [
+   "Manishearth"
   ],
   "try-lock": [
    "seanmonstar"
   ],
   "typenum": [
    "paholg"
+  ],
+  "unarray": [
+   "cameron1024"
   ],
   "unicode-ident": [
    "dtolnay"
@@ -808,20 +1120,123 @@
    "KodrAus",
    "rust-lang-owner"
   ],
+  "vec-strings": [
+   "NobodyXu"
+  ],
   "version_check": [
    "SergioBenitez"
   ],
+  "walkdir": [
+   "BurntSushi"
+  ],
   "want": [
    "seanmonstar"
+  ],
+  "wasi": [
+   "alexcrichton",
+   "sunfishcode"
+  ],
+  "wasip2": [
+   "alexcrichton",
+   "wasmtime-publish"
+  ],
+  "wasm-bindgen": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "wasm-bindgen-futures": [
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "wasm-bindgen-macro": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "wasm-bindgen-macro-support": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "wasm-bindgen-shared": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "wasm-streams": [
+   "MattiasBuelens"
+  ],
+  "web-sys": [
+   "RReverser",
+   "daxpedda",
+   "github:wasm-bindgen:wasm-bindgen-publish",
+   "guybedford"
+  ],
+  "web-time": [
+   "daxpedda"
+  ],
+  "webpki-root-certs": [
+   "cpu",
+   "ctz",
+   "djc",
+   "github:rustls:publishers"
   ],
   "webpki-roots": [
    "ctz",
    "djc",
    "github:rustls:publishers"
   ],
+  "winapi-util": [
+   "BurntSushi"
+  ],
+  "windows-link": [
+   "kennykerr"
+  ],
+  "windows-sys": [
+   "kennykerr"
+  ],
+  "windows-targets": [
+   "kennykerr"
+  ],
+  "windows_aarch64_gnullvm": [
+   "kennykerr"
+  ],
+  "windows_aarch64_msvc": [
+   "kennykerr"
+  ],
+  "windows_i686_gnu": [
+   "kennykerr"
+  ],
+  "windows_i686_gnullvm": [
+   "kennykerr"
+  ],
+  "windows_i686_msvc": [
+   "kennykerr"
+  ],
+  "windows_x86_64_gnu": [
+   "kennykerr"
+  ],
+  "windows_x86_64_gnullvm": [
+   "kennykerr"
+  ],
+  "windows_x86_64_msvc": [
+   "kennykerr"
+  ],
+  "wit-bindgen": [
+   "wasmtime-publish"
+  ],
   "writeable": [
    "github:unicode-org:icu4x-release",
    "zbraniecki"
+  ],
+  "xattr": [
+   "Stebalien"
   ],
   "yoke": [
    "Manishearth",
@@ -834,6 +1249,9 @@
   "zerocopy": [
    "joshlf",
    "jswrenn"
+  ],
+  "zerocopy-derive": [
+   "joshlf"
   ],
   "zerofrom": [
    "Manishearth",

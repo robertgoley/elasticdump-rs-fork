@@ -6,6 +6,8 @@
 #      `cargo build --offline --locked --release --bin searchdump`;
 #   3. a probe inside the same sandbox shows that DNS and TCP really fail.
 #   scripts/sup/offline-build.sh [builder-image]   (default: the public rust:1.99-trixie builder, see Makefile)
+# The image's default toolchain is used (RUSTUP_TOOLCHAIN), not the rust-toolchain.toml pin: rustup cannot
+# download without network, and any toolchain >= the rust-version (1.91) builds the crate.
 # CI: the `offline-build` job in security.yml. Memory: one LTO link, about 2 GB (CARGO_BUILD_JOBS=2).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -30,6 +32,12 @@ podman run --rm --network none --name "edl-offline-$$" \
     if getent hosts crates.io >/dev/null 2>&1; then echo "PROBE FAIL: DNS works"; exit 3; fi
     if (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null; then echo "PROBE FAIL: TCP works"; exit 3; fi
     echo "probe: network unreachable (ok)"
+    # rust-toolchain.toml pins 1.91.1 for host builds; inside the sandbox use the default toolchain
+    # of the image (rustup would try to download the pinned one and fail with no network). L-810f.
+    if command -v rustup >/dev/null 2>&1; then
+      RUSTUP_TOOLCHAIN=$(rustup toolchain list | sed -n "s/ (.*default.*//p" | head -1); export RUSTUP_TOOLCHAIN
+      echo "toolchain: $RUSTUP_TOOLCHAIN (image default; rust-toolchain.toml ignored offline)"
+    fi
     cargo build --offline --locked --release --bin searchdump --target-dir /target
     /target/release/searchdump --version'
 echo "offline-build: OK" >&2

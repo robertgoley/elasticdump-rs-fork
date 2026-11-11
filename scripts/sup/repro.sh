@@ -37,6 +37,10 @@ cargo vendor --locked --versioned-dirs "$W/vendor" >"$W/vendor-config.toml" 2>"$
 git ls-files -z | tar --null -T - -cf "$W/src.tar"
 
 # build <name> <user> <umask> <tz> <src> <vendor> <cargo-home> <target>
+# rust-toolchain.toml pins 1.91.1 for host builds; with no network, rustup (official rust images) cannot
+# fetch it, so use the image's default toolchain. Images without rustup (dhi.io/rust) are unaffected. L-810f.
+# shellcheck disable=SC2016  # expanded inside the container, not here
+RTC='if command -v rustup >/dev/null 2>&1; then RUSTUP_TOOLCHAIN=$(rustup toolchain list | sed -n "s/ (.*default.*//p" | head -1); export RUSTUP_TOOLCHAIN; fi;'
 build() {
   local name=$1 user=$2 um=$3 tz=$4 src=$5 ven=$6 ch=$7 tgt=$8 d="$W/$1"
   mkdir -p "$d/src" "$d/vendor" "$d/cargo-home" "$d/target"
@@ -50,7 +54,7 @@ build() {
     -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" -e CARGO_INCREMENTAL=0 -e SOURCE_DATE_EPOCH="$SDE" \
     -e RUSTFLAGS="--remap-path-prefix=$src=/build/src --remap-path-prefix=$ven=/build/vendor --remap-path-prefix=$ch=/build/cargo-home" \
     -v "$d/src:$src:ro,Z" -v "$d/vendor:$ven:ro,Z" -v "$d/cargo-home:$ch:Z" -v "$d/target:$tgt:Z" \
-    -w "$src" "$IMG" sh -c "umask $um && cargo build --offline --locked --release --bin searchdump" \
+    -w "$src" "$IMG" sh -c "umask $um && $RTC cargo build --offline --locked --release --bin searchdump" \
     >"$W/$name.log" 2>&1 || { tail -30 "$W/$name.log"; exit 2; }
   # build b's files belong to a sub-uid with umask 077: read them inside the user namespace
   podman unshare cat "$d/target/release/searchdump" >"$W/bin-$name"

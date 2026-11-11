@@ -49,6 +49,12 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
   SBOM, GitHub build-provenance attestations, container images on ghcr.io, and a draft GitHub
   release for review.
 
+### Known issues
+
+- `sftp://` URLs do not work inside the container images. OpenDAL's SFTP backend runs the system OpenSSH `ssh`
+  client, which the images do not include (Dropbear's client is not compatible). SFTP works with the host binaries
+  and release archives on systems with OpenSSH installed. S3, B2 and `fs://` are not affected.
+
 ### Security
 
 - opendal 0.59.5 removes the dependency advisories RUSTSEC-2026-0194, RUSTSEC-2026-0195 and
