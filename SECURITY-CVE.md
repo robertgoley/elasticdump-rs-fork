@@ -15,6 +15,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 
 | Date (America/New_York) | Commit | Tool (DB) | Target | Result |
 |---|---|---|---|---|
+| 2026-11-11 | L-810e | grype 0.121.0 + trivy 0.76.1 | `dhi-debian` image (default since L-810c) on the previous base digest `cc4e05ff…` | before: grype 19 distinct High (90 matches; 1 fixable, CVE-2026-109518 in apt), trivy 12 distinct HIGH. With the new dhi-debian ignore files: only CVE-2026-109518 left in both scanners, which the refreshed base (`94571f3d…`, apt 3.0.4+dhi0) fixes; the scan on the new digest runs in CI (no dhi.io login on the review host) |
 | 2026-10-29 | 55fa662 | cargo-audit 0.22.2 (re-run for L-109) | Cargo.lock | **0 vulnerabilities, 0 warnings**; cargo-deny: all four checks ok |
 | 2026-10-29 | ae2531f | cargo-audit 0.22.2 (RustSec advisory-db, 1386 advisories) | Cargo.lock (271 crates) | **0 vulnerabilities, 0 warnings** |
 | 2026-10-29 | ae2531f | cargo-deny 0.20.2, `check advisories bans licenses sources` | Cargo.lock + deny.toml | **advisories ok, bans ok, licenses ok, sources ok** |
@@ -23,7 +24,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
 | 2026-10-29 | ae2531f | grype | `make image-public` (rust:1.99-trixie → debian:trixie-slim) | 54 High, 47 Medium, 10 Low, 46 Negligible (157 matches, 0 fixable) |
 | 2026-10-29 | ae2531f | trivy | `make image-public` | 43 HIGH, 58 MEDIUM, 60 LOW, 1 UNKNOWN (162) |
 | 2026-10-29 | d36b906 | grype DB v6.1.10 + trivy | `make image` (default until L-808b: dhi.io/rust:1.99.0-alpine3.23-dev → dhi.io/alpine-base:3.24-alpine3.24-dev) | **0 at every severity** in both scanners |
-| 2026-11-01 | L-808b | grype 0.121.0 + trivy | `make image` (**default since L-808b**: dhi.io/rust:1.99.1-debian13-dev → dhi.io/static:20250419-glibc-debian13, glibc + mimalloc) | grype: 5 High, 9 Medium, 3 Low, 7 Negligible (24 distinct CVEs, all in libc6 / libgcc-s1, 0 fixable: Debian `wont-fix` / `not-fixed`); trivy: **0 HIGH/CRITICAL** (16 MEDIUM, 8 LOW). Failed `make scan` until L-808d accepted the five (grype ignore rules scoped to fix state `not-fixed`/`wont-fix`), see [the default image](#dhiio-static-glibc-make-image-the-default-since-l-808b) |
+| 2026-11-01 | L-808b | grype 0.121.0 + trivy | `make image` (**default since L-808b**: dhi.io/rust:1.99.1-debian13-dev → dhi.io/static:20250419-glibc-debian13, glibc + mimalloc) | grype: 5 High, 9 Medium, 3 Low, 7 Negligible (24 distinct CVEs, all in libc6 / libgcc-s1, 0 fixable: Debian `wont-fix` / `not-fixed`); trivy: **0 HIGH/CRITICAL** (16 MEDIUM, 8 LOW). Failed `make scan` until L-808d accepted the five (grype ignore rules scoped to fix state `not-fixed`/`wont-fix`), see [the default image](#dhiio-static-glibc-make-image-dhi-static-the-default-from-l-808b-to-l-810c) |
 | 2026-11-01 | L-808b | grype + trivy | dhi.io glibc runtime candidates, bare bases (`results/local/L-808b.md`) | `static:20250419-glibc-debian13`: grype 5 High (24 distinct), trivy 0 HIGH; `debian-base:trixie-debian13`: grype 14 High (46 distinct), trivy 6 HIGH; `debian-base:trixie-debian13-dev`: grype 46 High (71 distinct), trivy 35 HIGH. 0 fixable in all three |
 | 2026-11-01 | L-808d | grype 0.121.0 + trivy | `make scan` on `make image` (dhi.io/static glibc default) and `IMAGE_VARIANT=dhi-alpine` | default: **passes**; grype ignores exactly the 5 accepted High CVEs (10 matches, fix state `wont-fix`/`not-fixed`, `docker/grype-ignore.yaml`), 0 other High+; trivy 0 HIGH/CRITICAL. dhi-alpine: passes, 0 findings. Check: the same rules restricted to fix state `fixed` leave all 5 unignored and grype exits 2 |
 | 2026-11-01 | L-808b | build + `scripts/test-image.sh` | `make image-dhi-alpine` (the previous default, now `:<ver>-alpine`) | builds unchanged; 0 at every severity at the 2026-10-29 scan |
@@ -53,7 +54,7 @@ Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](N
     - sources: crates.io only.
   - CI runs `cargo audit --deny warnings`, so a new unmaintained or unsound warning also fails the job.
 - **Container image**
-  - `make save` writes `image.tar`; `make scan` runs `grype -c docker/grype-ignore.yaml --fail-on high` and `trivy --severity HIGH,CRITICAL --exit-code 1` on it.
+  - `make save` writes `image.tar`; `make scan` runs `grype -c docker/grype-ignore.yaml --fail-on high` and `trivy --severity HIGH,CRITICAL --exit-code 1` on it. For `IMAGE_VARIANT=dhi-debian` (L-810e) it uses `docker/grype-ignore.dhi-debian.yaml` and `--ignorefile docker/trivyignore.dhi-debian.yaml` instead.
   - Both scanners see the OS packages only. The Rust binary is not built with `cargo auditable`, so they cannot see the crates inside it; cargo-audit covers those.
 - **SBOMs**
   - `make sbom` uses syft to write `sbom-image.cdx.json` (CycloneDX) and `sbom-image.spdx.json` (SPDX).
@@ -160,7 +161,7 @@ Related cargo-deny finding:
 |---|---|---|---|---|
 | CVE-2025-60876 | busybox 1.37.0-r31, busybox-binsh, ssl_client | Medium (grype, CVSS 6.5); trivy does not report it | not-affected; no Alpine fix yet | The flaw is in the busybox `wget` applet (and `ssl_client`, which only `wget` uses). Nothing in the image calls `wget`: the tool does HTTP itself through reqwest/rustls, and the entrypoint is the Rust binary. Re-check at the next scan. |
 
-### dhi.io static glibc (`make image`, the default since L-808b)
+### dhi.io static glibc (`make image-dhi-static`; the default from L-808b to L-810c)
 
 L-808b made the glibc + mimalloc build the default image at the user's request. Of the dhi.io glibc runtimes,
 `dhi.io/static:20250419-glibc-debian13` has the fewest findings (comparison above and in `results/local/L-808b.md`): it ships
@@ -182,28 +183,74 @@ them.
 | CVE-2026-102010 | libgcc-s1 14.2.0-19+dhi5 | High / MEDIUM | wont-fix | no fix available | 2026-11-01 (L-808d), revisit when Debian/DHI publishes a fix | also in every Debian 13 base below |
 | CVE-2026-95619 | libgcc-s1 14.2.0-19+dhi5 | High / MEDIUM | wont-fix | no fix available | 2026-11-01 (L-808d), revisit when Debian/DHI publishes a fix | also in every Debian 13 base below |
 
-### dhi.io Debian 13 `-dev` (`make image-dhi-debian`, the default before the Alpine change)
+### dhi.io Debian 13 `-dev` (`make image`, the default since L-810c)
 
-This build is kept for glibc parity. It fails `make scan`. Every finding is Debian `wont-fix`/`not-fixed`, and the status for each is **open on this base**; most are not in the default (dhi.io static) image, and none are in the Alpine image. HIGH/CRITICAL findings, grouped by CVE:
+Image type `dhi-debian`: builder `dhi.io/rust:1.99.1-debian13-dev`, runtime `dhi.io/debian-base:trixie-debian13-dev`
+(shell, apt). It became the default image in L-810c (owner decision 2026-11-11, pt146u). It was already built as
+`make image-dhi-debian` before that and failed `make scan`.
 
-| ID | Packages | Severity | Status |
-|---|---|---|---|
-| CVE-2025-69720 | libtinfo6, ncurses-base, ncurses-bin, ncurses-term | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-102010 | gcc-14-base, libgcc-s1, libstdc++6 | grype High / trivy MEDIUM | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-16742 | libsystemd0, libudev1 | grype Medium / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-19499 | libc-bin, libc6 | grype High / trivy MEDIUM | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-24882 | gpgv | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-5435 | libc-bin, libc6 | grype High / trivy MEDIUM | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-54369 | libacl1 | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-54370 | libacl1 | grype High / trivy MEDIUM | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-76642 | libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, util-linux | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-78408 | libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, util-linux | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-78409 | libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, util-linux | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-78410 | libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, util-linux | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-82560 | perl-base | grype High / trivy UNKNOWN | open on this base (grype: wont-fix, trivy: affected) |
-| CVE-2026-85091 | zlib1g | grype High / trivy MEDIUM | open on this base (grype: not-fixed, trivy: affected) |
-| CVE-2026-9538 | perl-base | grype High / trivy HIGH | open on this base (grype: wont-fix, trivy: fix_deferred) |
-| CVE-2026-95619 | gcc-14-base, libgcc-s1, libstdc++6 | grype High / trivy MEDIUM | open on this base (grype: wont-fix, trivy: affected) |
+**L-810e (owner decision 2026-11-11).**
+- **Base refresh.** The runtime pin moves from `sha256:cc4e05ff…` (old) to the index digest
+  `sha256:94571f3dc07fbc7166f6f1cbf1fe068a7647198ee2554e6b90d59a68cc8b053c`.
+  - That is the `trixie-debian13-dev` tag as listed in the Docker Hub DHI catalog on 2026-11-11, pushed 2026-11-08.
+  - Per-platform manifests: amd64 `sha256:da8ceb0d…`, arm64 `sha256:27f54125…`.
+  - Its package list has `apt` and `libapt-pkg7.0` 3.0.4+dhi0, which fixes **CVE-2026-109518** (the only fixable
+    High finding, in apt 3.0.3+dhi2); status **resolved in L-810e**.
+- **Accepted CVEs.** Every remaining High finding is Debian/DHI won't-fix and is accepted below. Each one has a
+  scoped rule that applies only to this image type (`IMAGE_VARIANT=dhi-debian`):
+  - grype, in [`docker/grype-ignore.dhi-debian.yaml`](docker/grype-ignore.dhi-debian.yaml): one rule per CVE id
+    and Debian package, matched only while the fix state is `wont-fix`, with anchored package names;
+  - trivy, in [`docker/trivyignore.dhi-debian.yaml`](docker/trivyignore.dhi-debian.yaml): CVE id plus package purls.
+- **Other images are unaffected.** `make scan` uses these files only for dhi-debian; every other image keeps
+  `docker/grype-ignore.yaml` and plain trivy.
+- **Revisit trigger, for every entry.**
+  - Debian/DHI publish a fix: grype's fix state leaves `wont-fix`, the rule stops matching and `make scan` fails.
+  - Or a new base digest changes the package set.
+  - Or searchdump starts executing or linking the affected component.
+  - Then refresh the pin, re-scan and drop the rule.
+- **Review date** for every entry: 2026-11-11.
+
+**Why none of these is reachable from searchdump.**
+- **What the binaries use.** `searchdump` and `searchdump-multi` are Rust binaries. In the image they link only
+  `libc.so.6`, `libm.so.6` and `libgcc_s.so.1` (`ldd`, 2026-11-11). They execute no program from the image;
+  `searchdump-multi` runs only `searchdump`.
+- **How they run.** As uid 65532 (nonroot). The image's only setuid/setgid file is `unix_chkpwd`. No daemon runs:
+  the entrypoint is `searchdump`.
+- **What the CVEs are in.** The other packages are part of the base image's shell and package-manager userland,
+  present because this type keeps a shell:
+  - the vulnerable programs (`infocmp`, `nsenter`, `gpgv`, `perl`, apt's tools) are only reached if someone runs
+    them inside the container;
+  - the vulnerable libraries (libstdc++, libsqlite3, libacl, libsystemd, libudev) are not loaded by searchdump.
+- **For deployments that don't need a shell.** Use the `dhi-static` image (5 accepted libc6/libgcc-s1 CVEs,
+  section above) or `dhi-alpine` (0).
+
+| CVE | Package(s), version in the scanned image | grype / trivy | Upstream | Why not reachable / exploitable for searchdump | Reviewed | Revisit when |
+|---|---|---|---|---|---|---|
+| CVE-2026-109518 | apt, libapt-pkg7.0 3.0.3+dhi2 | High / HIGH | **fixed** in 3.0.4 | n/a: **resolved in L-810e** by the base refresh (3.0.4+dhi0) | 2026-11-11 | — |
+| CVE-2025-69720 | libtinfo6, ncurses-base, ncurses-bin, ncurses-term 6.5+20250216-2+dhi4 | High / HIGH | won't-fix | Stack overflow in the `infocmp` program; searchdump never runs `infocmp` and does not link libtinfo | 2026-11-11 | fix published, or searchdump links ncurses |
+| CVE-2026-102010 | gcc-14-base, libgcc-s1, libstdc++6 14.2.0-19+dhi5 | High / MEDIUM | won't-fix | Flaw in libstdc++'s priority-queue `erase_if`; searchdump does not link libstdc++ (Rust; libgcc_s only provides unwinding) | 2026-11-11 | fix published, or a C++ dependency is added |
+| CVE-2026-95619 | gcc-14-base, libgcc-s1, libstdc++6 14.2.0-19+dhi5 | High / MEDIUM | won't-fix | Integer overflow in libstdc++'s aligned `operator new`; libstdc++ is not linked or loaded | 2026-11-11 | fix published, or a C++ dependency is added |
+| CVE-2026-19499 | libc-bin, libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | won't-fix | `strfmon`/`strfmon_l` overflow; Rust std and our dependencies never call `strfmon` (monetary formatting) | 2026-11-11 | fix published |
+| CVE-2026-5435 | libc-bin, libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | won't-fix | Deprecated resolver printers `ns_printrr*`/`fp_nquery`; name resolution goes through `getaddrinfo`, never these functions | 2026-11-11 | fix published |
+| CVE-2026-84243 | libc-bin, libc6 2.41-12+deb13u4+dhi1 | High / MEDIUM | won't-fix | gettext path traversal through a crafted `LANGUAGE` value. glibc may translate `strerror` text, but exploiting it needs control of the process environment and writable locale files; whoever sets the container environment already controls the process | 2026-11-11 | fix published, or the image starts taking `LANGUAGE` from untrusted input |
+| CVE-2026-119373 | libsqlite3-0 3.46.1-7+deb13u2+dhi1 | High / HIGH | won't-fix | SQLite FTS5 overflow; searchdump does not link SQLite (it is there for other base-image tooling) | 2026-11-11 | fix published, or SQLite becomes a dependency |
+| CVE-2026-119374 | libsqlite3-0 3.46.1-7+deb13u2+dhi1 | High / HIGH | won't-fix | SQLite FTS5 secure-delete overflow; SQLite not linked | 2026-11-11 | fix published, or SQLite becomes a dependency |
+| CVE-2026-119379 | libsqlite3-0 3.46.1-7+deb13u2+dhi1 | High / HIGH | won't-fix | SQLite session-extension overflow; SQLite not linked | 2026-11-11 | fix published, or SQLite becomes a dependency |
+| CVE-2026-24882 | gpgv 2.4.7-21+deb13u1+dhi4 | High / HIGH | won't-fix | Overflow in `tpm2daemon`, which is not in the image (only `gpgv`); searchdump runs no GnuPG tool | 2026-11-11 | fix published |
+| CVE-2026-54369 | libacl1 2.3.2-2+dhi1 | High / HIGH | won't-fix | Symlink traversal in libacl path functions, a privilege escalation that needs a privileged process using libacl on attacker paths; searchdump does not link libacl and nothing privileged runs (uid 65532) | 2026-11-11 | fix published |
+| CVE-2026-54370 | libacl1 2.3.2-2+dhi1 | High / MEDIUM | won't-fix | TOCTOU race in libacl, same preconditions as above | 2026-11-11 | fix published |
+| CVE-2026-76642 | libblkid1, liblastlog2-2, libmount1, libsmartcols1, libuuid1, util-linux 2.41.5-0+deb13u1+dhi3 | High / HIGH | won't-fix | Mount-helper post-hook issue; there is no `mount` binary in the image, mounting needs privileges the container does not have, and searchdump does not link util-linux libraries | 2026-11-11 | fix published |
+| CVE-2026-78408 | (same util-linux packages) | High / HIGH | won't-fix | `nsenter --join-cgroup` fd leak; needs root running `nsenter` (not setuid here) and searchdump never runs it | 2026-11-11 | fix published |
+| CVE-2026-78409 | (same util-linux packages) | High / HIGH | won't-fix | `X-mount.subdir` symlink escape during a privileged mount; no mounts happen in the container | 2026-11-11 | fix published |
+| CVE-2026-78410 | (same util-linux packages) | High / HIGH | won't-fix | Restricted bind mounts from fstab; no mounts, no fstab use | 2026-11-11 | fix published |
+| CVE-2026-82560 | perl-base 5.40.1-6+deb13u1+dhi3 | High / UNKNOWN | won't-fix | Pod::Text resource exhaustion; searchdump runs no Perl | 2026-11-11 | fix published |
+| CVE-2026-9538 | perl-base 5.40.1-6+deb13u1+dhi3 | High / HIGH | won't-fix (trivy: fix_deferred) | Archive::Tar memory exhaustion; searchdump runs no Perl | 2026-11-11 | fix published |
+| CVE-2026-16742 | libsystemd0, libudev1 257.13-1~deb13u1+dhi2 | Medium / HIGH | won't-fix (trivy: affected) | Privilege escalation in `systemd-homed`, which is neither in the image nor running; searchdump does not link libsystemd/libudev. trivy rule only (grype rates it Medium) | 2026-11-11 | fix published |
+
+The versions are those of the image scanned locally on 2026-11-11 (built on the previous digest, `cc4e05ff…`). The
+new digest could not be pulled on the review host (no dhi.io login), so the first CI `make scan` on it is the
+confirming scan. If the new base adds a High CVE or changes a fix state, that scan fails and the new finding needs an
+entry here first.
 
 ### Debian 13 public fallback (`make image-public`)
 

@@ -29,7 +29,7 @@
 ARG BUILDER_IMAGE=dhi.io/rust
 ARG BUILDER_TAG=1.99.1-debian13-dev@sha256:be6c6ec91c61ae15b80521052df1c7f60fefd303293563b3dbd9f57e58783809
 ARG BASE_IMAGE=dhi.io/debian-base
-ARG BASE_TAG=trixie-debian13-dev@sha256:cc4e05ff415ee2d83918f2af45c737983209924ef7362c53f00cfcdaa1c94326
+ARG BASE_TAG=trixie-debian13-dev@sha256:94571f3dc07fbc7166f6f1cbf1fe068a7647198ee2554e6b90d59a68cc8b053c
 
 # ----------------------------------------------------------------- builder
 FROM ${BUILDER_IMAGE}:${BUILDER_TAG} AS builder

@@ -1,0 +1,267 @@
+# L-810e: grype ignore rules for the dhi-debian image (IMAGE_VARIANT=dhi-debian, the default image
+# since L-810c), used by `make scan` instead of docker/grype-ignore.yaml for that variant only.
+# Owner decision 2026-11-11: every High CVE in this image that Debian/DHI mark won't-fix is accepted
+# with a SECURITY-CVE.md entry (section "dhi.io Debian 13 -dev (default since L-810c)"). Each rule
+# matches one CVE id in one Debian package and only while grype reports the fix state as wont-fix:
+# once a fix is published the state changes, no rule matches, and `make scan` fails again until
+# the base pin is refreshed. Package names are regular expressions in grype, so each is anchored
+# and escaped (libstdc\+\+6). Do not add rules without a SECURITY-CVE.md entry.
+ignore:
+  # CVE-2025-69720
+  - vulnerability: CVE-2025-69720
+    fix-state: wont-fix
+    package:
+      name: '^libtinfo6$'
+      type: deb
+  - vulnerability: CVE-2025-69720
+    fix-state: wont-fix
+    package:
+      name: '^ncurses-base$'
+      type: deb
+  - vulnerability: CVE-2025-69720
+    fix-state: wont-fix
+    package:
+      name: '^ncurses-bin$'
+      type: deb
+  - vulnerability: CVE-2025-69720
+    fix-state: wont-fix
+    package:
+      name: '^ncurses-term$'
+      type: deb
+  # CVE-2026-5435
+  - vulnerability: CVE-2026-5435
+    fix-state: wont-fix
+    package:
+      name: '^libc-bin$'
+      type: deb
+  - vulnerability: CVE-2026-5435
+    fix-state: wont-fix
+    package:
+      name: '^libc6$'
+      type: deb
+  # CVE-2026-9538
+  - vulnerability: CVE-2026-9538
+    fix-state: wont-fix
+    package:
+      name: '^perl-base$'
+      type: deb
+  # CVE-2026-19499
+  - vulnerability: CVE-2026-19499
+    fix-state: wont-fix
+    package:
+      name: '^libc-bin$'
+      type: deb
+  - vulnerability: CVE-2026-19499
+    fix-state: wont-fix
+    package:
+      name: '^libc6$'
+      type: deb
+  # CVE-2026-24882
+  - vulnerability: CVE-2026-24882
+    fix-state: wont-fix
+    package:
+      name: '^gpgv$'
+      type: deb
+  # CVE-2026-54369
+  - vulnerability: CVE-2026-54369
+    fix-state: wont-fix
+    package:
+      name: '^libacl1$'
+      type: deb
+  # CVE-2026-54370
+  - vulnerability: CVE-2026-54370
+    fix-state: wont-fix
+    package:
+      name: '^libacl1$'
+      type: deb
+  # CVE-2026-76642
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^libblkid1$'
+      type: deb
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^liblastlog2-2$'
+      type: deb
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^libmount1$'
+      type: deb
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^libsmartcols1$'
+      type: deb
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^libuuid1$'
+      type: deb
+  - vulnerability: CVE-2026-76642
+    fix-state: wont-fix
+    package:
+      name: '^util-linux$'
+      type: deb
+  # CVE-2026-78408
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^libblkid1$'
+      type: deb
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^liblastlog2-2$'
+      type: deb
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^libmount1$'
+      type: deb
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^libsmartcols1$'
+      type: deb
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^libuuid1$'
+      type: deb
+  - vulnerability: CVE-2026-78408
+    fix-state: wont-fix
+    package:
+      name: '^util-linux$'
+      type: deb
+  # CVE-2026-78409
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^libblkid1$'
+      type: deb
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^liblastlog2-2$'
+      type: deb
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^libmount1$'
+      type: deb
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^libsmartcols1$'
+      type: deb
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^libuuid1$'
+      type: deb
+  - vulnerability: CVE-2026-78409
+    fix-state: wont-fix
+    package:
+      name: '^util-linux$'
+      type: deb
+  # CVE-2026-78410
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^libblkid1$'
+      type: deb
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^liblastlog2-2$'
+      type: deb
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^libmount1$'
+      type: deb
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^libsmartcols1$'
+      type: deb
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^libuuid1$'
+      type: deb
+  - vulnerability: CVE-2026-78410
+    fix-state: wont-fix
+    package:
+      name: '^util-linux$'
+      type: deb
+  # CVE-2026-82560
+  - vulnerability: CVE-2026-82560
+    fix-state: wont-fix
+    package:
+      name: '^perl-base$'
+      type: deb
+  # CVE-2026-84243
+  - vulnerability: CVE-2026-84243
+    fix-state: wont-fix
+    package:
+      name: '^libc-bin$'
+      type: deb
+  - vulnerability: CVE-2026-84243
+    fix-state: wont-fix
+    package:
+      name: '^libc6$'
+      type: deb
+  # CVE-2026-95619
+  - vulnerability: CVE-2026-95619
+    fix-state: wont-fix
+    package:
+      name: '^gcc-14-base$'
+      type: deb
+  - vulnerability: CVE-2026-95619
+    fix-state: wont-fix
+    package:
+      name: '^libgcc-s1$'
+      type: deb
+  - vulnerability: CVE-2026-95619
+    fix-state: wont-fix
+    package:
+      name: '^libstdc\+\+6$'
+      type: deb
+  # CVE-2026-102010
+  - vulnerability: CVE-2026-102010
+    fix-state: wont-fix
+    package:
+      name: '^gcc-14-base$'
+      type: deb
+  - vulnerability: CVE-2026-102010
+    fix-state: wont-fix
+    package:
+      name: '^libgcc-s1$'
+      type: deb
+  - vulnerability: CVE-2026-102010
+    fix-state: wont-fix
+    package:
+      name: '^libstdc\+\+6$'
+      type: deb
+  # CVE-2026-119373
+  - vulnerability: CVE-2026-119373
+    fix-state: wont-fix
+    package:
+      name: '^libsqlite3-0$'
+      type: deb
+  # CVE-2026-119374
+  - vulnerability: CVE-2026-119374
+    fix-state: wont-fix
+    package:
+      name: '^libsqlite3-0$'
+      type: deb
+  # CVE-2026-119379
+  - vulnerability: CVE-2026-119379
+    fix-state: wont-fix
+    package:
+      name: '^libsqlite3-0$'
+      type: deb

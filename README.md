@@ -652,7 +652,7 @@ build args and a `--target` (bases are pinned by multi-arch index digest in the 
 
 | Make target (`--type`) | Tag | Builder | Runtime (`--target`) | libc / allocator | Size | HIGH/CRITICAL CVEs (2026-11-01) |
 |---|---|---|---|---|---|---|
-| `make image` (`dhi-debian`, **default**, L-810c) | `:<ver>`, `:latest` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 15 (grype) / 9 (trivy) distinct CVEs, none fixable (2026-10-29) |
+| `make image` (`dhi-debian`, **default**, L-810c) | `:<ver>`, `:latest` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/debian-base:trixie-debian13-dev` (`runtime-shell`) | glibc 2.41 / mimalloc | 90 MB | 19 won't-fix High CVEs (18 grype High, 1 trivy-only) accepted for this image (L-810e, [SECURITY-CVE.md](SECURITY-CVE.md#dhiio-debian-13--dev-make-image-the-default-since-l-810c)); apt CVE-2026-109518 fixed by the 2026-11-08 base |
 | `make image-dhi-static` (`dhi-static`; default until L-810c) | `:<ver>-static` | `dhi.io/rust:1.99.1-debian13-dev` | `dhi.io/static:20250419-glibc-debian13` (`runtime`, COPY-only, no shell) | glibc 2.41 / mimalloc | 24 MB | grype 5 High (glibc, libgcc-s; won't-fix / not-fixed upstream), trivy 0 |
 | `make image-dhi-alpine` (`dhi-alpine`) | `:<ver>-alpine` | `dhi.io/rust:1.99.0-alpine3.23-dev` | `dhi.io/alpine-base:3.24-alpine3.24-dev` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 21 MB | **0** (0 at any severity) |
 | `make image-alpine` (`alpine`, public bases, not default) | `:<ver>-alpine-public` | `docker.io/library/rust:1.99.1-alpine3.24` | `docker.io/library/alpine:3.24.3` + apk `bash ca-certificates libgcc` (`runtime-shell`) | musl / musl | 20 MB | 0 (2026-10-29) |

@@ -44,7 +44,7 @@ CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo do
 BUILDER_IMAGE ?= dhi.io/rust
 BUILDER_TAG   ?= 1.99.1-debian13-dev@sha256:be6c6ec91c61ae15b80521052df1c7f60fefd303293563b3dbd9f57e58783809
 BASE_IMAGE    ?= dhi.io/debian-base
-BASE_TAG      ?= trixie-debian13-dev@sha256:cc4e05ff415ee2d83918f2af45c737983209924ef7362c53f00cfcdaa1c94326
+BASE_TAG      ?= trixie-debian13-dev@sha256:94571f3dc07fbc7166f6f1cbf1fe068a7647198ee2554e6b90d59a68cc8b053c
 # Docker Hardened Images, Debian 13 / glibc builder -> static glibc runtime (no shell; default before L-810c)
 DHI_STATIC_BUILDER_IMAGE ?= dhi.io/rust
 DHI_STATIC_BUILDER_TAG   ?= 1.99.1-debian13-dev@sha256:be6c6ec91c61ae15b80521052df1c7f60fefd303293563b3dbd9f57e58783809
@@ -145,6 +145,10 @@ save:
 sbom: save
 	syft docker-archive:image.tar -o cyclonedx-json=sbom-image.cdx.json -o spdx-json=sbom-image.spdx.json
 
+# Per-variant accepted-CVE files when they exist (L-810e: dhi-debian), else the shared grype file.
+GRYPE_IGNORE ?= $(firstword $(wildcard docker/grype-ignore.$(IMAGE_VARIANT).yaml) docker/grype-ignore.yaml)
+TRIVY_IGNORE ?= $(wildcard docker/trivyignore.$(IMAGE_VARIANT).yaml)
+
 scan: save
-	grype -c docker/grype-ignore.yaml docker-archive:image.tar --fail-on high
-	trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1
+	grype -c $(GRYPE_IGNORE) docker-archive:image.tar --fail-on high
+	trivy image --input image.tar --severity HIGH,CRITICAL --exit-code 1 $(if $(TRIVY_IGNORE),--ignorefile $(TRIVY_IGNORE))

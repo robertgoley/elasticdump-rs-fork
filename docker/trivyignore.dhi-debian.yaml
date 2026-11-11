@@ -1,0 +1,79 @@
+# L-810e: trivy ignore rules for the dhi-debian image only (`make scan` passes this file with
+# --ignorefile when IMAGE_VARIANT=dhi-debian). Same accepted CVEs as docker/grype-ignore.dhi-debian.yaml,
+# each documented in SECURITY-CVE.md. Each entry is scoped to the named Debian packages (purls
+# without a version, so a rebuilt base with the same unfixed packages still matches). trivy has no
+# fix-state filter: when a fix is published the CVE is still ignored here, but grype (which does
+# filter on wont-fix) fails `make scan`, which is the revisit trigger for both files.
+vulnerabilities:
+  - id: CVE-2025-69720
+    purls:
+      - pkg:deb/debian/libtinfo6
+      - pkg:deb/debian/ncurses-base
+      - pkg:deb/debian/ncurses-bin
+      - pkg:deb/debian/ncurses-term
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-9538
+    purls:
+      - pkg:deb/debian/perl-base
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-16742
+    purls:
+      - pkg:deb/debian/libsystemd0
+      - pkg:deb/debian/libudev1
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-24882
+    purls:
+      - pkg:deb/debian/gpgv
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-54369
+    purls:
+      - pkg:deb/debian/libacl1
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-76642
+    purls:
+      - pkg:deb/debian/libblkid1
+      - pkg:deb/debian/liblastlog2-2
+      - pkg:deb/debian/libmount1
+      - pkg:deb/debian/libsmartcols1
+      - pkg:deb/debian/libuuid1
+      - pkg:deb/debian/util-linux
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-78408
+    purls:
+      - pkg:deb/debian/libblkid1
+      - pkg:deb/debian/liblastlog2-2
+      - pkg:deb/debian/libmount1
+      - pkg:deb/debian/libsmartcols1
+      - pkg:deb/debian/libuuid1
+      - pkg:deb/debian/util-linux
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-78409
+    purls:
+      - pkg:deb/debian/libblkid1
+      - pkg:deb/debian/liblastlog2-2
+      - pkg:deb/debian/libmount1
+      - pkg:deb/debian/libsmartcols1
+      - pkg:deb/debian/libuuid1
+      - pkg:deb/debian/util-linux
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-78410
+    purls:
+      - pkg:deb/debian/libblkid1
+      - pkg:deb/debian/liblastlog2-2
+      - pkg:deb/debian/libmount1
+      - pkg:deb/debian/libsmartcols1
+      - pkg:deb/debian/libuuid1
+      - pkg:deb/debian/util-linux
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-119373
+    purls:
+      - pkg:deb/debian/libsqlite3-0
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-119374
+    purls:
+      - pkg:deb/debian/libsqlite3-0
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
+  - id: CVE-2026-119379
+    purls:
+      - pkg:deb/debian/libsqlite3-0
+    statement: "won't-fix upstream; not reachable from searchdump, see SECURITY-CVE.md (L-810e)"
