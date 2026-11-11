@@ -1,19 +1,80 @@
-# Release binaries. Manual trigger only; artifacts are attached to the run.
-# Nothing is published (no GitHub release, no crates.io) without Robert's approval.
+# Release builds (L-810d). Pushing a tag `v<version>` (or a manual run with an existing tag) builds the
+# release archives, SBOM, provenance attestations and container images, runs the RC behaviour-diff
+# gate, and creates a DRAFT GitHub release with every asset attached. Nothing becomes public on
+# GitHub Releases until Robert reviews the draft and clicks Publish. Tags with a hyphen
+# (v1.0.0-beta1) are marked as pre-releases and never move the `latest` image tag.
+# Container images are pushed to ghcr.io (owner request 2026-11-11, t149u) after the gates pass;
+# the `push_images` / `push_dhi_images` inputs of a manual run can turn that off.
 #
 # L-808b: the glibc builds are the preferred artifacts (mimalloc global allocator, the default for
 # *-linux-gnu; built against glibc 2.28 through zig, so they run on Debian 10+/RHEL 8+/Ubuntu 20.04+).
 # The static musl builds stay for Alpine and other musl or glibc-less hosts (musl's own allocator).
 name: release-build
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and draft a release for, e.g. v1.0.0-beta1"
+        required: true
+        type: string
+      push_images:
+        description: "Push the container images to ghcr.io"
+        type: boolean
+        default: true
+      push_dhi_images:
+        description: "Also push the dhi.io-based image types (dhi-debian, dhi-static, dhi-alpine)"
+        type: boolean
+        default: true
 
-permissions:
-  contents: read
+# Every job sets its own permissions; nothing is granted at the workflow level.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.workflow }}   # one release run at a time
+  cancel-in-progress: false
 
 jobs:
-  build:
+  meta:
+    name: version and tag
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      channel: ${{ steps.v.outputs.channel }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - id: v
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::tag '$TAG' is not v<semver>"; exit 1; }
+          version="${TAG#v}"
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [[ "$cargo_version" == "$version" ]] || { echo "::error::tag $TAG does not match Cargo.toml version $cargo_version"; exit 1; }
+          prerelease=false; channel=""
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+            channel="${version#*-}"; channel="${channel%%[0-9.]*}"; channel="${channel:-pre}"   # 1.0.0-beta1 -> beta
+          fi
+          { echo "tag=$TAG"; echo "version=$version"; echo "prerelease=$prerelease"; echo "channel=$channel"; } >> "$GITHUB_OUTPUT"
+          echo "release $version (tag $TAG, prerelease=$prerelease${channel:+, channel $channel})"
+
+  build:
+    needs: meta
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write       # build-provenance attestation
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -26,52 +87,95 @@ jobs:
           - { target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with: { persist-credentials: false }
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with: { toolchain: 1.91.1, targets: "${{ matrix.target }}" }
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: "${{ matrix.target }}" }
       # zig provides the C cross-compiler for zstd-sys / ring / mimalloc and the glibc version pin.
+      # No build cache in release builds (no cache poisoning from other refs).
       - uses: mlugg/setup-zig@53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7 # v1.2.2
-        with: { version: 0.13.0 }
+        with: { version: 0.13.0, use-cache: false }
       # pinned: 0.21.8 (MSRV 1.85; builds on the 1.91.1 CI toolchain)
       - run: cargo install cargo-zigbuild --locked --version 0.21.8
-      - run: cargo zigbuild --release --target "$ZIGTARGET"
+      - run: cargo zigbuild --locked --release --target "$ZIGTARGET" --bin searchdump --bin searchdump-multi
         env: { ZIGTARGET: "${{ matrix.zigtarget }}" }
-      - env: { TARGET: "${{ matrix.target }}" }
+      - name: Archive
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
+          set -euo pipefail
           f="target/$TARGET/release/searchdump"
-          file "$f"
+          file "$f" "target/$TARGET/release/searchdump-multi"
           case "$TARGET" in
             *-gnu) objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 ;;
           esac
-          d="searchdump-rs-$TARGET"
+          d="searchdump-rs-$VERSION-$TARGET"
           mkdir "$d"
-          cp "$f" "target/$TARGET/release/searchdump-multi" LICENSE THIRD-PARTY-NOTICES.md "$d/"
+          cp "$f" "target/$TARGET/release/searchdump-multi" LICENSE THIRD-PARTY-NOTICES.md README.md CHANGELOG.md "$d/"
           # L-810c: compatibility names for commands written for the old binaries (relative symlinks;
-          # tar keeps them as symlinks).
+          # tar keeps them as symlinks; on Windows-style extractors use the real binaries).
           ln -s searchdump "$d/elasticdump"
           ln -s searchdump "$d/elasticdump-rs"
           ln -s searchdump-multi "$d/multielasticdump"
           case "$TARGET" in
             x86_64-*)   # runnable on the runner: every name must run as its target
-              for n in searchdump elasticdump elasticdump-rs; do "$d/$n" --version | grep -qx "searchdump [0-9.]*"; done
-              for n in searchdump-multi multielasticdump; do "$d/$n" --version | grep -qx "searchdump-multi [0-9.]*"; done ;;
+              for n in searchdump elasticdump elasticdump-rs; do "$d/$n" --version | grep -qx "searchdump $VERSION"; done
+              for n in searchdump-multi multielasticdump; do "$d/$n" --version | grep -qx "searchdump-multi $VERSION"; done ;;
           esac
           tar czf "$d.tar.gz" "$d"
-          sha256sum "searchdump-rs-$TARGET.tar.gz" > "searchdump-rs-$TARGET.tar.gz.sha256"
+          sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
+          tar tvzf "$d.tar.gz"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: searchdump-rs-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: searchdump-rs-${{ matrix.target }}
-          path: searchdump-rs-${{ matrix.target }}.tar.gz*
+          name: dist-${{ matrix.target }}
+          path: searchdump-rs-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz*
+
+  sbom:
+    needs: meta
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with: { toolchain: 1.91.1 }
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with: { tool: "cargo-cyclonedx@0.5.9" }
+      - env: { VERSION: "${{ needs.meta.outputs.version }}" }
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --override-filename sbom
+          mv sbom.json "searchdump-rs-$VERSION.cdx.json"
+          sha256sum "searchdump-rs-$VERSION.cdx.json" > "searchdump-rs-$VERSION.cdx.json.sha256"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: searchdump-rs-${{ needs.meta.outputs.version }}.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-sbom
+          path: searchdump-rs-${{ needs.meta.outputs.version }}.cdx.json*
 
   # L-705 / TST-SUP-016: behaviour diff of this release candidate against the previous release's
   # profile (results/profiles/): SUP-002 trace + SUP-001 egress runs, condensed and diffed; any
   # new syscall class, path, socket, connect target, exec or DNS name without a line in
   # scripts/sup/rc-signoff.txt fails the job. The profile and diff are uploaded as `rc-diff`.
+  # Required before images are pushed and before the draft release is created.
   behaviour-diff:
     name: RC behaviour diff (SUP-016)
+    needs: meta
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # T2 builds the image from dhi.io bases; pull-only secrets as in the nightly egress job
     environment: dhi-pull
     env:
@@ -79,9 +183,10 @@ jobs:
       RC_DIFF_DIR: /tmp/edrs-it/rc-diff
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with: { persist-credentials: false }
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
       - run: rustup toolchain install 1.91.1 --profile minimal && rustup default 1.91.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       - run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
       - name: Log in to dhi.io (pull only)
@@ -102,3 +207,136 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: rc-diff, path: /tmp/edrs-it/rc-diff/ }
+      - if: always()
+        run: podman logout dhi.io || true
+
+  # Every image type, built and tested (scripts/test-image.sh, including the compatibility
+  # symlinks) for linux/amd64, then pushed to ghcr.io/<owner>/searchdump-rs:
+  #   <version>-<type> for every type; for the default type dhi-debian also <version> and `latest`
+  #   on a final release, or only the channel tag (`beta` for 1.0.0-beta1) on a pre-release.
+  # Docker Hardened Images are Apache-2.0 (DHI Community); images built on them that bundle this
+  # software may be redistributed (Docker Terms of Use, section 5). The image carries our LICENSE and
+  # THIRD-PARTY-NOTICES.md; the base's package licences are listed in its SBOM.
+  images:
+    needs: [meta, build, behaviour-diff]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write       # ghcr.io push
+      id-token: write       # image provenance attestation
+      attestations: write
+    environment: dhi-pull
+    strategy:
+      fail-fast: false
+      matrix:
+        type: [dhi-debian, dhi-static, dhi-alpine, public, alpine]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+      - name: Log in to dhi.io (pull only)
+        if: startsWith(matrix.type, 'dhi-')
+        env:
+          DHI_USERNAME: ${{ secrets.DHI_USERNAME }}
+          DHI_TOKEN: ${{ secrets.DHI_TOKEN }}
+        run: |
+          if [ -z "$DHI_USERNAME" ] || [ -z "$DHI_TOKEN" ]; then
+            echo "::error::DHI_USERNAME/DHI_TOKEN secrets are not set; dhi.io pulls need them"
+            exit 1
+          fi
+          printf '%s' "$DHI_TOKEN" | podman login dhi.io -u "$DHI_USERNAME" --password-stdin
+      - name: Build
+        env:
+          TYPE: ${{ matrix.type }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: CONTAINER=podman scripts/build-image.sh --type "$TYPE" --platform linux/amd64 --imagename "localhost/searchdump-rs:$VERSION-$TYPE"
+      - name: Image tests (incl. elasticdump / elasticdump-rs / multielasticdump)
+        env:
+          TYPE: ${{ matrix.type }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: CONTAINER=podman scripts/test-image.sh "localhost/searchdump-rs:$VERSION-$TYPE" "$TYPE"
+      - name: Push to ghcr.io
+        id: push
+        env:
+          TYPE: ${{ matrix.type }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+          CHANNEL: ${{ needs.meta.outputs.channel }}
+          PUSH_IMAGES: ${{ inputs.push_images }}
+          PUSH_DHI_IMAGES: ${{ inputs.push_dhi_images }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Inputs are empty on a tag push: both default to on.
+          if [[ "$PUSH_IMAGES" == false ]]; then echo "push_images=false: not pushed"; exit 0; fi
+          if [[ "$TYPE" == dhi-* && "$PUSH_DHI_IMAGES" == false ]]; then echo "push_dhi_images=false: not pushed"; exit 0; fi
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tags=("$repo:$VERSION-$TYPE")
+          if [[ "$TYPE" == dhi-debian ]]; then
+            if [[ "$PRERELEASE" == true ]]; then tags+=("$repo:$CHANNEL"); else tags+=("$repo:$VERSION" "$repo:latest"); fi
+          fi
+          printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "${tags[@]}"; do
+            podman tag "localhost/searchdump-rs:$VERSION-$TYPE" "$t"
+            podman push --digestfile /tmp/digest "$t"
+            echo "pushed $t ($(cat /tmp/digest))"
+          done
+          { echo "name=$repo"; echo "digest=$(cat /tmp/digest)"; } >> "$GITHUB_OUTPUT"
+          podman logout ghcr.io || true
+      - if: steps.push.outputs.digest != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - if: always()
+        run: podman logout dhi.io || true
+
+  publish:
+    name: draft GitHub release
+    needs: [meta, build, sbom, behaviour-diff, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write       # create the draft release and upload its assets
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { pattern: "dist-*", path: dist, merge-multiple: true }
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+          CHANNEL: ${{ needs.meta.outputs.channel }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum ./*.tar.gz ./*.cdx.json | sed 's#\./##' > SHA256SUMS && cat SHA256SUMS)
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # Notes: the CHANGELOG.md section for this version (it carries the disclaimer), else
+          # GitHub's generated notes after a short disclaimer.
+          awk -v v="$VERSION" '$0 == "## " v {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
+          extra=()
+          if [[ ! -s notes.md ]]; then
+            echo "::warning::no CHANGELOG.md section '## $VERSION'; using generated notes"
+            printf '%s\n' "Provided as is, without warranty (see LICENSE and the Disclaimer in README.md). Verify backups and restores yourself before relying on them; test in non-production first." > notes.md
+            extra+=(--generate-notes)
+          fi
+          {
+            echo
+            echo "### Container images"
+            echo
+            echo "Every image type is tagged \`$repo:$VERSION-<type>\` (dhi-debian, dhi-static, dhi-alpine, public, alpine)."
+            if [[ "$PRERELEASE" == true ]]; then echo "The default type (dhi-debian, linux/amd64) is also \`$repo:$CHANNEL\`; \`latest\` is unchanged for pre-releases."
+            else echo "The default type (dhi-debian, linux/amd64) is also \`$repo:$VERSION\` and \`$repo:latest\`."; fi
+            echo
+            echo "Checksums: \`SHA256SUMS\` and one \`.sha256\` per file. Provenance: \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          } >> notes.md
+          [[ "$PRERELEASE" == true ]] && extra+=(--prerelease)
+          gh release create "$TAG" dist/* --draft --verify-tag --title "searchdump-rs $VERSION" \
+            --notes-file notes.md "${extra[@]}"
+          echo "draft release for $TAG created; review and publish it on GitHub" >> "$GITHUB_STEP_SUMMARY"

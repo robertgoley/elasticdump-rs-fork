@@ -21,6 +21,22 @@ between clusters, files, object storage and SFTP. Two binaries:
   [Performance](#performance)). Known, deliberate differences are listed below and in
   [`NODE-DIFFERENCES.md`](NODE-DIFFERENCES.md).
 
+## Disclaimer
+
+searchdump-rs is provided **as is, without warranty of any kind**, as set out in its [MIT license](LICENSE) (the
+same warranty disclaimer as the elasticdump-rs code it derives from; Node elasticdump, whose behaviour it follows, has
+the equivalent disclaimer in Apache-2.0, sections 7 and 8). The authors accept no liability for any damage from its
+use, including data loss, data corruption, downtime or service disruption, in production or anywhere else.
+
+It has been stable and fast in our testing (see [Testing](#testing)), but no test suite can cover every edge case
+across cluster versions, configurations, plugins and storage backends, and beta releases in particular may still
+contain bugs. Before you rely on it:
+
+- try it in a non-production environment first;
+- verify every backup independently: restore it somewhere, then compare document counts (and spot-check documents,
+  mappings and settings) against the source;
+- keep your existing backup method until those checks pass for your own data.
+
 ## What it does
 
 | Direction | `--type data` | `--type mapping` | `--type settings` |
@@ -76,8 +92,10 @@ target (also musl). `jemalloc` and `mimalloc` are mutually exclusive, and `syste
 storage backends are the default features `opendal` and `opendal-sftp`.
 Release builds (`.github/workflows/release.yml`, `cargo zigbuild`): `x86_64`/`aarch64-unknown-linux-gnu` against
 glibc 2.28 (preferred), plus static `x86_64`/`aarch64-unknown-linux-musl`.
-Each archive `searchdump-rs-<target>.tar.gz` holds a directory of the same name with the `searchdump` binary (not yet `searchdump-multi`), `LICENSE` and
-`THIRD-PARTY-NOTICES.md`; the container images carry both files in `/usr/share/doc/searchdump-rs/`.
+Each archive `searchdump-rs-<version>-<target>.tar.gz` holds a directory of the same name with `searchdump`,
+`searchdump-multi`, the `elasticdump`, `elasticdump-rs` and `multielasticdump` symlinks, `LICENSE`,
+`THIRD-PARTY-NOTICES.md`, `README.md` and `CHANGELOG.md` (see [Releases](#releases)); the container images carry
+`LICENSE` and `THIRD-PARTY-NOTICES.md` in `/usr/share/doc/searchdump-rs/`.
 
 ### Renamed from elasticdump-rs (2026-11-11)
 
@@ -683,8 +701,8 @@ scripts/build-image.sh --type dhi-static            # shell-less dhi.io/static: 
 scripts/build-image.sh --type dhi-alpine            # Alpine/musl, musl allocator: searchdump-rs:<ver>-alpine
 scripts/build-image.sh --type public                # public Debian bases, no login (not default): <ver>-debian-public
 scripts/build-image.sh --platform both              # linux/amd64 + linux/arm64 manifest list (podman)
-scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:0.1.0-arm64
-scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:0.1.0 --push
+scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:1.0.0-beta1-arm64
+scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:1.0.0-beta1 --push
 scripts/build-image.sh --dry-run --type dhi-alpine  # print the podman commands only
 scripts/build-image.sh --help
 ```
@@ -710,18 +728,54 @@ make test-image            # --version, --help, non-root, compat symlinks (each 
 make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-debian, dhi-static,
                                            # dhi-alpine, public, alpine)
 make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL) of IMAGE_VARIANT
-make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=0.1.0
+make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=1.0.0-beta1
 
 # podman
-podman run --rm -v "$PWD/dumps:/data:Z" localhost/searchdump-rs:0.1.0 \
+podman run --rm -v "$PWD/dumps:/data:Z" localhost/searchdump-rs:1.0.0-beta1 \
   --input=http://es:9200/my_index --output=/data/my_index.json --type=data
 # docker (same image, Node-style entrypoint name)
-docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/searchdump-rs:0.1.0 \
+docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/searchdump-rs:1.0.0-beta1 \
   --input=/data/my_index.json --output=http://es:9200/my_index --type=data
 ```
 
 Nothing in the Makefile pushes; tag and push yourself if you want the image in a registry.
 Mounted host directories must be writable by uid 65532 (or use `--user`).
+
+## Releases
+
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) when a version tag is pushed.
+Nothing is published automatically: the workflow creates a **draft** GitHub release, which a maintainer reviews and
+publishes by hand.
+
+To cut a release:
+
+1. Set `version` in `Cargo.toml` (for example `1.0.0-beta1`) and add a `## 1.0.0-beta1` section to
+   [`CHANGELOG.md`](CHANGELOG.md); merge to `main`.
+2. Tag that commit and push the tag: `git tag -s v1.0.0-beta1 && git push origin v1.0.0-beta1`
+   (a manual run of the workflow with an existing tag does the same). The tag must match the `Cargo.toml` version.
+3. Wait for the workflow, review the draft on the Releases page, then press **Publish**.
+
+The workflow runs the RC behaviour-diff gate (`scripts/sup/rc-diff.sh`; unsigned behaviour changes fail it) before
+anything is pushed or drafted. The draft contains:
+
+- `searchdump-rs-<version>-<target>.tar.gz` for x86_64 and aarch64, glibc (`*-linux-gnu`, glibc 2.28+, mimalloc) and
+  musl (`*-linux-musl`, static): `searchdump`, `searchdump-multi`, the `elasticdump`, `elasticdump-rs` and
+  `multielasticdump` symlinks, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md` and `CHANGELOG.md`;
+- `searchdump-rs-<version>.cdx.json`, a CycloneDX SBOM of the Rust dependencies;
+- a `.sha256` file per asset and a combined `SHA256SUMS`;
+- release notes from the version's `CHANGELOG.md` section (GitHub's generated notes if there is none), plus the image
+  tags.
+
+Every archive, the SBOM and every pushed image have a GitHub build-provenance attestation:
+`gh attestation verify searchdump-rs-1.0.0-beta1-x86_64-unknown-linux-gnu.tar.gz --repo robertgoley/searchdump-rs`.
+
+Container images: every image type is built, tested with `scripts/test-image.sh` and pushed to
+`ghcr.io/robertgoley/searchdump-rs:<version>-<type>` (`dhi-debian`, `dhi-static`, `dhi-alpine`, `public`, `alpine`;
+linux/amd64). The default type, `dhi-debian`, is also tagged `<version>` and `latest` for a final release; a
+pre-release (a version with a hyphen, such as `1.0.0-beta1`) is marked as a pre-release on GitHub and only moves the
+channel tag (`beta`), never `latest`. A manual run can turn the image push off (`push_images`), or only for the
+dhi.io-based types (`push_dhi_images`). Docker Hardened Images are Apache-2.0 (DHI Community), and Docker's terms allow
+redistributing them as part of your own software, which is what these images do.
 
 ## Reliability
 

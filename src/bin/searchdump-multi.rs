@@ -173,7 +173,9 @@ pub enum MatchType {
       --match '^logs-' --types data,index_template,component_template,policy --fileSize 1gb\n  \
       # load everything back (SEARCHDUMP_OUTPUT_* credentials), 4 indices at a time\n  \
       searchdump-multi --direction load --input /backup --output https://os2:9200 --parallel 4\n\n\
-      Extra arguments after `--` are passed to every searchdump data run."
+      Extra arguments after `--` are passed to every searchdump data run.\n\n\
+      Provided as is, without warranty (MIT license). Verify every backup by restoring it and\n\
+      comparing document counts, and test outside production first."
 )]
 pub struct Args {
     /// dump: cluster -> directory; load: directory -> cluster; copy: directory -> directory

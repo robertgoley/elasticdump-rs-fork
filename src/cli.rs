@@ -98,6 +98,8 @@ fn parse_type(value: &str) -> Result<DumpType, String> {
     author,
     version,
     about = "Back up, restore and copy Elasticsearch and OpenSearch indices, mappings and settings (elasticdump-compatible CLI)",
+    after_long_help = "Provided as is, without warranty (MIT license). Verify every backup by restoring it and\n\
+        comparing document counts, and test outside production first.",
     allow_negative_numbers = true,
     max_term_width = 100
 )]

@@ -231,7 +231,7 @@ jobs:
       - name: scan
         env:
           RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
-        run: scripts/sup/secret-scan.sh $RANGE
+        run: scripts/sup/secret-scan.sh ${RANGE:+"$RANGE"}
 
   # Workflow static analysis (Grok Bot, 2026-11-02; same command as scripts/lint-workflows.sh).
   # Pinned zizmor release binary, SHA-256 checked (F-01 style); --offline = no GitHub API token.
