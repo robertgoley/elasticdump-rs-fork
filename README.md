@@ -1,14 +1,25 @@
-# elasticdump-rs-fork
-AI powered rewrite of elasticdump based on previous partial work from the elasticdump-rs project.  Many new types and features added.  Aim is feature parity with elasticdump nodejs version with increased performance and a few add on features for usability or speed.
+# searchdump-rs
 
-# elasticdump-rs
+Back up, restore and copy **Elasticsearch and OpenSearch** data, mappings, settings, templates, policies and more,
+between clusters, files, object storage and SFTP. Two binaries:
 
-A Rust re-implementation of the parts of [elasticdump](https://github.com/elasticsearch-dump/elasticsearch-dump)
-that move **data, mappings and settings** between Elasticsearch/OpenSearch clusters and files, in both
-directions, with elasticdump's flag names and file formats so existing scripts keep working.
+- **`searchdump`**: one index or one item type per run (the counterpart of Node `elasticdump`);
+- **`searchdump-multi`**: many indices at once, in parallel, to or from a dump directory (the counterpart of Node
+  `multielasticdump`), plus whole-directory copies between stores.
 
-> Branch `rewrite`: local fork of `tenyears-tech/elasticdump-rs`. Plan: [`docs/PLAN.md`](docs/PLAN.md);
-> parity checklist: [`docs/PARITY.md`](docs/PARITY.md).
+## Where it comes from
+
+- **Code derivative of [elasticdump-rs](https://github.com/tenyears-tech/elasticdump-rs)** by TenYears
+  (Copyright (c) 2025 TenYears, MIT License). This repository started as a fork of it; its retrieval and staged-output
+  code is still here, and its MIT license and copyright notice are kept in [`LICENSE`](LICENSE). Most of the current
+  code (types, restore, cross-engine handling, `searchdump-multi`, storage backends, the test and supply-chain
+  tooling) was written in this fork. The project was named elasticdump-rs-fork until 2026-11-11.
+- **Spiritual and compatibility derivative of Node
+  [elasticdump](https://github.com/elasticsearch-dump/elasticsearch-dump)** (elasticsearch-dump, Apache-2.0). No Node
+  code is included; its behaviour and defaults were studied from its source so that the **CLI flags and file formats
+  stay compatible**: existing elasticdump scripts and dump files keep working, at much higher speed (see
+  [Performance](#performance)). Known, deliberate differences are listed below and in
+  [`NODE-DIFFERENCES.md`](NODE-DIFFERENCES.md).
 
 ## What it does
 
@@ -19,68 +30,135 @@ directions, with elasticdump's flag names and file formats so existing scripts k
 | cluster → cluster | ✅ | ✅ | ✅ (engine-specific settings auto-stripped) |
 | file → file | ✅ (normalise, offset/size, sourceOnly) | – | – |
 
-Plus: basic auth (URL, `--httpAuthFile`, `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}`), TLS with custom CA,
+"File" also means `s3://`, `b2://`, `sftp://` and `fs://` locations (see
+[Object storage and SFTP](#object-storage-and-sftp-opendal)). More types: analyzer, alias, legacy/component/index
+templates, ILM/ISM policies (with ILM → ISM conversion) and stored scripts ([Types](#types)).
+
+Plus: basic auth (URL, `--httpAuthFile`, `SEARCHDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}`), TLS with custom CA,
 client certificates (encrypted PKCS#8 keys via `--pass`) and insecure mode per direction; gzip **and zstd**
 files; file splitting; write concurrency, throttling and rate limiting; Node-style retries plus 429.
 
-Tested against **OpenSearch 2.19.7 and 3.9.0** and **Elasticsearch 9.1.2 and 8.6.1** (`bitnamilegacy/elasticsearch`),
-each plain and secured (basic auth + TLS), across engines (ES ↔ OpenSearch, files and cluster to cluster), and
-against Node elasticdump 6.125.1 for file-format interop.
+Tested against **OpenSearch 1.3, 2.19 and 3.9** and **Elasticsearch 7.10, 7.17, 8.6, 8.19 and 9.1**, plain and
+secured (basic auth + TLS), across engines (ES ↔ OpenSearch, files and cluster to cluster), and against Node
+elasticdump 6.125.1 for file-format interop ([`TESTING-MATRIX.md`](TESTING-MATRIX.md)).
 
-## Install
+## Install and build
 
-Needs Rust 1.91 or newer (`rust-version` in Cargo.toml; `rust-toolchain.toml` pins 1.91.1, the CI toolchain).
+From source (Rust 1.91 or newer; `rust-toolchain.toml` pins 1.91.1, the CI toolchain):
 
 ```bash
+git clone https://github.com/robertgoley/searchdump-rs.git && cd searchdump-rs
 cargo build --release            # fat LTO; needs a few GB of RAM
+# binaries: target/release/searchdump and target/release/searchdump-multi
 cargo build --profile it         # lighter optimised build (no LTO), used by the test harness
-# binary: target/release/elasticdump-rs (or target/it/elasticdump-rs)
 ```
+
+Container image (podman or docker; details in [Container image](#container-image)):
+
+```bash
+podman login dhi.io                         # pull login for the hardened default bases
+scripts/build-image.sh                      # localhost/searchdump-rs:<version> and :latest
+scripts/build-image.sh --variant alpine     # :<version>-alpine (musl)
+make image-public                           # public Debian bases, no login needed
+podman run --rm -v "$PWD:/data" localhost/searchdump-rs --input=https://os:9200/logs --output=/data/logs.json
+```
+
+The image's entrypoint is `searchdump`; `searchdump-multi` is next to it, and an `elasticdump` symlink points at
+`searchdump` for scripts written for the Node tool.
 
 Allocator: builds for glibc Linux (`*-linux-gnu`, the preferred release artifacts and the default container image)
 use mimalloc as the global allocator; musl builds (`*-linux-musl`, the Alpine image) keep musl's own allocator.
 Features: `--features system-allocator` builds glibc Linux with glibc's malloc (mimalloc's C code is still compiled
 but not linked in), `--features jemalloc` uses jemalloc on any target, `--features mimalloc` forces mimalloc on any
-target (also musl). `jemalloc` and `mimalloc` are mutually exclusive, and `system-allocator` excludes both.
+target (also musl). `jemalloc` and `mimalloc` are mutually exclusive, and `system-allocator` excludes both. The
+storage backends are the default features `opendal` and `opendal-sftp`.
 Release builds (`.github/workflows/release.yml`, `cargo zigbuild`): `x86_64`/`aarch64-unknown-linux-gnu` against
 glibc 2.28 (preferred), plus static `x86_64`/`aarch64-unknown-linux-musl`.
-Each archive `elasticdump-rs-<target>.tar.gz` holds a directory of the same name with the binary, `LICENSE` and
-`THIRD-PARTY-NOTICES.md`; the container images carry both files in `/usr/share/doc/elasticdump-rs/`.
+Each archive `searchdump-rs-<target>.tar.gz` holds a directory of the same name with the `searchdump` binary (not yet `searchdump-multi`), `LICENSE` and
+`THIRD-PARTY-NOTICES.md`; the container images carry both files in `/usr/share/doc/searchdump-rs/`.
 
-## Migrating from elasticdump
+### Renamed from elasticdump-rs (2026-11-11)
 
-Replace `elasticdump` with `elasticdump-rs`; the flags are spelled the same (`--input-index`, `--fsCompress`,
+| Before | Now |
+|---|---|
+| crate `elasticdump-rs`, library `elasticdump_rs` | `searchdump-rs`, `searchdump_rs` |
+| binary `elasticdump-rs` | `searchdump` |
+| binary `multielasticdump` | `searchdump-multi` |
+| `ELASTICDUMP_*` environment variables | `SEARCHDUMP_*` (the old names still work, deprecated, with a warning) |
+| image `localhost/elasticdump-rs` | `localhost/searchdump-rs` |
+
+The `searchdump-multi` manifest keeps its file name `multielasticdump.json`, so existing dump directories load and
+`--resume` as before.
+
+## Quick usage
+
+### searchdump
+
+Replace `elasticdump` with `searchdump`; the flags are spelled the same (`--input-index`, `--fsCompress`,
 `--ignore-es-write-errors`, booleans with or without `=true`). A full backup/restore:
 
 ```bash
 # backup
 for t in settings mapping data; do
-  elasticdump-rs --input=https://user:pw@os:9200/logs --output=logs.$t.json --type=$t --ca=ca.pem
+  searchdump --input=https://os:9200/logs --output=logs.$t.json --type=$t --ca=ca.pem
 done
 # restore (order matters: settings create the index, then mapping, then data)
 for t in settings mapping data; do
-  elasticdump-rs --input=logs.$t.json --output=https://user:pw@os:9200/logs --type=$t --ca=ca.pem
+  searchdump --input=logs.$t.json --output=https://os:9200/logs --type=$t --ca=ca.pem
 done
 ```
 
-Other common forms:
+(credentials from `SEARCHDUMP_INPUT_USERNAME`/`_PASSWORD`, `SEARCHDUMP_OUTPUT_*` or `--httpAuthFile`.) Other common forms:
 
 ```bash
-elasticdump-rs --input=http://os:9200/src --output=http://os:9200/dst --limit 1000 --concurrency 4  # copy
-elasticdump-rs --input=http://os:9200/src --output=dump.json --fileSize=500mb --fsCompress           # gzip parts
-elasticdump-rs --input=http://os:9200/src --output=dump.json --compressionType zstd                 # zstd (opt-in)   
-elasticdump-rs --input=dump.json.zst --output=http://os:9200/dst                                     # auto-detected
-elasticdump-rs --input=http://os:9200/src --output=$ --searchBody=@query.json | jq .                # stdout
-elasticdump-rs --input=http://os:9200/src --output=d.json --searchAfter --pit --slices 4            # sliced PIT
-elasticdump-rs --input=http://os:9200 --output=all.mapping.json --type=mapping                      # all indices
-elasticdump-rs --input=all.mapping.json --output=http://other:9200 --type=mapping --prefix=copy_    # restore each
+searchdump --input=http://os:9200/src --output=http://os:9200/dst --limit 1000 --concurrency 4  # copy
+searchdump --input=http://os:9200/src --output=dump.json --fileSize=500mb --fsCompress           # gzip parts
+searchdump --input=http://os:9200/src --output=dump.json --compressionType zstd                 # zstd (opt-in)
+searchdump --input=dump.json.zst --output=http://os:9200/dst                                     # auto-detected
+searchdump --input=http://os:9200/src --output=$ --searchBody=@query.json | jq .                # stdout
+searchdump --input=http://os:9200/src --output=d.json --searchAfter --pit --slices 4            # sliced PIT
+searchdump --input=http://os:9200 --output=all.mapping.json --type=mapping                      # all indices
+searchdump --input=all.mapping.json --output=http://other:9200 --type=mapping --prefix=copy_    # restore each
+searchdump --input=http://os:9200/src --output=s3://backups/src.json --outputStorageConfig=s3.ini # to S3
 ```
 
-Restoring split dumps takes one invocation per part (as in Node): `for f in dump.split-*.json.gz; do … --input=$f …; done`.
+Restoring split dumps takes one invocation per part (as in Node): `for f in dump.split-*.json.gz; do … --input=$f …; done`;
+`searchdump-multi` finds and loads the parts itself.
+
+### searchdump-multi
+
+```bash
+# every logs-* index, one file set per index, zstd, 4 at a time
+searchdump-multi --input=https://src:9200 --output=/data/logs --match='^logs-' --compression=zstd3 --parallel=4
+# load it all back
+searchdump-multi --direction=load --input=/data/logs --output=https://dst:9200 --parallel=4
+# dump straight to S3 (staged locally, uploaded when every index succeeded)
+searchdump-multi --input=https://src:9200 --output=s3://backups/logs --outputStorageConfig=s3.ini
+# copy a dump directory between stores, byte for byte, no cluster involved
+searchdump-multi --direction=copy --input=s3://backups/logs --output=sftp://backup@vault:22/srv/logs \
+  --inputStorageConfig=s3.ini
+# a dump that Node's multielasticdump 6.x can restore
+searchdump-multi --input=https://src:9200 --output=/data/node --nodeCompat
+```
+
+Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
+
+## Compatibility with Node elasticdump
+
+- Same flag names and spellings, same NDJSON data format and metadata file formats; dumps made by either tool load
+  with the other (checked against elasticdump 6.125.1, including digest-equal dumps).
+- `searchdump-multi --nodeCompat` writes the layout Node's `multielasticdump` loads; `searchdump-multi --direction=load`
+  reads Node-made dump directories.
+- Not supported (clear error instead of silent difference): JavaScript `--transform` and other JS hooks, AWS SigV4
+  signing and OpenSearch Serverless, CSV, SOCKS5, `--delete`; Node's `--s3*` flags warn and do nothing (use
+  `s3://` URLs). See [`FEATURES-TODO.md`](FEATURES-TODO.md).
+- Deliberate differences (safer defaults, stricter errors, numeric precision above 2^53 kept, gzip/zstd, sliced
+  retrieval): [Intentional differences](#intentional-differences-from-node-elasticdump) and
+  [`NODE-DIFFERENCES.md`](NODE-DIFFERENCES.md).
 
 ## Flags
 
-`elasticdump-rs --help` lists everything. Groups:
+`searchdump --help` lists everything. Groups:
 
 * **Endpoints/types:** `--input`, `--output` (URL, file, `$`, or a storage URL `s3://`, `b2://`, `sftp://`, `fs://`;
   see "Object storage and SFTP"), `--inputStorageConfig`/`--outputStorageConfig`, `--input-index`/`--output-index` (`index[/type]`),
@@ -135,7 +213,7 @@ and `script` (see [Types](#types)). Index renaming: `--renamePrefix`, `--renameI
 `--renamePatterns` (see [Renaming indices](#renaming-indices)).
 
 Out of scope (rejected or ignored with a warning, see `docs/PARITY.md` §3.7): CSV, S3/MinIO, AWS signing,
-transforms, `--delete`. `multielasticdump` is a separate, smaller tool (see [Bulk dump and load](#bulk-dump-and-load-multielasticdump)).
+transforms, `--delete`. `searchdump-multi` is a separate, smaller tool (see [Bulk dump and load](#bulk-dump-and-load-searchdump-multi)).
 
 Where this tool differs from Node because Node is incomplete or buggy, see [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md);
 for every place the tool changes what is loaded, and for the tested versions, see
@@ -340,25 +418,25 @@ it does not check them. Writing to a data stream with the default `--bulkAction 
 first such failure prints a hint to use `--bulkAction create`. Checked live on Elasticsearch 7.10.2 (OSS and
 default), 7.17.29, 8.6.1, 8.19.23 and 9.1.2, and OpenSearch 1.3.20, 2.19.7 and 3.9.0.
 
-## Bulk dump and load (multielasticdump)
+## Bulk dump and load (searchdump-multi)
 
-`multielasticdump` dumps every index whose name matches a regex to a directory, one file set per index, and loads
-such a directory back. It runs one `elasticdump-rs` per index and item type (found next to its own executable, then
-`$ELASTICDUMP_BIN`, then `PATH`), so all flags, retries and credential handling are the main tool's. It is not a
+`searchdump-multi` dumps every index whose name matches a regex to a directory, one file set per index, and loads
+such a directory back. It runs one `searchdump` per index and item type (found next to its own executable, then
+`$SEARCHDUMP_BIN`, then `PATH`), so all flags, retries and credential handling are the main tool's. It is not a
 copy of Node's `multielasticdump`; it follows `scripts/oslogs.py` and writes the same file names, so either tool can
 load the other's dumps.
 
 ```sh
 # Every logs-* index, broken out per application into DIR/app/, DIR/web/, ... (zstd level 3)
-multielasticdump --input=https://src:9200 --output=/data/logs \
+searchdump-multi --input=https://src:9200 --output=/data/logs \
   --match='^logs-(?P<group>[a-z]+)-' --layout=group --compression=zstd3 --parallel=4
 
 # Data streams logs-* with the templates and policies they need, data in 1 GB parts
-multielasticdump --input=https://src:9200 --output=/data/ds --matchType=datastream --match='^logs-' \
+searchdump-multi --input=https://src:9200 --output=/data/ds --matchType=datastream --match='^logs-' \
   --types=data,component_template,index_template,policy --fileSize=1gb
 
 # Load it all back (any layout; uses /data/logs/multielasticdump.json when present)
-multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 --parallel=4
+searchdump-multi --direction=load --input=/data/logs --output=https://dst:9200 --parallel=4
 ```
 
 - Selection: `--match` (unanchored regex, default all), `--exclude`. Indices starting with `.` are left out unless
@@ -371,7 +449,7 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
 - Files per index: `INDEX.settings.json`, optional `INDEX.analyzer.json`, `INDEX.mapping.json`, optional
   `INDEX.alias.json`, and `INDEX.data.json.gz` / `.zst` / `.json` (`--compression gzip|zstd1|zstd3|none`, default
   gzip). `--fileSize=1gb` or `--maxRows=N` splits each data file into `INDEX.data.split-0.json.gz`, `-1`, ... (as
-  `elasticdump-rs` names parts); load finds the parts, loads them in order and checks their summed record count.
+  `searchdump` names parts); load finds the parts, loads them in order and checks their summed record count.
   A data stream gets `STREAM.datastream.json` (its `GET _data_stream` description) and its data file.
 - Cluster-wide types, dumped once per run into `DIR/_cluster/TYPE.json`: `policy`, `component_template`,
   `index_template`, `template`, `script`. Load applies them before any index, in that order (policies before the
@@ -399,7 +477,7 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
   index and the next, as Node's `--interval`.
 - Data runs get `--limit=5000 --scrollTime=10m --retryAttempts=5 --retryDelay=2000 --timeout=300000 --maxResponseMb=0`
   (`--noDefaultDataFlags` drops them); anything after `--` is passed to every data run. Credentials:
-  `ELASTICDUMP_INPUT_USERNAME`/`_PASSWORD` and `ELASTICDUMP_OUTPUT_USERNAME`/`_PASSWORD`, or `--httpAuthFile`.
+  `SEARCHDUMP_INPUT_USERNAME`/`_PASSWORD` and `SEARCHDUMP_OUTPUT_USERNAME`/`_PASSWORD`, or `--httpAuthFile`.
 - Per-run logs go to `--logDir` (default a temp dir; one log per data part); a failure prints the last lines.
   `--dryRun` lists what would run. Exit status: 0 all done, 1 any item failed or nothing matched, 2 usage error,
   130 interrupted.
@@ -412,7 +490,7 @@ multielasticdump --direction=load --input=/data/logs --output=https://dst:9200 -
   the sibling `DIR.meta/` (or `--metaDir`). Default types are `settings,mapping,template,data` (Node's load needs all
   four unless it gets `--ignoreX=true`). Refused with it: `--fileSize`/`--maxRows` (Node 6.x cannot load split
   parts), zstd, layouts other than `flat`, and `--matchType datastream` (Node loads data with the `index` op).
-  Restore with `multielasticdump --direction=load --input=DIR --output=URL` (Node), or with this tool, which also
+  Restore with Node's `multielasticdump --direction=load --input=DIR --output=URL`, or with this tool, which also
   loads `DIR.meta/_cluster/` first. This tool's load reads Node-made dumps too (both namings, plain or gzipped
   metadata). Tested against the real elasticdump 6.125.1 npm package both ways.
 - Test: `scripts/it/multielasticdump-roundtrip.sh` (two in-memory fake nodes, no containers; set `NODE_ED_BIN` to the
@@ -436,14 +514,14 @@ directions; S3 and B2 writes are multipart uploads (`chunk_mb`, default 16, `con
 
 ```sh
 # dump to MinIO with zstd in 1 GB parts; credentials from the INI file
-elasticdump-rs --input=https://src:9200/logs --output='s3://backups/logs/logs.json?endpoint=https://minio:9000' \
+searchdump --input=https://src:9200/logs --output='s3://backups/logs/logs.json?endpoint=https://minio:9000' \
   --outputStorageConfig=/etc/edrs/s3.ini --compressionType=zstd --fileSize=1gb
 
 # restore from SFTP
-elasticdump-rs --input=sftp://backup@vault:22/srv/dumps/logs.json --output=https://dst:9200/logs
+searchdump --input=sftp://backup@vault:22/srv/dumps/logs.json --output=https://dst:9200/logs
 
 # copy a file between stores (no cluster): s3 -> sftp
-elasticdump-rs --inputStorageConfig=s3.ini --input=s3://backups/logs/logs.json \
+searchdump --inputStorageConfig=s3.ini --input=s3://backups/logs/logs.json \
   --output=sftp://backup@vault:22/srv/dumps/logs.json
 ```
 
@@ -452,11 +530,11 @@ elasticdump-rs --inputStorageConfig=s3.ini --input=s3://backups/logs/logs.json \
 put it. Each setting is looked up in this order, first match wins:
 
 1. a URL query parameter (non-secret settings only): `?endpoint=...&region=...`;
-2. the INI file given with `--inputStorageConfig` / `--outputStorageConfig` (or `ELASTICDUMP_INPUT_STORAGE_CONFIG` /
-   `ELASTICDUMP_OUTPUT_STORAGE_CONFIG`), the storage counterpart of `--httpAuthFile`: top-level `key = value` lines,
+2. the INI file given with `--inputStorageConfig` / `--outputStorageConfig` (or `SEARCHDUMP_INPUT_STORAGE_CONFIG` /
+   `SEARCHDUMP_OUTPUT_STORAGE_CONFIG`), the storage counterpart of `--httpAuthFile`: top-level `key = value` lines,
    overridden by a `[s3]` / `[b2]` / `[sftp]` section and then by a `[s3.BUCKET]` / `[sftp.HOST]` section. Unknown
    keys get a warning;
-3. the environment: `ELASTICDUMP_<SCHEME>_<SETTING>` (`ELASTICDUMP_S3_ENDPOINT`, `ELASTICDUMP_SFTP_KEY`, ...), then
+3. the environment: `SEARCHDUMP_<SCHEME>_<SETTING>` (`SEARCHDUMP_S3_ENDPOINT`, `SEARCHDUMP_SFTP_KEY`, ...), then
    the standard names: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_ENDPOINT_URL_S3` /
    `AWS_ENDPOINT_URL`, `AWS_REGION` / `AWS_DEFAULT_REGION`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`.
 
@@ -504,7 +582,7 @@ Other behaviour:
 - Cargo features `opendal` (S3, B2, fs) and `opendal-sftp` are on by default; a build without them refuses storage
   URLs with a clear error.
 
-### multielasticdump with storage
+### searchdump-multi with storage
 
 - `--direction dump --output=s3://BUCKET/PREFIX` dumps to a local staging directory (`--stagingDir`, default a temp
   dir) and uploads the finished tree only when every item succeeded; otherwise the staging directory is kept and the
@@ -539,10 +617,10 @@ matching rule wins (`--renamePrefix` rules are tried first); unmatched names sta
 
 ```bash
 # dump every logstash-* index, restore it as logstash-srctag-*
-elasticdump-rs --input http://es:9200/logstash-* --output idx.json --type index
-elasticdump-rs --input http://es:9200/logstash-* --output data.json
-elasticdump-rs --input idx.json  --output http://os:9200 --type index --renamePrefix logstash-:logstash-srctag- --renameAliases
-elasticdump-rs --input data.json --output http://os:9200 --renamePrefix logstash-:logstash-srctag-
+searchdump --input http://es:9200/logstash-* --output idx.json --type index
+searchdump --input http://es:9200/logstash-* --output data.json
+searchdump --input idx.json  --output http://os:9200 --type index --renamePrefix logstash-:logstash-srctag- --renameAliases
+searchdump --input data.json --output http://os:9200 --renamePrefix logstash-:logstash-srctag-
 ```
 
 ## Container image
@@ -569,7 +647,7 @@ use the Alpine variant (`:<ver>-alpine`, bash, musl's allocator, 0 CVEs) for tha
 runs `apk upgrade`, then adds `bash`, `ca-certificates` and `libgcc`. Alpine-packaged rustc links `libgcc_s`
 dynamically.
 
-**Image name:** set the full repository and tag of the built image with `scripts/build-image.sh --imagename registry.example.com/team/elasticdump-rs:1.2.3`, or with the `ELASTICDUMP_IMAGE` environment variable, which also works for every `make image*` target (`ELASTICDUMP_IMAGE=registry.example.com/team/elasticdump-rs:1.2.3 make image-dhi-debian`). It replaces the default tags; the script adds `:<version>` to a bare repository name.
+**Image name:** set the full repository and tag of the built image with `scripts/build-image.sh --imagename registry.example.com/team/searchdump-rs:1.2.3`, or with the `SEARCHDUMP_IMAGE` environment variable, which also works for every `make image*` target (`SEARCHDUMP_IMAGE=registry.example.com/team/searchdump-rs:1.2.3 make image-dhi-debian`). It replaces the default tags; the script adds `:<version>` to a bare repository name.
 
 **Prerequisites:** podman (or docker with the buildx plugin). No Rust is needed on the host: crates are vendored inside a container from the pinned builder image (`VENDOR_ON_HOST=1` uses host cargo >= 1.91 instead). `scripts/build-image.sh` checks these and the dhi.io login up front and stops with a clear message. `dhi.io` (Docker Hardened Images) needs a pull login: `podman login dhi.io` or `docker login dhi.io` with a Docker
 account. Anonymous pulls return `authentication required`. The login stays in the container tool's auth file and
@@ -584,7 +662,7 @@ crates.io access. The host needs no Rust (`VENDOR_ON_HOST=1` uses host cargo ins
 `HTTP_PROXY`, `NO_PROXY` and `CARGO_HTTP_PROXY` are passed into the vendoring container; the container tool still
 pulls the base images, and the Alpine stages still run `apk`, with its normal network.
 
-Every image contains `/usr/local/bin/elasticdump-rs` plus an `elasticdump` symlink, runs as uid
+Every image contains `/usr/local/bin/searchdump` plus an `elasticdump` symlink, runs as uid
 65532 (non-root), has a CA bundle (`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`), uses
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,
 base name).
@@ -594,17 +672,17 @@ base name).
 Builds the two main variants locally (nothing is pushed unless `--push` is given):
 
 ```bash
-scripts/build-image.sh                              # glibc + mimalloc on dhi.io/static: elasticdump-rs:<ver>, :latest
-scripts/build-image.sh --variant alpine             # Alpine/musl, musl allocator: elasticdump-rs:<ver>-alpine
+scripts/build-image.sh                              # glibc + mimalloc on dhi.io/static: searchdump-rs:<ver>, :latest
+scripts/build-image.sh --variant alpine             # Alpine/musl, musl allocator: searchdump-rs:<ver>-alpine
 scripts/build-image.sh --platform both              # linux/amd64 + linux/arm64 manifest list (podman)
-scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/elasticdump-rs:0.1.0-arm64
-scripts/build-image.sh --tag registry.example.com/team/elasticdump-rs:0.1.0 --push
+scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:0.1.0-arm64
+scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:0.1.0 --push
 scripts/build-image.sh --dry-run --variant alpine   # print the podman commands only
 scripts/build-image.sh --help
 ```
 
 Options: `--variant glibc|alpine` (default `glibc`), `--platform linux/amd64|linux/arm64|both` (default: the host's),
-`--tag REF` (repeatable; replaces the default tags), `--name REPO` (default `localhost/elasticdump-rs`), `--jobs N`
+`--tag REF` (repeatable; replaces the default tags), `--name REPO` (default `localhost/searchdump-rs`), `--jobs N`
 (`CARGO_BUILD_JOBS`, default 2), `--push`, `--dry-run`. The base pins are read from the Makefile. A foreign platform
 runs the Rust build under emulation, so the host needs qemu-user-static (binfmt_misc) and it is slow; `both` builds a
 podman manifest list. `--push` uses only the container tool's existing registry login (`podman login <registry>`);
@@ -620,13 +698,13 @@ make test-image            # --version, --help, non-root, symlink, CA bundle, --
 make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-static, dhi-alpine,
                                            # dhi-debian, public, alpine)
 make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL) of IMAGE_VARIANT
-make image REGISTRY=registry.example.com/team IMAGE_NAME=elasticdump-rs IMAGE_TAG=0.1.0
+make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=0.1.0
 
 # podman
-podman run --rm -v "$PWD/dumps:/data:Z" localhost/elasticdump-rs:0.1.0 \
+podman run --rm -v "$PWD/dumps:/data:Z" localhost/searchdump-rs:0.1.0 \
   --input=http://es:9200/my_index --output=/data/my_index.json --type=data
 # docker (same image, Node-style entrypoint name)
-docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/elasticdump-rs:0.1.0 \
+docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/searchdump-rs:0.1.0 \
   --input=/data/my_index.json --output=http://es:9200/my_index --type=data
 ```
 
@@ -705,7 +783,7 @@ Each direction resolves its basic-auth username and password on its own (L-645).
    direction.
 2. `user:password@` in the `--input`/`--output` URL (percent-decoded).
 3. `--httpAuthFile` (INI with `user=` and `password=`, used for both directions), otherwise
-   `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (when its `_USERNAME` is set). These are used only when 1 and 2
+   `SEARCHDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (when its `_USERNAME` is set). These are used only when 1 and 2
    together do not give both a username and a password; like Node, the auth file's pair replaces a URL that has only
    a username. A flag still wins over them.
 
@@ -754,10 +832,50 @@ run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L
 
 ## Performance
 
-`scripts/benchmark/quick-vs-node.py` against a single-node OpenSearch 2.19.7 (512 MB heap, podman, same host,
-100k docs ≈ 42 MB, release build; medians of 3 runs, L-808). Raw numbers: [`docs/bench/`](docs/bench/).
+All numbers below come from recorded runs in this repository; follow the links for the raw data. Absolute figures
+depend on the cluster, network and disk; the ratios to Node elasticdump 6.125.1 on the same host are the portable
+result.
 
-| Scenario | Node 6.125.1 | elasticdump-rs | Speed-up | CPU-s Node / Rust |
+**1M documents, Elasticsearch 7.17** (about 1 KB per doc, 1.02 GB NDJSON, 2-shard index, 8 shared vCPUs; medians of
+3 runs; `scripts/load/nodecmp.py`, [`results/local/L-808.md`](results/local/L-808.md)):
+
+| Scenario | Node s | searchdump s | Speed-up | CPU-s Node / searchdump | RSS MB Node / searchdump |
+|---|---|---|---|---|---|
+| dump, defaults (`--limit 100`) | 25.04 | 15.38 | 1.63× | 19.57 / 5.50 | 309 / 44 |
+| dump `--limit 5000` | 13.82 | 6.86 | 2.01× | 15.50 / 4.02 | 354 / 72 |
+| dump `--limit 5000 --fsCompress` | 42.63 | 6.37 | 6.69× | 49.66 / 9.10 | 1,416 / 77 |
+| dump, searchdump `--slices 2` (= shards; Node unsliced) | 13.59 | 3.88 | 3.51× | 15.64 / 3.96 | 356 / 98 |
+| dump, searchdump PIT `--slices 8` (Node unsliced) | 13.59 | 2.11 | 6.44× | 15.64 / 4.62 | 356 / 216 |
+| restore `--limit 5000 --concurrency 4 --noRefresh` | 33.22 | 17.66 | 1.88× | 35.97 / 8.37 | 623 / 250 |
+| copy, same flags | 23.00 | 17.64 | 1.30× | 24.89 / 9.87 | 583 / 347 |
+
+Node's output and searchdump's are digest-equal in every dump scenario. Restore and copy are bound by the single
+engine node here (searchdump used about half a core); the CPU column (2.5–5.5× less) is the better guide.
+
+**Sequential speed suite, Elasticsearch 9.1.2 with TLS and basic auth** (100k `logs` docs, `--limit 2000`, 1 GB
+engine heap, medians of 3 runs after a warm-up; `scripts/perf/run-suite.sh`, run
+[`results/perf/20261109T011630-1176214`](results/perf/20261109T011630-1176214/summary.md)); wall-clock ratio
+searchdump / Node, lower is better:
+
+| Case | searchdump s | Node s | ratio |
+|---|---|---|---|
+| dump, plain | 0.803 | 1.607 | 0.50 |
+| dump, gzip | 0.704 | 4.517 | 0.16 |
+| dump, gzip in parts | 0.804 | 2.614 | 0.31 |
+| restore, plain | 4.818 | 5.924 | 0.81 |
+| restore, gzip parts | 5.225 | 8.038 | 0.65 |
+| copy | 4.821 | 5.926 | 0.81 |
+| mapping / settings dump | 0.102 | 0.302 | 0.34 |
+| multi dump, `--parallel 1` / 4 / 8 | 1.104 / 0.403 / 0.303 | 5.321 / 1.713 / 1.319 | 0.21 / 0.24 / 0.23 |
+| multi restore, `--parallel 1` / 4 / 8 | 7.224 / 2.009 / 1.311 | 12.849 / 3.732 / 2.636 | 0.56 / 0.54 / 0.50 |
+
+In the same run Node changed integers above 2^53 in the edge-case dump and exceeded the 1 GB memory cap restoring it;
+searchdump kept the values. Other engines' runs are under [`results/perf/`](results/perf/).
+
+**100k documents, OpenSearch 2.19.7** (512 MB heap, ≈ 42 MB of data; `scripts/benchmark/quick-vs-node.py`, medians of 3
+runs, L-808; raw: [`docs/bench/l808-opensearch-2.19.7-100k.json`](docs/bench/l808-opensearch-2.19.7-100k.json)):
+
+| Scenario | Node 6.125.1 | searchdump | Speed-up | CPU-s Node / searchdump |
 |---|---|---|---|---|
 | dump, defaults (`--limit 100`) | 2.85 s | 1.30 s | 2.2× | 2.07 / 0.32 |
 | dump `--limit 5000` | 1.00 s | 0.41 s | 2.4× | 1.22 / 0.19 |
@@ -766,18 +884,9 @@ run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L
 | restore `--limit 5000 --concurrency 4 --noRefresh` | 2.29 s | 0.76 s | 3.0× | 2.55 / 0.44 |
 | copy `--limit 5000 --concurrency 4 --noRefresh` | 1.77 s | 0.92 s | 1.9× | 1.96 / 0.54 |
 
-Restore and copy are bound by the single 512 MB OpenSearch node here; the CPU column (4.6–6.5× less, 3.6× for
-copy) is the more portable result.
-
-At 1M docs of about 1 KB (1.02 GB NDJSON, edgen `logs`, Elasticsearch 7.17 on a 2-shard index, no CPU cap;
-`scripts/load/nodecmp.py`, medians of 3 runs, [`results/local/L-808.md`](results/local/L-808.md)), the same flags
-give 1.6× (defaults), 2.0× (`--limit 5000`), 6.7× (`--fsCompress`), 1.9× (restore) and 1.3× (copy). Sliced
-dumps, which Node cannot do, give 3.5× (`--slices 2` = shards) and 6.4× (`--searchAfter --pit --slices 8`). The
-CPU ratio is 2.5–5.5× less. Node output and elasticdump-rs output are digest-equal in every dump scenario.
-
-Compression levels at 1M docs (1.01 GB of NDJSON, edgen `logs` profile, es717-plain; medians of 3 runs, zstd 19 one run;
-[`results/local/L-805.md`](results/local/L-805.md)). Per-core speed is the uncompressed MB divided by the CPU-s the codec
-adds over an uncompressed file-to-file run:
+**Compression levels** at 1M docs (1.01 GB of NDJSON, edgen `logs` profile, Elasticsearch 7.17; medians of 3 runs,
+zstd 19 one run; [`results/local/L-805.md`](results/local/L-805.md)). Per-core speed is the uncompressed MB divided by
+the CPU-s the codec adds over an uncompressed file-to-file run:
 
 | `--compressionType` / `--compressionLevel` | gzip 1 | gzip 6 (default) | gzip 9 | zstd 1 | zstd 3 (default) | zstd 9 | zstd 19 |
 |---|---|---|---|---|---|---|---|
@@ -787,61 +896,12 @@ adds over an uncompressed file-to-file run:
 
 A 1M-doc dump (about 7 s, bound by the cluster) took no longer with gzip 1/6 or zstd 1/3; gzip 9 and zstd 9 added
 30–40%, and zstd 19 took 9.5 minutes. With the zlib-rs backend, gzip level 9 writes a slightly *larger* file than level
-6, so it isn't worth using. zstd 9 gives the smallest file at a practical speed. Because of this, `--compressionLevel 9` with gzip and
-levels 19 and up with zstd print a warning on stderr (the level is still used; L-805a).
+6, so it isn't worth using; `--compressionLevel 9` with gzip and levels 19 and up with zstd print a warning.
 
-### Upstream benchmark (Elasticsearch 7.17, pre-rewrite `b32b6e9`)
-
-The maintainer benchmark (`scripts/benchmark/compare-with-elasticdump.sh`) exports a full index to JSONL with both `elasticdump-rs` and the original Node.js `elasticdump`, using each tool's Scroll and PIT modes. Setup: **2,000,000** synthetic log documents (an analyzed ~256-byte `message` plus typical keyword/date/integer fields), Elasticsearch 7.17, index of 2 primary shards / 0 replicas, force-merged to a single segment with the default codec (modelling a static, read-optimized dump target). Host: 32-core x86-64 Linux. Figures are the mean of 2 measured runs after 1 warmup, and throughput is wall-clock (documents ÷ elapsed time).
-
-#### Drop-in default (unsliced), pinned to 1 vs 4 CPU cores
-
-Both tools in their default configuration; each timed run is pinned to *N* CPU cores with `taskset` (the pinning applies to the dump process — Elasticsearch keeps all cores).
-
-Throughput (higher is better):
-
-| Export mode | 1 CPU core | 4 CPU cores |
-|---|---|---|
-| **elasticdump-rs**, scroll | 375,587 docs/s · 252.3 MiB/s | 339,271 docs/s · 227.9 MiB/s |
-| **elasticdump-rs**, PIT | 390,625 docs/s · 269.5 MiB/s | 343,938 docs/s · 237.3 MiB/s |
-| elasticdump (Node.js), scroll | 190,749 docs/s · 127.8 MiB/s | 212,314 docs/s · 142.2 MiB/s |
-| elasticdump (Node.js), PIT | 191,663 docs/s · 128.4 MiB/s | 210,970 docs/s · 141.3 MiB/s |
-
-Speedup of `elasticdump-rs` over `elasticdump`:
-
-| Metric | 1 CPU core | 4 CPU cores |
-|---|---|---|
-| Wall-clock, scroll | **1.97× faster** | **1.60× faster** |
-| Wall-clock, PIT | **2.04× faster** | **1.63× faster** |
-| CPU time consumed, scroll | 5.1× less | 5.2× less |
-| CPU time consumed, PIT | 4.4× less | 4.2× less |
-
-Notes:
-
-- **The unsliced `elasticdump-rs` run is bound by Elasticsearch round-trips, not the CPU.** It spends only \~2 s of CPU on a \~5 s dump driving a single sequential cursor, so extra cores do not raise throughput *in this mode* — the small differences between the 1- and 4-core columns are run-to-run variance. Slicing (below) is what engages more cores. The \~4–5× lower CPU cost leaves the machine free for other work either way.
-- **`elasticdump` is CPU-bound.** It needs ~10 s of CPU per dump; pinned to a single core it serialises to \~191k docs/s, and only recovers to \~211k docs/s once it can spread across more cores.
-
-#### Sliced retrieval (`--slices`)
-
-The tables above run `elasticdump-rs` with a single retrieval cursor. Passing `--slices` splits the dump into parallel per-slice cursors and changes the picture entirely — same 2M-doc index, no CPU pinning:
-
-| Export mode | Throughput | vs Node.js elasticdump |
-|---|---|---|
-| **elasticdump-rs**, PIT, `--slices 16` | 2,030,457 docs/s · 1.4 GiB/s | **9.66× faster**, 2.7× less CPU |
-| **elasticdump-rs**, scroll, `--slices 2` | 788,955 docs/s · 530.0 MiB/s | **3.77× faster**, 5.4× less CPU |
-| elasticdump (Node.js), PIT | 210,084 docs/s · 140.7 MiB/s | — (no slicing support) |
-| elasticdump (Node.js), scroll | 209,096 docs/s · 140.1 MiB/s | — (no slicing support) |
-
-Reproduce with e.g. `scripts/benchmark/compare-with-elasticdump.sh --rs-slices 16 --search-types pit`.
-
-Tuning guidance from a slice sweep on this host (2-shard index; the multipliers below are relative to the sweep's own unpinned unsliced baseline of ~380–395k docs/s, not the core-pinned tables above):
-
-- **PIT tolerates — and rewards — more slices than shards.** Throughput rose through 4/8/16 slices (~2.9×/4.2×/5.1×) and levelled off around 16 on this host (24 slices measured flat, 32 slightly slower); Elasticsearch slices PIT searches with an efficient partitioning strategy, and `elasticdump-rs` already defaults PIT to the recommended `_shard_doc` sort.
-- **Scroll slicing should match the primary-shard count.** `--slices 2` on the 2-shard index scaled near-perfectly (1.94×), but over-slicing scroll is a trap: 4 slices on 2 shards measured *slower than unsliced* (0.98×), because each shard then evaluates a per-document `_id`-hash slice filter.
-- **Keep `--workers` ≥ `--slices`.** The tool clamps workers to `min(workers, slices)`; under-provisioning workers at 8 slices cost ~6% (4 workers) to ~26% (2 workers). The benchmark script matches workers to slices automatically.
-- Sliced output interleaves across slices — global document order is not preserved (see the ordering note above).
-
-Absolute numbers depend heavily on your Elasticsearch cluster, network, disk, and page-cache state. Treat the ratios as the portable result and re-run the script in your own environment.
+Tuning: sliced retrieval (`--slices`) is what uses more cores. With scroll, match `--slices` to the primary-shard
+count (more slices than shards adds a per-document slice filter); PIT (`--searchAfter --pit`) tolerates more slices
+than shards. Keep `--workers` ≥ `--slices`. Sliced output does not keep a global document order.
+`scripts/benchmark/compare-with-elasticdump.sh` (from upstream elasticdump-rs) compares both tools on your own cluster.
 
 ## Testing
 
@@ -852,7 +912,7 @@ integration matrix, load matrix, extra checks and the speed suite), run
 speed baselines, and logs plus a summary go to `results/local-testing/<timestamp>/`.
 
 The [sequential speed suite](scripts/perf/README.md) benchmarks dump/restore, copy,
-codecs/splits, metadata and multielasticdump parallelism against every pinned engine,
+codecs/splits, metadata and searchdump-multi parallelism against every pinned engine,
 with correctness gates, per-engine baselines and Node 6.125.1 comparisons:
 `./scripts/perf/run-suite.sh --dry-run` (plan) or `./scripts/perf/run-suite.sh` (rootless Podman).
 Real-engine performance runs and initial baselines are pending.
@@ -862,8 +922,8 @@ Tests are split into tiers (`.config/nextest.toml`; each tier writes JUnit to `t
 ```bash
 cargo nextest run --workspace --profile unit       # T0 unit tests (all crates)
 cargo nextest run --workspace --profile contract   # T1 CLI contract / injection / secrets / tool tests (mocks only)
-cargo nextest run --workspace --profile it --features elasticdump-rs/it      # T2, needs scripts/it/up.sh
-cargo nextest run --workspace --profile load --features elasticdump-rs/load  # T3 live long tests
+cargo nextest run --workspace --profile it --features searchdump-rs/it      # T2, needs scripts/it/up.sh
+cargo nextest run --workspace --profile load --features searchdump-rs/load  # T3 live long tests
 scripts/load/run.sh L0 dump-restore-logs           # load harness (scripts/load/README.md)
 cargo test --lib --bins --test cli_contract        # plain cargo test still works (T0 + part of T1)
 scripts/it/run.sh all                  # podman: builds first, then every profile below
@@ -913,13 +973,21 @@ run when `/tmp/ed/node_modules/.bin/elasticdump` exists.
 
 ## Acknowledgements
 
-elasticdump-rs is a compatible re-implementation of
-[elasticsearch-dump](https://github.com/elasticsearch-dump/elasticsearch-dump) (Apache-2.0). Its behaviour and
-defaults were studied from that project's source. Some test fixtures are reused unchanged under Apache-2.0; see
-[`tests/fixtures/node`](tests/fixtures/node/SOURCE.md).
+- [elasticdump-rs](https://github.com/tenyears-tech/elasticdump-rs) by TenYears (MIT), the Rust project this one was
+  forked from and is a code derivative of. Its license and copyright notice are in [`LICENSE`](LICENSE).
+- [elasticsearch-dump](https://github.com/elasticsearch-dump/elasticsearch-dump) (Node elasticdump, Apache-2.0),
+  whose CLI, file formats and behaviour this tool follows. No Node code is included; twelve test fixtures are reused
+  unchanged under Apache-2.0 ([`tests/fixtures/node`](tests/fixtures/node/SOURCE.md)).
 
 ## License
 
-MIT. See `LICENSE`. Third-party material (the reused test fixtures, the bundled mimalloc and jemalloc C code, the
-Rust crates) and its licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md); regenerate the
-crate list with `scripts/third-party-notices.py` after a dependency change.
+MIT, see [`LICENSE`](LICENSE) (the upstream elasticdump-rs license, Copyright (c) 2025 TenYears, which also covers
+this derivative). Third-party material (the reused test fixtures, the bundled mimalloc and jemalloc C code, the Rust
+crates) and its licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md); regenerate the crate list
+with `scripts/third-party-notices.py` after a dependency change.
+
+## Trademarks
+
+Elasticsearch is a trademark of Elasticsearch B.V., registered in the U.S. and in other countries. OpenSearch is a
+trademark of LF Projects, LLC. searchdump-rs is an independent project and is not affiliated with, endorsed by or
+sponsored by Elasticsearch B.V., LF Projects, LLC, or the elasticsearch-dump project.
