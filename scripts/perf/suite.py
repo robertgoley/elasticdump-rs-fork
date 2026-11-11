@@ -342,6 +342,22 @@ def node_auth_ini(user, pw):
     return f"user={json.dumps(user)}\npassword={json.dumps(pw)}\n"
 
 
+def engine_port():
+    """Loopback port the engine is published on (PERF_ENGINE_PORT, default 19222)."""
+    v = os.environ.get("PERF_ENGINE_PORT", "19222")
+    if not v.isdigit() or not 1 <= int(v) <= 65535:
+        raise ValueError(f"PERF_ENGINE_PORT must be a TCP port, got {v!r}")
+    return int(v)
+
+
+def port_in_use(port, host="127.0.0.1"):
+    """True when something already listens on host:port (a leftover engine makes every case fail)."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
 class EngineRun:
     def __init__(self, a, plan, engine, tools, directory):
         self.a, self.plan, self.entry, self.tools, self.directory = a, plan, engine, tools, directory
@@ -359,12 +375,16 @@ class EngineRun:
         _place_mb = int(float(_u[:-1]) * (1024 if _u.endswith("g") else 1)) if _u[-1] in "gm" else int(_u)
         cmem = place_cmem if _place_mb >= need_cmem_mb else f"{need_cmem_mb}m"
         self.env.update(IT_DIR=str(self.work / "it"), IT_LOCK_HELD="1", RUN_ID=f"perf-{os.getpid()}-{engine['engine']}",
-                        ES_HEAP=f"{self.heap_mb}m", OS_HEAP=f"{self.heap_mb}m", PORT="19222",
+                        ES_HEAP=f"{self.heap_mb}m", OS_HEAP=f"{self.heap_mb}m", PORT=str(engine_port()),
                         IT_CONTAINER_MEM=cmem, IT_CONTAINER_CPUS=str(os.cpu_count()))
         self.result = dict(engine=engine["engine"], image=engine["image"], runs=[], summary=[], failures=[], seeds=[])
         self.cl = None
 
     def start(self):
+        port = engine_port()
+        if port_in_use(port):
+            raise RuntimeError(f"engine port 127.0.0.1:{port} is already in use by another process; "
+                               "stop it or set PERF_ENGINE_PORT to a free port")
         checked([ROOT / "scripts/it/up.sh", self.profile], env=self.env, stdout=subprocess.DEVNULL)
         ce = R.sh_env(str(self.work / "it/env"))
         self.url = ce["IT_ES_URL"]

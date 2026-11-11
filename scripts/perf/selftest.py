@@ -221,6 +221,23 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(res['failures'], [])
             self.assertEqual(res['summary'][0]['node_status'], 'NODE_TIMEOUT')
 
+    def test_engine_port_override_and_busy_port(self):
+        import socket
+        with patch.dict(S.os.environ, {}, clear=False):
+            S.os.environ.pop('PERF_ENGINE_PORT', None)
+            self.assertEqual(S.engine_port(), 19222)
+            S.os.environ['PERF_ENGINE_PORT'] = '19333'
+            self.assertEqual(S.engine_port(), 19333)
+            S.os.environ['PERF_ENGINE_PORT'] = 'x'
+            with self.assertRaises(ValueError):
+                S.engine_port()
+        with socket.socket() as srv:
+            srv.bind(('127.0.0.1', 0))
+            srv.listen(1)
+            busy = srv.getsockname()[1]
+            self.assertTrue(S.port_in_use(busy))
+        self.assertFalse(S.port_in_use(busy))
+
     def test_node_auth_file_is_ini(self):
         text = S.node_auth_ini('admin', 'p;w#d="x"')
         self.assertEqual(text, 'user="admin"\npassword="p;w#d=\\"x\\""\n')

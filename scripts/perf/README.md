@@ -76,7 +76,9 @@ Offline `--dry-run`/`--help` additionally need host Python **3.11+**, but do not
    path so remote bind mounts resolve correctly. The controller uses `--network=host`;
    **it never combines host networking with `--userns=keep-id`**. Image builds and Cargo/npm
    network steps consequently use the host resolver, avoiding Ubuntu's default-network DNS issue.
-   Engines keep the existing loopback-only published port (19222); they need no external DNS.
+   Engines keep the existing loopback-only published port (19222, or `PERF_ENGINE_PORT`); they need no external DNS.
+   If that port is already taken (e.g. a leftover engine), each engine fails fast with a clear message
+   instead of a podman/pasta bind error on every case.
 
 Optional env variables (no credentials belong in this repository):
 
