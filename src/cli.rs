@@ -463,6 +463,17 @@ pub struct Cli {
     #[arg(long = "httpAuthFile")]
     pub http_auth_file: Option<String>,
 
+    /// Extension (L-809a): INI file with settings and credentials for an s3://, b2:// or sftp://
+    /// --input (key=, secret=, endpoint=, region=, key_file=, sse_c_key_file=, ...), like
+    /// --httpAuthFile; default $ELASTICDUMP_INPUT_STORAGE_CONFIG
+    #[arg(long = "inputStorageConfig")]
+    pub input_storage_config: Option<String>,
+
+    /// Extension (L-809a): the same for an s3://, b2:// or sftp:// --output; default
+    /// $ELASTICDUMP_OUTPUT_STORAGE_CONFIG
+    #[arg(long = "outputStorageConfig")]
+    pub output_storage_config: Option<String>,
+
     /// Basic-auth username for the input (overrides the URL, --httpAuthFile and env); alias --username
     #[arg(long = "input-username", alias = "username")]
     pub input_username: Option<String>,
@@ -710,7 +721,11 @@ const OUT_OF_SCOPE: &[(&str, OosAction, &str)] = &[
         OosAction::Error,
         "OpenSearch Serverless is not supported",
     ),
-    ("s3*", OosAction::Warn, "S3 is not supported"),
+    (
+        "s3*",
+        OosAction::Warn,
+        "Node's --s3* flags are not supported; s3:// URLs take their settings from AWS_*/ELASTICDUMP_S3_* variables or --inputStorageConfig/--outputStorageConfig (README, OpenDAL storage)",
+    ),
     ("csv*", OosAction::Warn, "CSV is not supported"),
     (
         "heapSnapshot",

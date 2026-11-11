@@ -11,6 +11,7 @@ pub mod memplan;
 pub mod meta;
 pub mod output;
 pub mod pipeline;
+pub mod remote;
 pub mod rename;
 pub mod retrieval;
 pub mod secrets;
@@ -71,6 +72,7 @@ fn same_target(
         Some(parent.canonicalize().ok()?.join(name))
     }
     match (input, output) {
+        (Endpoint::Remote(a), Endpoint::Remote(b)) => a == b,
         (Endpoint::File(a), Endpoint::File(b)) => match (canon(a), canon(b)) {
             (Some(a), Some(b)) => a == b,
             _ => a == b,
@@ -210,7 +212,9 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
     if let Endpoint::File(p) = output {
         output::check_output_path(p).map_err(|e| usage(format!("{e:#}")))?;
     }
-    if (cli.file_size.is_some() || cli.max_rows.is_some()) && !matches!(output, Endpoint::File(_)) {
+    if (cli.file_size.is_some() || cli.max_rows.is_some())
+        && !matches!(output, Endpoint::File(_) | Endpoint::Remote(_))
+    {
         return Err(usage("--fileSize/--maxRows require a file --output"));
     }
     if !input.is_es() && !output.is_es() && cli.r#type != DumpType::Data {
@@ -271,7 +275,17 @@ fn validate(cli: &Cli, input: &Endpoint, output: &Endpoint) -> Result<()> {
 fn file_path(ep: &Endpoint) -> Option<PathBuf> {
     match ep {
         Endpoint::File(p) => Some(p.clone()),
+        // L-809a: the object key; split parts are named from it like local files
+        Endpoint::Remote(r) => Some(PathBuf::from(&r.key)),
         _ => None,
+    }
+}
+
+/// File-style input: stdin, a local file or an OpenDAL object (L-809a).
+fn input_loc(ep: &Endpoint) -> pipeline::file_source::InputLoc {
+    match ep {
+        Endpoint::Remote(r) => pipeline::file_source::InputLoc::Remote(r.clone()),
+        other => file_path(other).into(),
     }
 }
 
@@ -382,6 +396,10 @@ fn file_options(cli: &Cli, output: &Endpoint) -> Result<pipeline::file_sink::Fil
         split,
         throttle: throttle(cli),
         human,
+        remote: match output {
+            Endpoint::Remote(r) => Some(r.clone()),
+            _ => None,
+        },
     })
 }
 
@@ -775,7 +793,7 @@ async fn run_meta(
         info: src_info,
         index: src_index,
         doc_type: src_doc_type,
-        file: file_path(input),
+        file: input_loc(input),
     };
     // read (and validate) the source before touching the target
     let doc = meta::read(&src, &opts).await?;
@@ -931,7 +949,7 @@ async fn transfer(
                 }
                 inp => {
                     pipeline::file_to_sink(
-                        file_path(inp),
+                        input_loc(inp),
                         cli.limit,
                         (cli.max_doc_mb > 0).then_some(cli.max_doc_mb << 20),
                         window,
@@ -1066,6 +1084,10 @@ pub async fn run() -> Result<()> {
         console::set_colors_enabled(true);
     }
 
+    remote::set_config_files(
+        cli.input_storage_config.clone().map(PathBuf::from),
+        cli.output_storage_config.clone().map(PathBuf::from),
+    );
     let mut input = endpoint::parse(&cli.input, Direction::Input, cli.input_index.as_deref())
         .map_err(|e| usage(format!("{e:#}")))?;
     let mut output = endpoint::parse(&cli.output, Direction::Output, cli.output_index.as_deref())

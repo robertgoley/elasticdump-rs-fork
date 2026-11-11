@@ -1,0 +1,4 @@
+# cargo audit (CI security job). Same advisory exceptions as deny.toml [advisories].ignore,
+# with the reasons there (L-809a, opendal 0.57 under rust-version 1.85; owner decision pending).
+[advisories]
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195", "RUSTSEC-2026-0385"]

@@ -12,6 +12,9 @@
   "const-random-macro@0.1.16": [
    "proc-macro"
   ],
+  "crc32c@0.6.9": [
+   "build.rs"
+  ],
   "crc32fast@1.5.3": [
    "build.rs"
   ],
@@ -25,7 +28,13 @@
   "defmt@1.2.0": [
    "build.rs"
   ],
+  "derive_destructure2@0.1.3": [
+   "proc-macro"
+  ],
   "displaydoc@0.2.7": [
+   "proc-macro"
+  ],
+  "futures-macro@0.3.34": [
    "proc-macro"
   ],
   "generic-array@0.14.7": [
@@ -49,6 +58,16 @@
   "jiff-static@0.2.38": [
    "proc-macro"
   ],
+  "jni-macros@0.22.4": [
+   "build.rs",
+   "proc-macro"
+  ],
+  "jni-sys-macros@0.4.1": [
+   "proc-macro"
+  ],
+  "jni@0.22.4": [
+   "build.rs"
+  ],
   "libc@0.2.191": [
    "build.rs"
   ],
@@ -58,11 +77,17 @@
   "munge_macro@0.4.7": [
    "proc-macro"
   ],
+  "num-derive@0.5.1": [
+   "proc-macro"
+  ],
   "num-traits@0.2.19": [
    "build.rs"
   ],
   "parking_lot_core@0.9.12": [
    "build.rs"
+  ],
+  "pin-project-internal@1.1.13": [
+   "proc-macro"
   ],
   "portable-atomic-util@0.2.8": [
    "build.rs"
@@ -131,6 +156,9 @@
   "tokio-macros@2.7.2": [
    "proc-macro"
   ],
+  "tracing-attributes@0.1.31": [
+   "proc-macro"
+  ],
   "wasm-bindgen-macro@0.2.129": [
    "proc-macro"
   ],
@@ -194,12 +222,12 @@
  },
  "counts": {
   "all": {
-   "build.rs": 47,
-   "proc-macro": 18
+   "build.rs": 50,
+   "proc-macro": 25
   },
   "linux": {
-   "build.rs": 27,
-   "proc-macro": 10
+   "build.rs": 32,
+   "proc-macro": 16
   }
  },
  "linux": {
@@ -215,19 +243,31 @@
   "const-random-macro@0.1.16": [
    "proc-macro"
   ],
+  "crc32c@0.6.9": [
+   "build.rs"
+  ],
   "crc32fast@1.5.3": [
    "build.rs"
   ],
   "crunchy@0.2.4": [
    "build.rs"
   ],
+  "derive_destructure2@0.1.3": [
+   "proc-macro"
+  ],
   "displaydoc@0.2.7": [
+   "proc-macro"
+  ],
+  "futures-macro@0.3.34": [
    "proc-macro"
   ],
   "generic-array@0.14.7": [
    "build.rs"
   ],
   "getrandom@0.3.4": [
+   "build.rs"
+  ],
+  "getrandom@0.4.3": [
    "build.rs"
   ],
   "httparse@1.10.1": [
@@ -244,6 +284,18 @@
   ],
   "libmimalloc-sys@0.1.49": [
    "build.rs"
+  ],
+  "num-derive@0.5.1": [
+   "proc-macro"
+  ],
+  "num-traits@0.2.19": [
+   "build.rs"
+  ],
+  "parking_lot_core@0.9.12": [
+   "build.rs"
+  ],
+  "pin-project-internal@1.1.13": [
+   "proc-macro"
   ],
   "portable-atomic@1.15.0": [
    "build.rs"
@@ -269,6 +321,10 @@
   "rustls@0.23.46": [
    "build.rs"
   ],
+  "rustversion@1.0.23": [
+   "build.rs",
+   "proc-macro"
+  ],
   "serde@1.0.229": [
    "build.rs"
   ],
@@ -291,6 +347,9 @@
    "build.rs"
   ],
   "tokio-macros@2.7.2": [
+   "proc-macro"
+  ],
+  "tracing-attributes@0.1.31": [
    "proc-macro"
   ],
   "yoke-derive@0.8.4": [
@@ -320,16 +379,24 @@
   "anyhow@1.0.104": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "clap_derive@4.6.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "const-random-macro@0.1.16": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "crc32c@0.6.9": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crc32fast@1.5.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "crunchy@0.2.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "derive_destructure2@0.1.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "displaydoc@0.2.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "futures-macro@0.3.34": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "generic-array@0.14.7": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "getrandom@0.3.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "getrandom@0.4.3": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "httparse@1.10.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "icu_normalizer_data@2.1.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "icu_properties_data@2.1.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "libc@0.2.191": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "libmimalloc-sys@0.1.49": "L-808b 2026-11-01: reviewed (build.rs compiles the vendored mimalloc C with cc; default allocator on glibc Linux, see docs/SUPPLY-CHAIN.md)",
+  "num-derive@0.5.1": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "num-traits@0.2.19": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "parking_lot_core@0.9.12": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "pin-project-internal@1.1.13": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "portable-atomic@1.15.0": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "proc-macro2@1.0.107": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "quote@1.0.47": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
@@ -338,6 +405,7 @@
   "ring@0.17.14": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "rustix@1.1.6": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "rustls@0.23.46": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "rustversion@1.0.23": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "serde@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "serde_core@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "serde_derive@1.0.229": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
@@ -346,6 +414,7 @@
   "thiserror@2.0.21": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "tiny-keccak@2.0.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "tokio-macros@2.7.2": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
+  "tracing-attributes@0.1.31": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "yoke-derive@0.8.4": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "zerocopy@0.8.63": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",
   "zerofrom-derive@0.1.8": "L-206 baseline 2026-10-29: reviewed at this version (see docs/SUPPLY-CHAIN.md)",

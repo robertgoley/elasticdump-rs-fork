@@ -7,7 +7,6 @@
 //! which Node cannot read) and accepts both on restore.
 
 use std::io::Read;
-use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
@@ -25,8 +24,12 @@ pub enum LineEncoding {
 /// Read the first JSON value of a file / stdin (gzip and zstd auto-detected).
 /// Further values are ignored with a warning (elasticdump ignores them
 /// silently).
-pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
-    let mut reader = crate::pipeline::file_source::open_reader(path.as_ref())?;
+pub fn read_first_value(input: impl Into<crate::pipeline::file_source::InputLoc>) -> Result<Value> {
+    let input = input.into();
+    let mut reader = crate::pipeline::file_source::open_input_counted(
+        &input,
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+    )?;
     let mut splitter = ValueSplitter::new();
     let mut buf = vec![0u8; 256 * 1024];
     let mut first: Option<Value> = None;
@@ -48,10 +51,7 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
                     None => v.to_vec(),
                 };
                 first = Some(serde_json::from_slice(&v).map_err(|e| {
-                    let name = path
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "stdin".into());
+                    let name = input.name();
                     let hint = if e.to_string().contains("recursion limit") {
                         " (nested more than 128 levels deep; Elasticsearch and OpenSearch refuse mappings deeper than index.mapping.depth.limit, 20 by default)"
                     } else {
@@ -65,9 +65,10 @@ pub fn read_first_value(path: Option<PathBuf>) -> Result<Value> {
             return first.ok_or_else(|| {
                 anyhow!(
                     "Input {} is empty (no JSON value: empty, whitespace or a byte-order mark only); a metadata restore needs the dumped object",
-                    path.as_ref()
-                        .map(|p| format!("'{}'", p.display()))
-                        .unwrap_or_else(|| "stdin".into())
+                    match &input {
+                        crate::pipeline::file_source::InputLoc::Stdin => "stdin".into(),
+                        other => format!("'{}'", other.name()),
+                    }
                 )
             });
         }

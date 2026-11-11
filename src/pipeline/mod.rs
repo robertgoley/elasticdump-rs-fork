@@ -7,8 +7,6 @@ pub mod json_split;
 pub mod sink;
 pub mod window;
 
-use std::path::PathBuf;
-
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +18,7 @@ pub use window::DocWindow;
 /// `--offset`/`--size`; documents over `max_doc` bytes (`--maxDocMb`) are
 /// a fatal error. Returns the number of documents written.
 pub async fn file_to_sink(
-    input: Option<PathBuf>,
+    input: impl Into<file_source::InputLoc>,
     limit: usize,
     max_doc: Option<usize>,
     mut window: DocWindow,

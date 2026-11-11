@@ -14,6 +14,34 @@ use tokio::{
 enum SinkWriter {
     Stdout(TokioBufWriter<tokio::io::Stdout>),
     File(TokioBufWriter<tokio_fs::File>),
+    /// L-809a: an OpenDAL writer (S3 multipart upload, B2 large file, SFTP, fs).
+    #[cfg(feature = "opendal")]
+    Remote(RemoteWriter),
+}
+
+/// Batches small writes before handing them to OpenDAL (which chunks them again into
+/// multipart parts of `chunk_mb`).
+#[cfg(feature = "opendal")]
+struct RemoteWriter {
+    writer: opendal::Writer,
+    pending: Vec<u8>,
+}
+
+#[cfg(feature = "opendal")]
+const REMOTE_BATCH: usize = 1 << 20;
+
+#[cfg(feature = "opendal")]
+impl RemoteWriter {
+    async fn push(&mut self) -> std::io::Result<()> {
+        if !self.pending.is_empty() {
+            let out = std::mem::replace(&mut self.pending, Vec::with_capacity(REMOTE_BATCH));
+            self.writer
+                .write(out)
+                .await
+                .map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    }
 }
 
 impl SinkWriter {
@@ -21,6 +49,14 @@ impl SinkWriter {
         match self {
             SinkWriter::Stdout(writer) => writer.write_all(buffer).await,
             SinkWriter::File(writer) => writer.write_all(buffer).await,
+            #[cfg(feature = "opendal")]
+            SinkWriter::Remote(w) => {
+                w.pending.extend_from_slice(buffer);
+                if w.pending.len() >= REMOTE_BATCH {
+                    w.push().await?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -28,6 +64,8 @@ impl SinkWriter {
         match self {
             SinkWriter::Stdout(writer) => writer.flush().await,
             SinkWriter::File(writer) => writer.flush().await,
+            #[cfg(feature = "opendal")]
+            SinkWriter::Remote(w) => w.push().await,
         }
     }
 }
@@ -42,6 +80,11 @@ enum OutputMode {
         /// the staged file before commit. Always `None` off unix.
         prior_mode: Option<u32>,
     },
+    /// L-809a: an object written through OpenDAL. It becomes visible when the writer is
+    /// closed (S3 completes the multipart upload; fs renames from its temp file); until
+    /// then an abort leaves nothing under the key.
+    #[cfg_attr(not(feature = "opendal"), allow(dead_code))]
+    Remote(crate::remote::Remote),
 }
 
 pub struct OutputTarget {
@@ -67,6 +110,9 @@ impl OutputTarget {
             OutputMode::StagedFile { final_path, .. } => format!(
                 "writing the output file '{}' failed (nothing is committed under that name)",
                 final_path.display()
+            ),
+            OutputMode::Remote(r) => format!(
+                "writing {r} failed (the upload is aborted; nothing is stored under that key)"
             ),
         }
     }
@@ -156,12 +202,22 @@ impl OutputTarget {
                     final_path,
                     staging_path,
                     overwrite,
+                    remote: None,
                 }))
             }
+            OutputMode::Remote(r) => seal_remote(writer, r).await,
         }
     }
 
     pub async fn abort(mut self) {
+        #[cfg(feature = "opendal")]
+        if let (Some(SinkWriter::Remote(mut w)), OutputMode::Remote(r)) =
+            (self.writer.take(), &self.mode)
+        {
+            if let Err(e) = w.writer.abort().await {
+                log::warn!("could not abort the upload of {r}: {e}");
+            }
+        }
         self.close_writer();
 
         if let OutputMode::StagedFile { staging_path, .. } = &self.mode {
@@ -185,6 +241,9 @@ pub struct SealedOutput {
     final_path: PathBuf,
     staging_path: PathBuf,
     overwrite: bool,
+    /// L-809a: an object already stored through OpenDAL; commit is a no-op and discard
+    /// deletes it.
+    remote: Option<crate::remote::Remote>,
 }
 
 impl SealedOutput {
@@ -192,9 +251,10 @@ impl SealedOutput {
         &self.final_path
     }
 
-    /// Whether committing may replace an existing file (`--overwrite`).
+    /// Whether committing may replace an existing local file (`--overwrite`). Remote objects
+    /// are replaced by the upload itself, so there is nothing to move aside.
     pub fn replaces(&self) -> bool {
-        self.overwrite
+        self.overwrite && self.remote.is_none()
     }
 
     /// Move the staged file into place (rename with `--overwrite`, otherwise
@@ -204,7 +264,11 @@ impl SealedOutput {
             final_path,
             staging_path,
             overwrite,
+            remote,
         } = self;
+        if remote.is_some() {
+            return Ok(());
+        }
         let commit_result = if overwrite {
             tokio_fs::rename(&staging_path, &final_path)
                 .await
@@ -254,7 +318,103 @@ impl SealedOutput {
 
     /// Discard the staged file.
     pub async fn discard(self) {
-        remove_staging(&self.staging_path).await;
+        match &self.remote {
+            Some(r) => delete_remote(r).await,
+            None => remove_staging(&self.staging_path).await,
+        }
+    }
+}
+
+/// Close an OpenDAL writer: the object is stored under its key from here on.
+#[cfg(feature = "opendal")]
+async fn seal_remote(
+    writer: Option<SinkWriter>,
+    r: crate::remote::Remote,
+) -> Result<Option<SealedOutput>> {
+    let Some(SinkWriter::Remote(mut w)) = writer else {
+        return Err(anyhow!("{r} had no writer to finalize"));
+    };
+    if let Err(e) = w.push().await {
+        let _ = w.writer.abort().await;
+        return Err(anyhow!("writing {r} failed: {e}"));
+    }
+    if let Err(e) = w.writer.close().await {
+        let _ = w.writer.abort().await;
+        return Err(anyhow!("finishing the upload of {r} failed: {e}"));
+    }
+    Ok(Some(SealedOutput {
+        final_path: PathBuf::from(r.to_string()),
+        staging_path: PathBuf::new(),
+        overwrite: false,
+        remote: Some(r),
+    }))
+}
+
+#[cfg(not(feature = "opendal"))]
+async fn seal_remote(
+    _writer: Option<SinkWriter>,
+    r: crate::remote::Remote,
+) -> Result<Option<SealedOutput>> {
+    Err(r.unsupported())
+}
+
+/// Best effort: remove an object a failed run had already stored (a split part).
+async fn delete_remote(r: &crate::remote::Remote) {
+    #[cfg(feature = "opendal")]
+    {
+        let res = match r.operator() {
+            Ok(op) => op.delete(&r.key).await.map_err(anyhow::Error::from),
+            Err(e) => Err(e),
+        };
+        match res {
+            Ok(()) => log::info!("removed {r} again (the run failed)"),
+            Err(e) => log::warn!("could not remove {r} after the run failed: {e:#}"),
+        }
+    }
+    #[cfg(not(feature = "opendal"))]
+    let _ = r;
+}
+
+/// L-809a: open an OpenDAL writer for `r`. Without `--overwrite` an existing object is
+/// refused before anything is uploaded (checked with a stat; there is no atomic
+/// create-if-absent on every backend).
+pub async fn create_remote_target(
+    r: crate::remote::Remote,
+    overwrite: bool,
+) -> Result<OutputTarget> {
+    #[cfg(feature = "opendal")]
+    {
+        let op = r.operator()?;
+        if !overwrite {
+            match op.exists(&r.key).await {
+                Ok(false) => {}
+                Ok(true) => bail!("{r} already exists, quitting (use --overwrite to replace it)"),
+                Err(e) => {
+                    return Err(anyhow!(
+                        "could not check whether {r} exists: {}",
+                        r.explain(e)
+                    ));
+                }
+            }
+        }
+        let writer = op
+            .writer_with(&r.key)
+            .chunk(r.chunk_bytes())
+            .concurrent(r.concurrent())
+            .await
+            .map_err(|e| anyhow!("could not start writing {r}: {}", r.explain(e)))?;
+        Ok(OutputTarget {
+            writer: Some(SinkWriter::Remote(RemoteWriter {
+                writer,
+                pending: Vec::with_capacity(REMOTE_BATCH),
+            })),
+            mode: OutputMode::Remote(r),
+        })
+    }
+    #[cfg(not(feature = "opendal"))]
+    {
+        let _ = overwrite;
+        Err(r.unsupported())
     }
 }
 

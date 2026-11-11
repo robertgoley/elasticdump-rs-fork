@@ -18,7 +18,15 @@ version = 2
 yanked = "deny"
 unmaintained = "all"
 unsound = "all"
-ignore = []
+ignore = [
+    # L-809a (opendal 0.57, the last release that builds with our rust-version 1.85): owner
+    # decision pending, see FEATURES-TODO "OpenDAL" row. Both are fixed by raising
+    # rust-version to 1.91 and moving to opendal >= 0.58 (quick-xml 0.41) / ctutils >= 0.4.4
+    # (needs 1.87).
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.39 in opendal-core 0.57: quadratic duplicate-attribute check; only parses XML replies of the S3 endpoint the user configured (DoS by a hostile endpoint only); fixed in 0.41 (opendal >= 0.58 needs Rust 1.91)" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.39 in opendal-core 0.57: NsReader namespace allocation; same exposure as RUSTSEC-2026-0194 (configured S3 endpoint only)" },
+    { id = "RUSTSEC-2026-0385", reason = "ctutils 0.4.2 (digest 0.11 -> hmac 0.13 in reqsign, SigV4 signing): non-constant-time masks while signing locally; no remote timing oracle on the signing key; fix 0.4.4 needs Rust 1.87" },
+]
 
 [licenses]
 version = 2
@@ -51,6 +59,20 @@ skip = [
     { crate = "hashbrown@0.14.5", reason = "rust-ini -> ordered-multimap 0.7" },
     # const-random-macro (via rust-ini -> dlv-list) still on getrandom 0.2.
     { crate = "getrandom@0.2.17", reason = "rust-ini -> dlv-list -> const-random" },
+    # L-809a: opendal 0.57 (the OpenDAL storage path) brings its own HTTP client and the
+    # RustCrypto 0.11 generation (reqsign for S3 SigV4); our side stays on reqwest 0.12 and
+    # the 0.10 RustCrypto stack of pkcs8 (encrypted --key). Pure Rust, rustls/ring only.
+    { crate = "reqwest@0.13.5", reason = "opendal-core 0.57 HTTP client (L-809a); ours is 0.12" },
+    { crate = "quick-xml@0.39.4", reason = "opendal-core 0.57; reqsign-aws-core uses 0.41" },
+    { crate = "sha2@0.11.0", reason = "reqsign (opendal S3 SigV4); pkcs5 uses 0.10" },
+    { crate = "hmac@0.13.0", reason = "reqsign (opendal S3 SigV4); pbkdf2 uses 0.12" },
+    { crate = "digest@0.11.3", reason = "reqsign (opendal S3 SigV4); RustCrypto 0.10 stack uses 0.10" },
+    { crate = "crypto-common@0.2.2", reason = "RustCrypto 0.11 stack via reqsign (L-809a)" },
+    { crate = "block-buffer@0.12.1", reason = "RustCrypto 0.11 stack via reqsign (L-809a)" },
+    { crate = "const-oid@0.10.3", reason = "RustCrypto 0.11 stack via reqsign (L-809a)" },
+    { crate = "cpufeatures@0.3.1", reason = "RustCrypto 0.11 stack via reqsign (L-809a); aes uses 0.2" },
+    { crate = "getrandom@0.4.3", reason = "tempfile via openssh (opendal sftp, L-809a); ahash uses 0.3" },
+    { crate = "syn@2.0.119", reason = "derive_destructure2 (openssh-sftp-client, L-809a); clap_derive uses syn 3" },
 ]
 # Crates we never want in the graph: OpenSSL / native TLS, libgit2, other HTTP
 # clients (reqwest/hyper is the only one), libcurl.
@@ -81,6 +103,7 @@ interpreted = "deny"
 allow-build-scripts = [
     { crate = "ahash" }, # cfg probe (rustc version / target features)
     { crate = "anyhow" }, # rustc feature probe (backtrace)
+    { crate = "crc32c" }, # rustc version probe + CRC tables into OUT_DIR (opendal S3, L-809a)
     { crate = "crc32fast" }, # cfg probe
     { crate = "crunchy" }, # generates unrolling macros (OUT_DIR only)
     { crate = "generic-array" }, # rustc version probe
@@ -99,6 +122,7 @@ allow-build-scripts = [
     { crate = "ring" }, # NATIVE: compiles C/asm via cc (SUP-021 allow-list)
     { crate = "rustix" }, # cfg probe (linux_raw backend)
     { crate = "rustls" }, # cfg probe
+    { crate = "rustversion" }, # runs `$RUSTC --version` (proc-macro via arc-swap; opendal sftp, L-809a)
     { crate = "serde" }, # rustc version probe
     { crate = "serde_core" }, # rustc version probe
     { crate = "serde_json" }, # cfg probe

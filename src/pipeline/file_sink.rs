@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
-use crate::output::{OutputTarget, SealedOutput, create_output_target};
+use crate::output::{OutputTarget, SealedOutput, create_output_target, create_remote_target};
 
 /// Pending compressed bytes are handed to the file in chunks of this size.
 const GZ_DRAIN: usize = 256 * 1024;
@@ -105,6 +105,9 @@ pub struct FileOptions {
     /// `--format human`: pretty-printed JSON documents (Node uses
     /// `util.inspect`; pretty JSON stays restorable).
     pub human: bool,
+    /// L-809a: write through OpenDAL instead of the local file system. `path` is then the
+    /// object key (split parts are named from it the same way).
+    pub remote: Option<crate::remote::Remote>,
 }
 
 /// Parse a size the way the `bytes` npm module does: a number with an
@@ -378,7 +381,12 @@ impl FileSink {
             written: 0,
             _uncommitted: None,
         };
-        if let Some(root) = &sink.opts.path {
+        if let (Some(root), Some(r)) = (&sink.opts.path, &sink.opts.remote) {
+            sink._uncommitted = Some(crate::signals::note_on_force_quit(format!(
+                "--output {} was not finished: an upload in progress is not completed, but split parts already uploaded stay in place",
+                r.display_key(&root.to_string_lossy())
+            )));
+        } else if let Some(root) = &sink.opts.path {
             warn_about_leftovers(root, sink.opts.overwrite);
             sink._uncommitted = Some(crate::signals::note_on_force_quit(format!(
                 "--output '{}' was not committed (if the force-quit hit its final commit, a split set may be partly committed); its hidden staging files are left next to it and the next run to it names them",
@@ -386,6 +394,7 @@ impl FileSink {
             )));
         }
         match (&sink.opts.path, sink.opts.split) {
+            (Some(_), Some(_)) if sink.opts.remote.is_some() => {}
             (Some(root), Some(_)) => {
                 if !sink.opts.overwrite {
                     if let Some(p) = existing_parts(root).first() {
@@ -415,8 +424,15 @@ impl FileSink {
             (Some(_), Some(codec)) => Some(Encoder::new(codec)?),
             _ => None,
         };
+        let target = match (&self.opts.remote, &path) {
+            (Some(r), Some(key)) => {
+                let r = std::sync::Arc::new(r.with_key(key.to_string_lossy().into_owned()));
+                create_remote_target(r, self.opts.overwrite).await?
+            }
+            _ => create_output_target(path.as_deref(), self.opts.overwrite).await?,
+        };
         Ok(Part {
-            target: create_output_target(path.as_deref(), self.opts.overwrite).await?,
+            target,
             enc,
             count: 0,
         })
@@ -507,6 +523,10 @@ impl FileSink {
             return Err(e);
         }
         let sealed = std::mem::take(&mut self.sealed);
+        if self.opts.remote.is_some() {
+            // every object is stored as its writer closes; nothing to move into place
+            return Ok(());
+        }
         commit_all(sealed).await?;
         if let (Some(root), Some(_)) = (&self.opts.path, self.opts.split) {
             let stale: Vec<PathBuf> = existing_parts(root)
@@ -670,6 +690,94 @@ mod tests {
         } else {
             String::from_utf8(raw).unwrap()
         }
+    }
+
+    /// L-809a: the OpenDAL path (fs service in a temp dir): split parts with compression are
+    /// stored under their keys, read back through the remote reader, and an aborted run
+    /// leaves nothing behind.
+    #[cfg(feature = "opendal")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn opendal_fs_split_compressed_round_trip_and_abort() {
+        let d = tempfile::tempdir().unwrap();
+        let url = format!("fs://{}/sub/out.json", d.path().display());
+        let spec = std::sync::Arc::new(crate::remote::parse(&url, None).unwrap().unwrap());
+        let lines: String = (0..25).map(|i| format!("{{\"n\":{i:04}}}\n")).collect();
+        for codec in [None, Some(Codec::Gzip(6)), Some(Codec::Zstd(3))] {
+            let root = PathBuf::from(&spec.key);
+            let mut sink = FileSink::create(FileOptions {
+                path: Some(root.clone()),
+                codec,
+                split: Some(SplitBy::Rows(10)),
+                overwrite: true,
+                remote: Some(spec.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            sink.write_lines(lines.as_bytes()).await.unwrap();
+            sink.finalize().await.unwrap();
+            let mut all = String::new();
+            for n in 0..3 {
+                let key = part_path(&root, n, codec);
+                assert!(std::path::Path::new("/").join(&key).is_file(), "{key:?}");
+                let loc = crate::pipeline::file_source::InputLoc::Remote(std::sync::Arc::new(
+                    spec.with_key(key.to_string_lossy().into_owned()),
+                ));
+                let text = tokio::task::spawn_blocking(move || {
+                    let mut r = crate::pipeline::file_source::open_input_counted(
+                        &loc,
+                        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    )
+                    .unwrap();
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut r, &mut s).unwrap();
+                    s
+                })
+                .await
+                .unwrap();
+                all.push_str(&text);
+            }
+            assert_eq!(all, lines, "{codec:?}");
+        }
+        // without --overwrite an existing object is refused
+        let err = FileSink::create(FileOptions {
+            path: Some(PathBuf::from(&spec.with_key(format!("{}x", spec.key)).key)),
+            remote: Some(spec.clone()),
+            ..Default::default()
+        })
+        .await;
+        assert!(err.is_ok());
+        let existing = part_path(&PathBuf::from(&spec.key), 0, None);
+        let mut sink = FileSink::create(FileOptions {
+            path: Some(PathBuf::from(&spec.key)),
+            split: Some(SplitBy::Rows(10)),
+            remote: Some(spec.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let e = sink.write_lines(lines.as_bytes()).await.unwrap_err();
+        assert!(format!("{e:#}").contains("already exists"), "{e:#}");
+        assert!(std::path::Path::new("/").join(&existing).is_file());
+        // an aborted unsplit write leaves no object
+        let fresh = spec.with_key(format!("{}.aborted", spec.key));
+        let mut sink = FileSink::create(FileOptions {
+            path: Some(PathBuf::from(&fresh.key)),
+            remote: Some(std::sync::Arc::new(fresh.clone())),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        sink.write_lines(lines.as_bytes()).await.unwrap();
+        sink.abort().await;
+        assert!(!std::path::Path::new("/").join(&fresh.key).exists());
+        let leftovers: Vec<_> = std::fs::read_dir(d.path().join("sub"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("aborted"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[tokio::test]

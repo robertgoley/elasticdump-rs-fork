@@ -4,7 +4,9 @@
 //!   is the index (a trailing `_search` is ignored); preceding segments are a
 //!   proxy base path. A host-only URL addresses the whole cluster.
 //! * `$` → stdin/stdout.
-//! * anything else → a file path. `s3://` and `csv://` are out of scope.
+//! * `s3://`, `b2://`, `sftp://`, `fs://` / `file://` → the OpenDAL storage path
+//!   ([`crate::remote`], L-809a).
+//! * anything else → a file path. `csv://` is out of scope.
 
 use std::path::PathBuf;
 
@@ -63,6 +65,8 @@ pub enum Endpoint {
     Es(EsEndpoint),
     Stdio,
     File(PathBuf),
+    /// An object or file reached through OpenDAL (L-809a).
+    Remote(crate::remote::Remote),
 }
 
 impl Endpoint {
@@ -82,6 +86,9 @@ pub fn redacted_url(url: &Url) -> String {
 
 /// Mask `user:pass@` in an arbitrary endpoint string.
 pub fn redacted_endpoint(raw: &str) -> String {
+    if crate::remote::Scheme::of(raw).is_some() {
+        return crate::remote::redact(raw);
+    }
     match Url::parse(raw) {
         // A password with `/`, `?` or `#` can make a URL parse with the
         // password inside the host:port/path (`http://u:12/x@h`): mask the
@@ -102,7 +109,7 @@ pub fn redacted_endpoint(raw: &str) -> String {
 /// Replace the password in `[scheme://]user:password@...` with `***`.
 /// Everything between the first `:` of the authority and the LAST `@` is
 /// masked, so a password containing `@`, `/` or spaces never leaks.
-fn mask_userinfo(raw: &str) -> String {
+pub(crate) fn mask_userinfo(raw: &str) -> String {
     let is_scheme = |s: &str| {
         let mut c = s.chars();
         c.next().is_some_and(|f| f.is_ascii_alphabetic())
@@ -191,7 +198,7 @@ fn url_typo(raw: &str) -> Option<String> {
     };
     is_scheme.then(|| {
         let shown: String = head.chars().take(16).collect();
-        format!("uses the unsupported scheme '{shown}://' (only http:// and https:// are clusters)")
+        format!("uses the unsupported scheme '{shown}://' (only http:// and https:// are clusters; s3://, b2://, sftp://, fs:// and file:// are storage URLs)")
     })
 }
 
@@ -226,11 +233,29 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         return Ok(Endpoint::Stdio);
     }
     let lower = raw.to_ascii_lowercase();
-    if lower.starts_with("s3://") || lower.starts_with("csv://") {
-        bail!(
-            "--{flag} {}: S3 and CSV transports are not supported by elasticdump-rs",
-            raw.split("://").next().unwrap_or(raw)
-        );
+    let storage_config = crate::remote::config_file(dir);
+    if let Some(spec) = crate::remote::parse(raw, storage_config.as_deref())
+        .map_err(|e| anyhow!("--{flag} {e:#}"))?
+    {
+        if index_override.is_some() {
+            log::warn!("--{flag}-index is ignored for storage URLs");
+        }
+        if spec.key.is_empty() || spec.key.ends_with('/') {
+            bail!(
+                "--{flag} {spec}: name an object or file, not a bucket or directory (e.g. {}://.../dump.json)",
+                spec.scheme.name()
+            );
+        }
+        #[cfg(not(feature = "opendal"))]
+        return Err(spec.unsupported());
+        #[cfg(feature = "opendal")]
+        {
+            spec.validate().map_err(|e| anyhow!("--{flag} {e:#}"))?;
+            return Ok(Endpoint::Remote(std::sync::Arc::new(spec)));
+        }
+    }
+    if lower.starts_with("csv://") {
+        bail!("--{flag} csv: CSV transports are not supported by elasticdump-rs");
     }
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
         if raw.is_empty() {
@@ -514,8 +539,17 @@ mod tests {
     #[test]
     fn rejects_api_paths_and_oos_schemes() {
         assert!(parse("http://h/_cat", Direction::Input, None).is_err());
-        assert!(parse("s3://bucket/key", Direction::Input, None).is_err());
         assert!(parse("csv:///tmp/x.csv", Direction::Output, None).is_err());
+        // L-809a: storage URLs must name an object
+        assert!(parse("s3://bucket/", Direction::Output, None).is_err());
+        assert!(parse("s3://bucket", Direction::Output, None).is_err());
+        #[cfg(feature = "opendal")]
+        assert!(matches!(
+            parse("s3://bucket/key", Direction::Input, None),
+            Ok(Endpoint::Remote(_))
+        ));
+        #[cfg(not(feature = "opendal"))]
+        assert!(parse("s3://bucket/key", Direction::Input, None).is_err());
     }
 
     #[test]

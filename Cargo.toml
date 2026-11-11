@@ -83,6 +83,13 @@ regex = { version = "1.11", default-features = false, features = ["std", "unicod
 # musl builds keep musl's own allocator unless a feature asks for one.
 tikv-jemallocator = { version = "0.7", optional = true }
 mimalloc = { version = "0.1", default-features = false, optional = true }
+# Second, separate write/read path for s3://, b2://, sftp://, fs:// URLs (feature `opendal`).
+# 0.57 is the last release with rust-version 1.85 (0.58+ needs 1.91).
+futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
+# OpenDAL's own HTTP client version, given our rustls config (same CA/--insecure handling and
+# ring provider as the cluster side).
+reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls-no-provider"], optional = true }
+opendal = { version = "=0.57.0", default-features = false, features = ["reqwest-rustls-no-provider-tls", "executors-tokio", "layers-retry", "layers-timeout"], optional = true }
 
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }
@@ -96,7 +103,11 @@ tempfile = "3"
 proptest = { version = "1", default-features = false, features = ["std"] }
 
 [features]
-default = ["encrypted-keys"]
+default = ["encrypted-keys", "opendal", "opendal-sftp"]
+# OpenDAL storage path (L-809a): s3:// (incl. MinIO/RustFS, SSE-C), b2://, fs:// / file:// for
+# --input/--output. `opendal-sftp` adds sftp:// (needs the OpenSSH `ssh` client at run time).
+opendal = ["dep:opendal", "dep:futures", "dep:reqwest013", "opendal/services-s3", "opendal/services-b2", "opendal/services-fs"]
+opendal-sftp = ["opendal", "opendal/services-sftp"]
 # Decrypt encrypted PKCS#8 client keys (`--key` + `--pass`). Pulls in the RustCrypto
 # aes/scrypt/pbkdf2/sha2 stack; `--no-default-features` builds leave it out (SUP-023).
 encrypted-keys = ["dep:pkcs8"]

@@ -29,6 +29,105 @@ pub fn open_reader(path: Option<&PathBuf>) -> Result<Box<dyn Read + Send>> {
     open_reader_counted(path, Arc::new(AtomicU64::new(0)))
 }
 
+/// Where file-style input comes from: stdin, a local file (native `std::fs`), or an object
+/// read through OpenDAL (L-809a).
+#[derive(Debug, Clone)]
+pub enum InputLoc {
+    Stdin,
+    File(PathBuf),
+    Remote(crate::remote::Remote),
+}
+
+impl From<Option<PathBuf>> for InputLoc {
+    fn from(p: Option<PathBuf>) -> Self {
+        match p {
+            Some(p) => InputLoc::File(p),
+            None => InputLoc::Stdin,
+        }
+    }
+}
+
+impl InputLoc {
+    pub fn local_path(&self) -> Option<&PathBuf> {
+        match self {
+            InputLoc::File(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            InputLoc::Stdin => "stdin".to_string(),
+            InputLoc::File(p) => p.display().to_string(),
+            InputLoc::Remote(r) => r.to_string(),
+        }
+    }
+}
+
+/// Open any [`InputLoc`] with gzip/zstd detection. Remote objects are streamed; this must
+/// run on a blocking thread inside the tokio runtime (`spawn_blocking`).
+pub fn open_input_counted(
+    input: &InputLoc,
+    raw_bytes: Arc<AtomicU64>,
+) -> Result<Box<dyn Read + Send>> {
+    match input {
+        InputLoc::Stdin => open_reader_counted(None, raw_bytes),
+        InputLoc::File(p) => open_reader_counted(Some(p), raw_bytes),
+        InputLoc::Remote(r) => {
+            let raw: Box<dyn Read + Send> = Box::new(Counted {
+                inner: remote_reader(r)?,
+                n: raw_bytes,
+            });
+            decode_input(raw, Some(std::path::Path::new(&r.key))).map_err(|e| anyhow!("{r}: {e:#}"))
+        }
+    }
+}
+
+#[cfg(feature = "opendal")]
+fn remote_reader(r: &crate::remote::Remote) -> Result<Box<dyn Read + Send>> {
+    /// Blocking `Read` over an OpenDAL byte stream (one streaming GET).
+    struct RemoteRead {
+        rt: tokio::runtime::Handle,
+        stream: opendal::FuturesBytesStream,
+        cur: bytes::Bytes,
+    }
+    impl Read for RemoteRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            use futures::StreamExt;
+            while self.cur.is_empty() {
+                match self.rt.block_on(self.stream.next()) {
+                    None => return Ok(0),
+                    Some(chunk) => self.cur = chunk?,
+                }
+            }
+            let n = buf.len().min(self.cur.len());
+            buf[..n].copy_from_slice(&self.cur[..n]);
+            bytes::Buf::advance(&mut self.cur, n);
+            Ok(n)
+        }
+    }
+    let rt = tokio::runtime::Handle::current();
+    let op = r.operator()?;
+    let key = r.key.clone();
+    let chunk = r.chunk_bytes();
+    let stream = rt
+        .block_on(async move {
+            let reader = op.reader_with(&key).chunk(chunk).await?;
+            reader.into_bytes_stream(..).await
+        })
+        .map_err(|e| anyhow!("Failed to open input {r}: {}", r.explain(e)))?;
+    Ok(Box::new(RemoteRead {
+        rt,
+        stream,
+        cur: bytes::Bytes::new(),
+    }))
+}
+
+#[cfg(not(feature = "opendal"))]
+fn remote_reader(r: &crate::remote::Remote) -> Result<Box<dyn Read + Send>> {
+    Err(r.unsupported())
+}
+
 /// Counts the bytes read from the underlying (possibly compressed) input.
 struct Counted<R> {
     inner: R,
@@ -289,23 +388,21 @@ fn check_unchanged(path: &std::path::Path, before: &std::fs::Metadata, read: u64
 }
 
 fn read_loop(
-    path: Option<PathBuf>,
+    input: InputLoc,
     limit: usize,
     max_doc: Option<usize>,
     tx: &mpsc::Sender<Result<FileBatch>>,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let name = path
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "stdin".to_string());
+    let name = input.name();
+    let path = input.local_path().cloned();
     if let Some(p) = &path {
         check_input_name(p)?;
     }
     // TST-BRK-IN-016: what the file was when opened, to notice changes while reading
     let opened = path.as_ref().and_then(|p| std::fs::metadata(p).ok());
     let raw_bytes = Arc::new(AtomicU64::new(0));
-    let mut reader = open_reader_counted(path.as_ref(), Arc::clone(&raw_bytes))?;
+    let mut reader = open_input_counted(&input, Arc::clone(&raw_bytes))?;
     let mut decoded = 0u64;
     let mut docs_read = 0u64;
     let mut splitter = ValueSplitter::with_max_value(max_doc);
@@ -402,13 +499,14 @@ fn read_loop(
 /// Start reading on a blocking thread. The channel closes at end of input;
 /// a read or parse error arrives as an `Err` item.
 pub fn spawn_file_source(
-    path: Option<PathBuf>,
+    path: impl Into<InputLoc>,
     limit: usize,
     max_doc: Option<usize>,
     buffer: usize,
     cancel: CancellationToken,
 ) -> mpsc::Receiver<Result<FileBatch>> {
     let (tx, rx) = mpsc::channel(buffer.max(1));
+    let path = path.into();
     tokio::task::spawn_blocking(move || {
         if let Err(e) = read_loop(path, limit, max_doc, &tx, &cancel) {
             let _ = tx.blocking_send(Err(e));

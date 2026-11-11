@@ -14,8 +14,6 @@ pub mod policy;
 pub mod scripts;
 pub mod templates;
 
-use std::path::PathBuf;
-
 use anyhow::{Result, bail};
 use serde_json::Value;
 
@@ -104,7 +102,7 @@ pub struct MetaSource {
     pub index: Option<String>,
     /// Alias-name filter (`--type alias`).
     pub doc_type: Option<String>,
-    pub file: Option<PathBuf>,
+    pub file: crate::pipeline::file_source::InputLoc,
 }
 
 pub struct MetaTarget {

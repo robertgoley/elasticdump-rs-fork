@@ -38,6 +38,12 @@ impl std::fmt::Debug for TlsOptions {
     }
 }
 
+/// L-809a: the OpenDAL storage path builds its own (reqwest 0.13) TLS client, which takes
+/// the process-wide default provider; make that the same ring provider used here.
+pub fn install_default_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
