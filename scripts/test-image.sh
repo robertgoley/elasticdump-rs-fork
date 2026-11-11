@@ -89,8 +89,12 @@ awk '$1 ~ /^-..x/ {print "/" $6}' "$W/rootfs.lst" \
   | grep -vxE '/etc/(hosts|hostname|resolv\.conf)|/run/\.containerenv' | sort > "$W/bins.txt"
 BL="docker/image-binaries.$VAR.txt"
 if [[ "${3:-}" == --update ]]; then cp "$W/bins.txt" "$BL"; echo "updated $BL"; fi
+# Shared-library file versions (libz.so.1.3.2 -> libz.so.1.4 after the runtime stage's
+# `apk upgrade`) are compared without their version suffix: a new library is still flagged,
+# a security update of a listed one is not.
+sover() { sed -E 's/(\.so)(\.[0-9]+)+$/\1.*/' "$1" | sort -u; }
 if [[ -f "$BL" ]]; then
-  extra=$(comm -13 "$BL" "$W/bins.txt")
+  extra=$(comm -13 <(sover "$BL") <(sover "$W/bins.txt"))
   if [[ -z "$extra" ]]; then ok "executables within documented set ($(wc -l < "$W/bins.txt") files, $BL)"
   else bad "undocumented executables:"; while read -r l; do echo "  + $l"; done <<< "$extra"; fi
 else bad "no baseline $BL (review, then rerun with: $0 $IMG $VAR --update)"; fi

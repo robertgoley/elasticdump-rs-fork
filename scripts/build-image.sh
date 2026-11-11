@@ -154,7 +154,10 @@ preflight() {
 if [[ ${#pf_images[@]} -gt 0 ]]; then preflight; echo "preflight ok: ${pf_images[*]}"; exit 0; fi
 [[ $dry == 1 ]] || preflight
 
-run env CONTAINER="$C" scripts/vendor-crates.sh
+# Vendor with this type's own builder (it has cargo and is already pulled above), so public and
+# alpine builds never need dhi.io credentials (release.yml v1.0.0-beta1: the public/alpine image
+# jobs failed pulling the Makefile's default dhi.io/rust builder without a dhi.io login).
+run env CONTAINER="$C" VENDOR_IMAGE="${VENDOR_IMAGE:-$builder_image:$builder_tag}" scripts/vendor-crates.sh
 
 args=(build --target "$target"
   --build-arg "BUILDER_IMAGE=$builder_image" --build-arg "BUILDER_TAG=$builder_tag"

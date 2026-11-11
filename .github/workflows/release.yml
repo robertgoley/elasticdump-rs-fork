@@ -280,13 +280,14 @@ jobs:
             if [[ "$PRERELEASE" == true ]]; then tags+=("$repo:$CHANNEL"); else tags+=("$repo:$VERSION" "$repo:latest"); fi
           fi
           printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # attest-build-provenance (push-to-registry) reads Docker's credential store, not podman's
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for t in "${tags[@]}"; do
             podman tag "localhost/searchdump-rs:$VERSION-$TYPE" "$t"
             podman push --digestfile /tmp/digest "$t"
             echo "pushed $t ($(cat /tmp/digest))"
           done
           { echo "name=$repo"; echo "digest=$(cat /tmp/digest)"; } >> "$GITHUB_OUTPUT"
-          podman logout ghcr.io || true
       - if: steps.push.outputs.digest != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -294,7 +295,10 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - if: always()
-        run: podman logout dhi.io || true
+        run: |
+          podman logout dhi.io || true
+          podman logout ghcr.io || true
+          docker logout ghcr.io || true
 
   publish:
     name: draft GitHub release
