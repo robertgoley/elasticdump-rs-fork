@@ -535,7 +535,7 @@ directions; S3 and B2 writes are multipart uploads (`chunk_mb`, default 16, `con
 ```sh
 # dump to MinIO with zstd in 1 GB parts; credentials from the INI file
 searchdump --input=https://src:9200/logs --output='s3://backups/logs/logs.json?endpoint=https://minio:9000' \
-  --outputStorageConfig=/etc/edrs/s3.ini --compressionType=zstd --fileSize=1gb
+  --outputStorageConfig=/etc/searchdump/s3.ini --compressionType=zstd --fileSize=1gb
 
 # restore from SFTP
 searchdump --input=sftp://backup@vault:22/srv/dumps/logs.json --output=https://dst:9200/logs
@@ -564,8 +564,8 @@ endpoint = https://minio.example:9000
 region = us-east-1
 key = 
 secret = 
-ca_file = /etc/edrs/minio-ca.pem
-sse_c_key_file = /etc/edrs/sse-c.key
+ca_file = /etc/searchdump/minio-ca.pem
+sse_c_key_file = /etc/searchdump/sse-c.key
 ```
 
 Settings (INI aliases in brackets):
@@ -908,14 +908,28 @@ run inside the estimate completed (`scripts/res/low-memory.sh`, `results/local/L
 
 ## Performance
 
-All numbers below come from recorded runs in this repository; follow the links for the raw data. Absolute figures
+On the recorded runs below, searchdump was **1.30× to 6.69× faster** than Node elasticdump 6.125.1
+(wall-clock), depending on the scenario. The largest published speed-up is a gzip dump of 1M documents on
+Elasticsearch 7.17 (**6.69×**); on OpenSearch 2.19.7 at 100k documents the gzip dump is **5.4×**. Copy on the
+single-node ES 7.17 setup was **1.30×** — engine-bound there (searchdump used about half a core).
+
+**Legend:** "× faster" is Node wall time divided by searchdump wall time (higher means searchdump is faster).
+The same direction is used in every table.
+
+**Fast settings.** Defaults match Node (`--limit 100`, concurrency 1). For throughput, a typical starting point
+is `--limit 5000 --concurrency 4` (the restore and copy rows below). For scroll dumps, add `--slices` equal to the
+primary-shard count; PIT (`--searchAfter --pit`) tolerates more slices than shards. See the tuning note at the end
+of this section.
+
+All numbers come from recorded runs in this repository; follow the links for the raw data. Absolute figures
 depend on the cluster, network and disk; the ratios to Node elasticdump 6.125.1 on the same host are the portable
 result.
 
 **1M documents, Elasticsearch 7.17** (about 1 KB per doc, 1.02 GB NDJSON, 2-shard index, 8 shared vCPUs; medians of
-3 runs; `scripts/load/nodecmp.py`, [`results/local/L-808.md`](results/local/L-808.md)):
+3 runs; `scripts/load/nodecmp.py`, [`results/local/L-808.md`](results/local/L-808.md)).
+Source: 2026-11-01, L-808 (`27d3b7a`), pre-rename build.
 
-| Scenario | Node s | searchdump s | Speed-up | CPU-s Node / searchdump | RSS MB Node / searchdump |
+| Scenario | Node s | searchdump s | × faster | CPU-s Node / searchdump | RSS MB Node / searchdump |
 |---|---|---|---|---|---|
 | dump, defaults (`--limit 100`) | 25.04 | 15.38 | 1.63× | 19.57 / 5.50 | 309 / 44 |
 | dump `--limit 5000` | 13.82 | 6.86 | 2.01× | 15.50 / 4.02 | 354 / 72 |
@@ -930,28 +944,30 @@ engine node here (searchdump used about half a core); the CPU column (2.5–5.5�
 
 **Sequential speed suite, Elasticsearch 9.1.2 with TLS and basic auth** (100k `logs` docs, `--limit 2000`, 1 GB
 engine heap, medians of 3 runs after a warm-up; `scripts/perf/run-suite.sh`, run
-[`results/perf/20261109T011630-1176214`](results/perf/20261109T011630-1176214/summary.md)); wall-clock ratio
-searchdump / Node, lower is better:
+[`results/perf/20261109T011630-1176214`](results/perf/20261109T011630-1176214/summary.md)).
+Source: 2026-11-09, pre-rename build at `5c76605`. Speed-up values are Node seconds ÷ searchdump seconds from the
+same published medians (the original report used searchdump/Node, lower-is-better).
 
-| Case | searchdump s | Node s | ratio |
+| Case | searchdump s | Node s | × faster |
 |---|---|---|---|
-| dump, plain | 0.803 | 1.607 | 0.50 |
-| dump, gzip | 0.704 | 4.517 | 0.16 |
-| dump, gzip in parts | 0.804 | 2.614 | 0.31 |
-| restore, plain | 4.818 | 5.924 | 0.81 |
-| restore, gzip parts | 5.225 | 8.038 | 0.65 |
-| copy | 4.821 | 5.926 | 0.81 |
-| mapping / settings dump | 0.102 | 0.302 | 0.34 |
-| multi dump, `--parallel 1` / 4 / 8 | 1.104 / 0.403 / 0.303 | 5.321 / 1.713 / 1.319 | 0.21 / 0.24 / 0.23 |
-| multi restore, `--parallel 1` / 4 / 8 | 7.224 / 2.009 / 1.311 | 12.849 / 3.732 / 2.636 | 0.56 / 0.54 / 0.50 |
+| dump, plain | 0.803 | 1.607 | 2.00× |
+| dump, gzip | 0.704 | 4.517 | 6.42× |
+| dump, gzip in parts | 0.804 | 2.614 | 3.25× |
+| restore, plain | 4.818 | 5.924 | 1.23× |
+| restore, gzip parts | 5.225 | 8.038 | 1.54× |
+| copy | 4.821 | 5.926 | 1.23× |
+| mapping / settings dump | 0.102 | 0.302 | 2.96× |
+| multi dump, `--parallel 1` / 4 / 8 | 1.104 / 0.403 / 0.303 | 5.321 / 1.713 / 1.319 | 4.82× / 4.25× / 4.35× |
+| multi restore, `--parallel 1` / 4 / 8 | 7.224 / 2.009 / 1.311 | 12.849 / 3.732 / 2.636 | 1.78× / 1.86× / 2.01× |
 
 In the same run Node changed integers above 2^53 in the edge-case dump and exceeded the 1 GB memory cap restoring it;
 searchdump kept the values. Other engines' runs are under [`results/perf/`](results/perf/).
 
 **100k documents, OpenSearch 2.19.7** (512 MB heap, ≈ 42 MB of data; `scripts/benchmark/quick-vs-node.py`, medians of 3
-runs, L-808; raw: [`docs/bench/l808-opensearch-2.19.7-100k.json`](docs/bench/l808-opensearch-2.19.7-100k.json)):
+runs, L-808; raw: [`docs/bench/l808-opensearch-2.19.7-100k.json`](docs/bench/l808-opensearch-2.19.7-100k.json)).
+Source: 2026-11-01, L-808, pre-rename release profile at `e9d8cc5`.
 
-| Scenario | Node 6.125.1 | searchdump | Speed-up | CPU-s Node / searchdump |
+| Scenario | Node 6.125.1 | searchdump | × faster | CPU-s Node / searchdump |
 |---|---|---|---|---|
 | dump, defaults (`--limit 100`) | 2.85 s | 1.30 s | 2.2× | 2.07 / 0.32 |
 | dump `--limit 5000` | 1.00 s | 0.41 s | 2.4× | 1.22 / 0.19 |
@@ -961,7 +977,8 @@ runs, L-808; raw: [`docs/bench/l808-opensearch-2.19.7-100k.json`](docs/bench/l80
 | copy `--limit 5000 --concurrency 4 --noRefresh` | 1.77 s | 0.92 s | 1.9× | 1.96 / 0.54 |
 
 **Compression levels** at 1M docs (1.01 GB of NDJSON, edgen `logs` profile, Elasticsearch 7.17; medians of 3 runs,
-zstd 19 one run; [`results/local/L-805.md`](results/local/L-805.md)). Per-core speed is the uncompressed MB divided by
+zstd 19 one run; [`results/local/L-805.md`](results/local/L-805.md)).
+Source: 2026-11-01, L-805 (`18c4334`), pre-rename build. Per-core speed is the uncompressed MB divided by
 the CPU-s the codec adds over an uncompressed file-to-file run:
 
 | `--compressionType` / `--compressionLevel` | gzip 1 | gzip 6 (default) | gzip 9 | zstd 1 | zstd 3 (default) | zstd 9 | zstd 19 |

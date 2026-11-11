@@ -1,5 +1,9 @@
 # Testing completed
 
+Until the 2026-11-11 rename (L-810a), this project was elasticdump-rs-fork and the binaries were `elasticdump-rs` and `multielasticdump`. Historical rows below keep those pre-rename names; they refer to this same codebase, not to upstream tenyears-tech/elasticdump-rs, unless a row says otherwise.
+
+A one-screen engine coverage matrix (dump, restore, PIT, slices, storage, TLS) is at the top of [TESTING-MATRIX.md](TESTING-MATRIX.md).
+
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
 Total: 210 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808m (`git log -1 --grep '^L-808m'`; the next commit fills in its sha).

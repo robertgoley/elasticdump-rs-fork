@@ -6,6 +6,26 @@ in [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md). Security scanning is in [SECURITY
 
 Minimum supported versions are **Elasticsearch 7.x** and **OpenSearch 1.x**. ES 6.8 is out of scope.
 
+## Coverage at a glance
+
+One-screen view of the engines in this file against dump, restore, PIT, slices, object storage, and TLS.
+Cells use only facts already recorded in this file or in [TESTING-COMPLETED.md](TESTING-COMPLETED.md).
+`?` means those documents do not record a result for that engine. `it` is the 45-test integration suite
+(data, files, metadata, TLS/auth on secure profiles). Golden contract cases are in the tables later in this file
+(L-405/L-406 covered sliced scroll and PIT on all nine versions).
+
+| Engine | dump | restore | PIT | slices | storage | TLS |
+|---|---|---|---|---|---|---|
+| Elasticsearch 9.1.2 | ✓ `data-scroll`, `it` | ✓ `data-restore`, `it` | ✓ `data-pit`, E4/E5 | ✓ L-405, L-406 | ? | ✓ secure profile (`it` TLS/auth) |
+| Elasticsearch 8.19.23 | ✓ | ✓ | ✓ | ✓ L-405, L-406 | ? | ✓ secure profile |
+| Elasticsearch 8.6.1 | ✓ | ✓ | ✓ | ✓ L-405, L-406 | ? | ✓ secure profile |
+| Elasticsearch 7.17.29 | ✓ | ✓ | ✓ | ✓ L-405, L-406; also L-807/L-808 load | ? | ✓ secure profile |
+| Elasticsearch 7.10.2 (default distro) | ✓ | ✓ | ✓; no sliced PIT (needs ≥ 7.15), falls back to sliced scroll (tested, es710-secure) | ✓ L-405; sliced PIT n/a | ? | ✓ es710-secure (official image) |
+| Elasticsearch 7.10.2 OSS | ✓ | ✓ | n/a (no PIT); scroll fallback tested | ✓ L-405 | ? | n/a (no security plugin; the secure profile uses the default distro) |
+| OpenSearch 3.9.0 | ✓ | ✓ | ✓ | ✓ L-405, L-406 | ? | ✓ secure profile |
+| OpenSearch 2.19.7 | ✓ | ✓ | ✓ | ✓ L-405, L-406 | ✓ OpenDAL `cross.sh` (s3/sftp dump, copy, load; L-809a) | ✓ secure profile |
+| OpenSearch 1.3.20 | ✓ | ✓ | n/a (no PIT before 2.4); scroll fallback tested (os13) | ✓ L-405 | ? | ✓ secure profile |
+
 ## 1. Tested images and results
 
 - **Run:** commit `958e9d5` on branch `rewrite`, 2026-10-29 12:08–12:28 America/New_York.
@@ -212,13 +232,13 @@ tables above; the helper images are:
 | `ghcr.io/shopify/toxiproxy:2.12.0` | `sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e` | out-of-process fault proxy (`scripts/it/toxiproxy.sh`, INF-004) |
 | `docker.io/library/alpine:3.24.3` | `sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` | `make image-alpine` runtime base |
 
-### Injection PoCs: Node elasticdump vs elasticdump-rs (INJ-017)
+### Injection PoCs: Node elasticdump vs searchdump (INJ-017)
 
 - **Run:** `scripts/poc/node-oracle.sh` (L-513), 2026-10-30 12:25 America/New_York.
 - **Setup:** one throwaway engine, opensearch-plain (`OS_TAG=2`, OpenSearch 2.19.7). Node elasticdump 6.125.1 on node v20.
 - **Captures:** a logging proxy recorded Node's HTTP requests for the two metadata cases. Raw output is in `results/local/L-513.json`.
 
-| PoC | elasticdump-rs | Node elasticdump 6.125.1 |
+| PoC | searchdump | Node elasticdump 6.125.1 |
 |---|---|---|
 | INJ-F1 variant 1 (pretty-printed `_source` carrying a bulk action line), export → restore, checks A–D | NO-INJECTION; every check OK | NO-INJECTION; every check OK. Node re-serialises `_source` with `JSON.stringify`, so the export is one line. |
 | INJ-F1 variant 2 | NO-INJECTION | NO-INJECTION |
@@ -228,7 +248,7 @@ tables above; the helper images are:
 | Data documents with `_index: "_all"` / `_index: "*"` | Refused per line by the client (`invalid _index`); nothing sent; exit 1 | Sent to `_bulk`. The engine refuses both (`invalid_index_name_exception`); Node prints the item errors and exits 0. |
 
 Result: Node 6.125.1 is not exploitable by these PoCs on OpenSearch 2.19.7. The engine or Node's own silent failures stop
-them. However, Node reports success (exit 0) in every refused case. elasticdump-rs refuses on the client before any request and
+them. However, Node reports success (exit 0) in every refused case. searchdump refuses on the client before any request and
 exits non-zero. Its final error line now names both rejection reasons. Before L-513 it said only "not exactly one JSON object",
 even when the line was rejected for an invalid `_index`.
 

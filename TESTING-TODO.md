@@ -2,6 +2,21 @@
 
 Every test idea that is **not** part of the other agent's task plan. The delegated plan is in [TESTING-IN-PROGRESS.md](TESTING-IN-PROGRESS.md), finished work in [TESTING-COMPLETED.md](TESTING-COMPLETED.md). Requirement IDs refer to [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
+## Open items
+
+| Area | What is still open |
+|---|---|
+| Stability | Cluster faults mid-dump on a 3-node cluster; source changing during a dump; 12–24 h soak with resource tracking; squeezed resources (cgroup CPU, file limits, IPv6, DNS, TLS rotation); slow servers vs `--timeout`/`--idleTimeout`; l638 `--intervalCap` timing on a stable machine; full arm64 image build (low priority). |
+| Performance | Sequential speed suite: real-engine L0 run in progress for v1.0.0-beta1 (2026-11-11); reviewed per-engine baselines and the 10% regression gate still pending. Networked backup and restore with compression at scale (tool and cluster on separate machines). |
+| Malicious or broken input | Hostile cluster proxy; header and request injection; Miri / ThreadSanitizer / UBSan; `cargo-mutants`; differential fuzzing against Node; release signing (cosign, provenance); review of open Dependabot branches. |
+| Foreign or malicious code | Upstream line-origin review; mutation testing of security guards; published crate vs tagged source; full cargo vet coverage; vendored, pinned builds; wider runtime monitoring; container layer checks; independent rebuild and signing. |
+| Unbuilt features | Contract, interop and break tests when a feature in [FEATURES-TODO.md](FEATURES-TODO.md) is built. AWS tests (B13) stay blocked until the owner approves a named sandbox account. |
+| searchdump-multi | Remaining real-cluster items: ES 7/8 → OpenSearch 2/3, oslogs.py backup parity, mid-run Ctrl-C then `--resume`, large `--fileSize` (see the section below). |
+| OpenDAL storage | Real Backblaze B2 (owner account); real AWS S3 (approval); break tests (kill the server mid-upload, slow links, full disk); streaming without a staging directory. |
+| Still skipped from the delegated plan | L-703 (seccomp/Landlock), see [TESTING-IN-PROGRESS.md](TESTING-IN-PROGRESS.md). |
+
+Details for each item follow.
+
 ## 1. Further tests
 
 ### Stability

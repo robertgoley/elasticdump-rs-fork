@@ -1,6 +1,6 @@
 # Security: dependency advisories and image CVEs
 
-This file tracks every advisory and image CVE that the scanners below report for elasticdump-rs, with
+This file tracks every advisory and image CVE that the scanners below report for searchdump, with
 its status. Status values:
 
 - **open**: affects a shipped artifact and has no fix yet;
@@ -11,11 +11,27 @@ Code and supply-chain findings (F-01…F-14, INJ-F1…F4) are mapped to their fi
 
 Related docs: [TESTING-MATRIX.md](TESTING-MATRIX.md) and [NODE-DIFFERENCES.md](NODE-DIFFERENCES.md).
 
+## Status summary
+
+Counts below are taken from the sections in this file (High+Critical image findings unless noted). "Won't-fix (accepted)" means a Debian/DHI won't-fix or not-fixed High finding that is documented here and ignored by `make scan` only while that fix state lasts. "Open" means a finding on that image that is not accepted for shipping that image.
+
+| Artifact | Open | Resolved | Won't-fix (accepted) | Not-affected |
+|---|---:|---:|---:|---:|
+| Cargo.lock (Rust dependencies) | 0 | 41 | 0 | 0 |
+| `dhi-debian` (default `make image` since L-810c) | 0 | 1 (CVE-2026-109518 in apt, fixed by the `94571f3d…` base) | 19 | 0 |
+| `dhi-static` (default from L-808b to L-810c) | 0 | 0 | 5 | 0 |
+| `dhi-alpine` | 0 | 0 | 0 | 0 |
+| Public Alpine (`make image-alpine`) | 0 | 0 | 0 | 1 (CVE-2025-60876, Medium, busybox `wget`) |
+| Public Debian (`make image-public`) | 15 High (this base is not recommended) | 0 | 15 are Debian won't-fix / not-fixed; still open if this image is shipped | 0 |
+
+The 15 public-Debian High CVEs are the same kind of base-OS won't-fix findings; they stay **open on that base** because that image is not an accepted default. Choosing Alpine or a dhi.io base avoids them.
+
 ## Last scan
 
 | Date (America/New_York) | Commit | Tool (DB) | Target | Result |
 |---|---|---|---|---|
-| 2026-11-11 | L-810e | grype 0.121.0 + trivy 0.76.1 | `dhi-debian` image (default since L-810c) on the previous base digest `cc4e05ff…` | before: grype 19 distinct High (90 matches; 1 fixable, CVE-2026-109518 in apt), trivy 12 distinct HIGH. With the new dhi-debian ignore files: only CVE-2026-109518 left in both scanners, which the refreshed base (`94571f3d…`, apt 3.0.4+dhi0) fixes; the scan on the new digest runs in CI (no dhi.io login on the review host) |
+| 2026-11-11 | `800ff96` (L-810f) | CI [security.yml](https://github.com/robertgoley/searchdump-rs/actions/workflows/security.yml) (grype + trivy), `base=dhi-debian` | `dhi-debian` default image on digest `sha256:94571f3d…` (apt 3.0.4+dhi0) | **pass**. Confirming scan of the L-810e base refresh: [run 42998300960](https://github.com/robertgoley/searchdump-rs/actions/runs/42998300960) (manual dispatch, 04:48–05:00 America/New_York). CVE-2026-109518 is gone; remaining High findings are the accepted won't-fix set. Later pushes on `main` also passed the same workflow: 42998301407 (`800ff96` push), 43070931258 (`e1a0f8e`), 43071665377 (`f38af3f`), 43077967669 (`94e4afb`), 43085265717 (`a98be22`) |
+| 2026-11-11 | L-810e | grype 0.121.0 + trivy 0.76.1 | `dhi-debian` image (default since L-810c) on the previous base digest `cc4e05ff…` | before: grype 19 distinct High (90 matches; 1 fixable, CVE-2026-109518 in apt), trivy 12 distinct HIGH. With the new dhi-debian ignore files: only CVE-2026-109518 left in both scanners, which the refreshed base (`94571f3d…`, apt 3.0.4+dhi0) fixes. The confirming CI scan on the new digest is the row above |
 | 2026-10-29 | 55fa662 | cargo-audit 0.22.2 (re-run for L-109) | Cargo.lock | **0 vulnerabilities, 0 warnings**; cargo-deny: all four checks ok |
 | 2026-10-29 | ae2531f | cargo-audit 0.22.2 (RustSec advisory-db, 1386 advisories) | Cargo.lock (271 crates) | **0 vulnerabilities, 0 warnings** |
 | 2026-10-29 | ae2531f | cargo-deny 0.20.2, `check advisories bans licenses sources` | Cargo.lock + deny.toml | **advisories ok, bans ok, licenses ok, sources ok** |
@@ -247,16 +263,16 @@ Image type `dhi-debian`: builder `dhi.io/rust:1.99.1-debian13-dev`, runtime `dhi
 | CVE-2026-9538 | perl-base 5.40.1-6+deb13u1+dhi3 | High / HIGH | won't-fix (trivy: fix_deferred) | Archive::Tar memory exhaustion; searchdump runs no Perl | 2026-11-11 | fix published |
 | CVE-2026-16742 | libsystemd0, libudev1 257.13-1~deb13u1+dhi2 | Medium / HIGH | won't-fix (trivy: affected) | Privilege escalation in `systemd-homed`, which is neither in the image nor running; searchdump does not link libsystemd/libudev. trivy rule only (grype rates it Medium) | 2026-11-11 | fix published |
 
-The versions are those of the image scanned locally on 2026-11-11 (built on the previous digest, `cc4e05ff…`). The
-new digest could not be pulled on the review host (no dhi.io login), so the first CI `make scan` on it is the
-confirming scan. If the new base adds a High CVE or changes a fix state, that scan fails and the new finding needs an
-entry here first.
+The package versions in the table are those of the image scanned locally on 2026-11-11 (built on the previous digest,
+`cc4e05ff…`). The new digest could not be pulled on the review host (no dhi.io login). The confirming CI `make scan`
+on `sha256:94571f3d…` passed (run 42998300960 and the later `main` runs listed under [Last scan](#last-scan)). If a
+new base adds a High CVE or changes a fix state, that scan fails and the new finding needs an entry here first.
 
 ### Debian 13 public fallback (`make image-public`)
 
 - All 157 grype matches are Debian `wont-fix` or `not-fixed`, so none can be fixed by upgrading packages.
 - The HIGH/CRITICAL findings are listed below (15 distinct CVEs, grouped by CVE).
-- They come from the base OS (util-linux, glibc, gcc runtime libs, ncurses, perl-base, zlib, acl, systemd libs). They do not come from elasticdump-rs.
+- They come from the base OS (util-linux, glibc, gcc runtime libs, ncurses, perl-base, zlib, acl, systemd libs). They do not come from searchdump.
 - The binary links only glibc (libc, libm) and libgcc_s. Even so, glibc CVE-2026-19499 and CVE-2026-5435 cannot be ruled out for a dynamically linked program, which is why this base is not recommended.
 - Status: **open on this base**, and resolved by choosing another base: the Alpine/musl build or the dhi.io base.
 

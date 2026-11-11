@@ -6,6 +6,19 @@ comparisons with **Node elasticdump 6.125.1**, including `searchdump-multi` agai
 It complements, not replaces, the fault, memory, compression-level and concurrency
 investigations in [../load/README.md](../load/README.md).
 
+## Internal names (kept for compatibility)
+
+A few identifiers still use the pre-rename `edrs-` prefix. They are part of on-disk schemas and
+paths; renaming them would break baseline identity checks and existing scripts, so they stay as is.
+
+- `edrs-perf/v1` — protocol / schema id of this suite's `combined.json` (and the plan). A mismatch is
+  treated as an incomparable baseline.
+- `edrs-metrics/v1` — schema id written by `scripts/load/measure.py` / `measure.sh` for each timed
+  command. The suite consumes those files.
+- `edrs-odt-podman` — directory name of the isolated rootless Podman store used by the OpenDAL tests
+  and the beta1 perf driver (`~/.local/share/edrs-odt-podman`, runroot `/tmp/edrs-odt-podman/run`), so
+  they do not use the shared container store. The path is kept so existing runs keep working.
+
 ## Start here
 
 ```bash
@@ -288,7 +301,7 @@ Retain raw metrics, commands (existing redaction), stdout/stderr, verify reports
 acceptance details, engine version/digest, host ID, CPU count/kernel, git SHA, binary
 hashes, controller image ID and Node runtime version. All live results are git-ignored:
 `results/perf/<local-timestamp>-<pid>/ENGINE/`; combined report is `combined.json`
-(schema `edrs-perf/v1`) plus `summary.md`. Private work/auth/PKI/payload files are removed
+(schema `edrs-perf/v1`; see [Internal names](#internal-names-kept-for-compatibility)) plus `summary.md`. Private work/auth/PKI/payload files are removed
 at dataset/engine teardown, while diagnostics and child logs are retained.
 
 Each supported cell reports **median**, **nearest-rank p90**, **min/max** and **CV%** wall

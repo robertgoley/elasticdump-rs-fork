@@ -54,6 +54,21 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
 - `sftp://` URLs do not work inside the container images. OpenDAL's SFTP backend runs the system OpenSSH `ssh`
   client, which the images do not include (Dropbear's client is not compatible). SFTP works with the host binaries
   and release archives on systems with OpenSSH installed. S3, B2 and `fs://` are not affected.
+- Backblaze B2 (`b2://`) is compile-tested only. It has not been run against a real B2 account (pending owner
+  credentials; see TESTING-TODO.md).
+- The full performance-suite numbers for this tag were still being collected at release time. Earlier recorded
+  runs are in [README Performance](README.md#performance); the v1.0.0-beta1 suite results will be added when that
+  run finishes.
+
+### Upgrade notes
+
+- **Binaries.** `elasticdump-rs` is now `searchdump`, and `multielasticdump` is now `searchdump-multi`. Every
+  container image and release archive also ships compatibility names: `elasticdump` and `elasticdump-rs` →
+  `searchdump`, `multielasticdump` → `searchdump-multi`.
+- **Environment variables.** The new names are `SEARCHDUMP_*`. The old `ELASTICDUMP_*` names still work as
+  deprecated aliases and print a one-time warning; when both are set, the new name wins.
+- **Manifest.** `searchdump-multi` still writes and reads the manifest file as `multielasticdump.json` (unchanged,
+  so existing dump directories keep working).
 
 ### Security
 
