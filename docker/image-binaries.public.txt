@@ -262,8 +262,8 @@
 /usr/libexec/coreutils/libstdbuf.so
 /usr/libexec/dpkg/dpkg-db-backup
 /usr/libexec/dpkg/dpkg-db-keeper
-/usr/local/bin/elasticdump-rs
-/usr/local/bin/multielasticdump
+/usr/local/bin/searchdump
+/usr/local/bin/searchdump-multi
 /usr/sbin/add-shell
 /usr/sbin/agetty
 /usr/sbin/blkdiscard

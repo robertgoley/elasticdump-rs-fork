@@ -7,12 +7,12 @@ use std::net::TcpListener;
 use std::process::{Command, Output};
 
 fn bin() -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    let mut c = Command::new(env!("CARGO_BIN_EXE_searchdump"));
     for v in [
-        "ELASTICDUMP_INPUT_USERNAME",
-        "ELASTICDUMP_INPUT_PASSWORD",
-        "ELASTICDUMP_OUTPUT_USERNAME",
-        "ELASTICDUMP_OUTPUT_PASSWORD",
+        "SEARCHDUMP_INPUT_USERNAME",
+        "SEARCHDUMP_INPUT_PASSWORD",
+        "SEARCHDUMP_OUTPUT_USERNAME",
+        "SEARCHDUMP_OUTPUT_PASSWORD",
         "NODE_TLS_REJECT_UNAUTHORIZED",
         "RUST_LOG",
         "SSL_CERT_FILE",

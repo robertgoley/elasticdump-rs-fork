@@ -154,7 +154,7 @@ def cmd_files(a):
     work = os.path.join(os.environ.get("LOAD_WORK") or os.path.join(res, "work"), "memcheck")
     os.makedirs(res, exist_ok=True)
     os.makedirs(work, exist_ok=True)
-    edgen, ed = tool("edgen"), tool("elasticdump-rs")
+    edgen, ed = tool("edgen"), tool("searchdump")
     rows = []
     try:
         for c in cases:

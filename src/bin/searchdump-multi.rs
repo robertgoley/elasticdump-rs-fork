@@ -1,11 +1,11 @@
-//! multielasticdump: dump or load many indices at once with elasticdump-rs.
+//! searchdump-multi: dump or load many indices at once with searchdump.
 //!
 //! Each selected index gets its own settings, mapping, optional alias and data files, in the
 //! layout that `scripts/oslogs.py` writes (`INDEX.settings.json`, `INDEX.mapping.json`,
 //! `INDEX.data.json.gz` / `.zst`), so a directory written by either tool loads with either.
 //! Indices are selected by `--match` (and `--exclude`) regexes and can be broken out into
 //! per-index or per-group subdirectories (`--layout`). The per-index work runs as child
-//! `elasticdump-rs` processes, at most `--parallel` indices at a time; one index failing does not
+//! `searchdump` processes, at most `--parallel` indices at a time; one index failing does not
 //! stop the others. A manifest (`multielasticdump.json`) records what was dumped.
 //!
 //! `--matchType` also selects indices by alias or whole data streams; cluster-wide templates,
@@ -16,7 +16,7 @@
 //! `INDEX.settings.json.gz`, ...) with the manifest and `_cluster/` moved to `DIR.meta` (`--metaDir`),
 //! because Node treats every entry in the directory as an index. Load accepts both namings.
 //!
-//! Credentials: use `ELASTICDUMP_INPUT_*` / `ELASTICDUMP_OUTPUT_*` environment variables or
+//! Credentials: use `SEARCHDUMP_INPUT_*` / `SEARCHDUMP_OUTPUT_*` environment variables or
 //! `--httpAuthFile`; children inherit them. `user:pass@` in a URL works but puts the password on
 //! every child's command line (visible in `ps`).
 #![forbid(unsafe_code)]
@@ -32,13 +32,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
-use elasticdump_rs::endpoint::read_auth_file;
-use elasticdump_rs::http::gate::RequestGate;
-use elasticdump_rs::http::retry::error_chain;
-use elasticdump_rs::http::tls::TlsOptions;
-use elasticdump_rs::http::{Body, ClientOptions, EsClient};
 use regex::Regex;
 use reqwest::Method;
+use searchdump_rs::endpoint::read_auth_file;
+use searchdump_rs::http::gate::RequestGate;
+use searchdump_rs::http::retry::error_chain;
+use searchdump_rs::http::tls::TlsOptions;
+use searchdump_rs::http::{Body, ClientOptions, EsClient};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -158,22 +158,22 @@ pub enum MatchType {
 
 #[derive(Parser, Debug, Clone)]
 #[command(
-    name = "multielasticdump",
+    name = "searchdump-multi",
     version,
-    about = "Dump or load many indices at once with elasticdump-rs, selected by regex",
+    about = "Dump or load many indices at once with searchdump, selected by regex",
     after_help = "Examples:\n  \
       # every index matching logs-*, gzip, one set of files per index (oslogs.py layout)\n  \
-      ELASTICDUMP_INPUT_USERNAME=admin ELASTICDUMP_INPUT_PASSWORD=... \\\n    \
-      multielasticdump --direction dump --input https://os:9200 --output /backup --match '^logs-'\n  \
+      SEARCHDUMP_INPUT_USERNAME=admin SEARCHDUMP_INPUT_PASSWORD=... \\\n    \
+      searchdump-multi --direction dump --input https://os:9200 --output /backup --match '^logs-'\n  \
       # break out by month: /backup/2026.10/logs-app-2026.10.31.*\n  \
-      multielasticdump --input https://os:9200 --output /backup --layout group \\\n    \
+      searchdump-multi --input https://os:9200 --output /backup --layout group \\\n    \
       --match '^logs-.*-(?P<group>\\d{4}\\.\\d{2})\\.\\d{2}$'\n  \
       # data streams plus the templates and policies they need, 1 GB data parts\n  \
-      multielasticdump --input https://es:9200 --output /backup --matchType datastream \\\n    \
+      searchdump-multi --input https://es:9200 --output /backup --matchType datastream \\\n    \
       --match '^logs-' --types data,index_template,component_template,policy --fileSize 1gb\n  \
-      # load everything back (ELASTICDUMP_OUTPUT_* credentials), 4 indices at a time\n  \
-      multielasticdump --direction load --input /backup --output https://os2:9200 --parallel 4\n\n\
-      Extra arguments after `--` are passed to every elasticdump-rs data run."
+      # load everything back (SEARCHDUMP_OUTPUT_* credentials), 4 indices at a time\n  \
+      searchdump-multi --direction load --input /backup --output https://os2:9200 --parallel 4\n\n\
+      Extra arguments after `--` are passed to every searchdump data run."
 )]
 pub struct Args {
     /// dump: cluster -> directory; load: directory -> cluster; copy: directory -> directory
@@ -187,11 +187,11 @@ pub struct Args {
     /// base URL
     #[arg(long)]
     pub output: String,
-    /// Storage settings and credentials for a storage-URL --input (INI, as elasticdump-rs
-    /// --inputStorageConfig; default $ELASTICDUMP_INPUT_STORAGE_CONFIG)
+    /// Storage settings and credentials for a storage-URL --input (INI, as searchdump
+    /// --inputStorageConfig; default $SEARCHDUMP_INPUT_STORAGE_CONFIG)
     #[arg(long = "inputStorageConfig")]
     pub input_storage_config: Option<PathBuf>,
-    /// The same for a storage-URL --output (default $ELASTICDUMP_OUTPUT_STORAGE_CONFIG)
+    /// The same for a storage-URL --output (default $SEARCHDUMP_OUTPUT_STORAGE_CONFIG)
     #[arg(long = "outputStorageConfig")]
     pub output_storage_config: Option<PathBuf>,
     /// Local directory a dump to (or load from) a storage URL is staged in. Default: a new
@@ -295,13 +295,13 @@ pub struct Args {
     /// Dump: skip indices the manifest already records as done (files still present)
     #[arg(long)]
     pub resume: bool,
-    /// Skip TLS certificate verification (also passed to elasticdump-rs)
+    /// Skip TLS certificate verification (also passed to searchdump)
     #[arg(long)]
     pub insecure: bool,
-    /// INI file with user= and password= for the cluster (also passed to elasticdump-rs)
+    /// INI file with user= and password= for the cluster (also passed to searchdump)
     #[arg(long = "httpAuthFile")]
     pub http_auth_file: Option<String>,
-    /// elasticdump-rs binary (default: next to this binary, then $ELASTICDUMP_BIN, then PATH)
+    /// searchdump binary (default: next to this binary, then $SEARCHDUMP_BIN, then PATH)
     #[arg(long = "elasticdumpBin")]
     pub elasticdump_bin: Option<PathBuf>,
     /// Where each child run's output is logged (default: a new temp directory)
@@ -324,7 +324,7 @@ pub struct Args {
     /// directory, or DIR.meta beside it with --nodeCompat. Load looks in DIR, then DIR.meta
     #[arg(long = "metaDir")]
     pub meta_dir: Option<PathBuf>,
-    /// Extra elasticdump-rs arguments for every data run
+    /// Extra searchdump arguments for every data run
     #[arg(last = true)]
     pub extra: Vec<String>,
 }
@@ -541,7 +541,7 @@ const META_SUFFIXES: &[&str] = &[
 ];
 
 /// What a data-file name says: the index, the codec, and the part number of a split dump.
-/// elasticdump-rs names: `INDEX.data.json[.gz|.zst]`, `INDEX.data.split-N.json[...]`;
+/// searchdump names: `INDEX.data.json[.gz|.zst]`, `INDEX.data.split-N.json[...]`;
 /// Node names: `INDEX.json[.gz]`, `INDEX.split-N.json[.gz]`.
 pub fn parse_data_file(name: &str) -> Option<(String, Compression, Option<u64>)> {
     if name == MANIFEST {
@@ -577,7 +577,7 @@ pub fn parse_data_file(name: &str) -> Option<(String, Compression, Option<u64>)>
     Some((stem.to_string(), c, None))
 }
 
-/// Whether a data-file name is in elasticdump-rs naming (`.data.` before the extension).
+/// Whether a data-file name is in searchdump naming (`.data.` before the extension).
 fn rs_named(name: &str) -> bool {
     name.contains(".data.json") || name.contains(".data.split-")
 }
@@ -1028,7 +1028,7 @@ pub fn split_url(
     let mut url = Url::parse(raw).with_context(|| {
         format!(
             "invalid URL '{}'",
-            elasticdump_rs::endpoint::redacted_endpoint(raw)
+            searchdump_rs::endpoint::redacted_endpoint(raw)
         )
     })?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -1073,8 +1073,9 @@ impl Cluster {
             .as_deref()
             .map(read_auth_file)
             .transpose()?;
-        let (base, username, password) =
-            split_url(raw, env_prefix, auth.as_ref(), &|k| std::env::var(k).ok())?;
+        let (base, username, password) = split_url(raw, env_prefix, auth.as_ref(), &|k| {
+            searchdump_rs::envnames::var(k)
+        })?;
         let opts = ClientOptions {
             base,
             username,
@@ -1135,7 +1136,7 @@ impl Cluster {
         if !(200..300).contains(&status) {
             let detail = String::from_utf8_lossy(&bytes[..bytes.len().min(2000)]).into_owned();
             let hint = if status == 401 {
-                " (credentials rejected: check ELASTICDUMP_*_USERNAME/PASSWORD or --httpAuthFile)"
+                " (credentials rejected: check SEARCHDUMP_*_USERNAME/PASSWORD or --httpAuthFile)"
             } else {
                 ""
             };
@@ -1311,7 +1312,7 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Run elasticdump-rs once; output goes to LOGDIR/INDEX.KIND.log.
+    /// Run searchdump once; output goes to LOGDIR/INDEX.KIND.log.
     pub fn run(
         &self,
         index: &str,
@@ -1354,7 +1355,7 @@ impl Runner {
             .with_context(|| format!("could not start {}", self.bin.display()))?;
         if !status.success() {
             bail!(
-                "elasticdump-rs --type={kind} failed ({status}); last lines of {}:\n{}",
+                "searchdump --type={kind} failed ({status}); last lines of {}:\n{}",
                 log_path.display(),
                 tail(&log_path, 15)
             );
@@ -1381,15 +1382,15 @@ fn find_bin(explicit: Option<&Path>) -> PathBuf {
     }
     if let Some(p) = std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(|d| d.join("elasticdump-rs")))
+        .and_then(|e| e.parent().map(|d| d.join("searchdump")))
         .filter(|p| p.is_file())
     {
         return p;
     }
-    if let Ok(p) = std::env::var("ELASTICDUMP_BIN") {
+    if let Some(p) = searchdump_rs::envnames::var("SEARCHDUMP_BIN") {
         return PathBuf::from(p);
     }
-    PathBuf::from("elasticdump-rs")
+    PathBuf::from("searchdump")
 }
 
 fn nonempty(p: &Path) -> bool {
@@ -1537,7 +1538,7 @@ async fn dump_one(
                     extra.push(format!("--maxRows={n}"));
                 }
                 extra.extend(ctx.runner.data_flags.iter().cloned());
-                // elasticdump-rs adds the codec extension to each part itself.
+                // searchdump adds the codec extension to each part itself.
                 let name = if split {
                     item_file_for(node, index, "data", Compression::None)
                 } else {
@@ -1840,7 +1841,7 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                 Ok(()) => settings_applied |= kind == "settings",
                 Err(e) if kind == "mapping" => {
                     eprintln!(
-                        "note: {target}: mapping via elasticdump-rs failed, applying it directly"
+                        "note: {target}: mapping via searchdump failed, applying it directly"
                     );
                     let text = read_text(&p)?;
                     cluster
@@ -1904,18 +1905,16 @@ pub fn meta_dir(args: &Args) -> PathBuf {
 /// succeeded; a load from one is downloaded to a staging directory first.
 #[cfg_attr(not(feature = "opendal"), allow(unused_variables, unused_mut))]
 async fn run(mut args: Args) -> Result<i32> {
-    use elasticdump_rs::remote;
+    use searchdump_rs::remote;
     if args.parallel == 0 {
         bail!("--parallel must be at least 1");
     }
-    let in_cfg = args
-        .input_storage_config
-        .clone()
-        .or_else(|| std::env::var_os("ELASTICDUMP_INPUT_STORAGE_CONFIG").map(PathBuf::from));
-    let out_cfg = args
-        .output_storage_config
-        .clone()
-        .or_else(|| std::env::var_os("ELASTICDUMP_OUTPUT_STORAGE_CONFIG").map(PathBuf::from));
+    let in_cfg = args.input_storage_config.clone().or_else(|| {
+        searchdump_rs::envnames::var_os("SEARCHDUMP_INPUT_STORAGE_CONFIG").map(PathBuf::from)
+    });
+    let out_cfg = args.output_storage_config.clone().or_else(|| {
+        searchdump_rs::envnames::var_os("SEARCHDUMP_OUTPUT_STORAGE_CONFIG").map(PathBuf::from)
+    });
     let is_cluster = |u: &str| {
         let l = u.to_ascii_lowercase();
         l.starts_with("http://") || l.starts_with("https://")
@@ -2041,7 +2040,7 @@ fn staging_dir(args: &Args) -> Result<(PathBuf, bool)> {
         }
         None => {
             let d = std::env::temp_dir().join(format!(
-                "multielasticdump-staging-{}-{}",
+                "searchdump-multi-staging-{}-{}",
                 std::process::id(),
                 chrono_stamp()
             ));
@@ -2126,13 +2125,13 @@ async fn run_local(args: Args) -> Result<i32> {
     };
     if creds_in(&args.input) || creds_in(&args.output) {
         eprintln!(
-            "warning: a password in the URL is passed to every elasticdump-rs run and shows in `ps`; prefer ELASTICDUMP_*_PASSWORD or --httpAuthFile"
+            "warning: a password in the URL is passed to every searchdump run and shows in `ps`; prefer SEARCHDUMP_*_PASSWORD or --httpAuthFile"
         );
     }
     let log_dir = match &args.log_dir {
         Some(d) => d.clone(),
         None => std::env::temp_dir().join(format!(
-            "multielasticdump-{}-{}",
+            "searchdump-multi-{}-{}",
             std::process::id(),
             chrono_stamp()
         )),
@@ -2187,7 +2186,7 @@ async fn run_local(args: Args) -> Result<i32> {
         Direction::Dump => {
             let cluster = Arc::new(Cluster::new(
                 &ctx.args.input,
-                "ELASTICDUMP_INPUT",
+                "SEARCHDUMP_INPUT",
                 &ctx.args,
             )?);
             let mt = &ctx.args.match_type;
@@ -2319,9 +2318,9 @@ async fn run_local(args: Args) -> Result<i32> {
                     ctx.args.compression
                 );
             }
-            m.tool = "multielasticdump".into();
+            m.tool = "searchdump-multi".into();
             m.version = env!("CARGO_PKG_VERSION").into();
-            m.source = elasticdump_rs::endpoint::redacted_endpoint(&ctx.args.input);
+            m.source = searchdump_rs::endpoint::redacted_endpoint(&ctx.args.input);
             m.layout = Some(ctx.args.layout);
             m.compression = Some(ctx.args.compression);
             let mut todo = vec![];
@@ -2445,7 +2444,7 @@ async fn run_local(args: Args) -> Result<i32> {
             }
             let cluster = Arc::new(Cluster::new(
                 &ctx.args.output,
-                "ELASTICDUMP_OUTPUT",
+                "SEARCHDUMP_OUTPUT",
                 &ctx.args,
             )?);
             fs::create_dir_all(&log_dir)?;
@@ -2528,7 +2527,7 @@ fn main() {
     let code = match rt.block_on(run(args)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("multielasticdump: {e:#}");
+            eprintln!("searchdump-multi: {e:#}");
             2
         }
     };
@@ -2670,11 +2669,11 @@ mod tests {
     #[test]
     fn credentials_order_and_redaction() {
         let env = |k: &str| match k {
-            "ELASTICDUMP_INPUT_USERNAME" => Some("envu".to_string()),
-            "ELASTICDUMP_INPUT_PASSWORD" => Some("envp\n".to_string()),
+            "SEARCHDUMP_INPUT_USERNAME" => Some("envu".to_string()),
+            "SEARCHDUMP_INPUT_PASSWORD" => Some("envp\n".to_string()),
             _ => None,
         };
-        let (u, user, pass) = split_url("https://h:9200", "ELASTICDUMP_INPUT", None, &env).unwrap();
+        let (u, user, pass) = split_url("https://h:9200", "SEARCHDUMP_INPUT", None, &env).unwrap();
         assert_eq!(u.as_str(), "https://h:9200/");
         assert_eq!(
             (user.as_deref(), pass.as_deref()),
@@ -2682,7 +2681,7 @@ mod tests {
         );
         let (u, user, pass) = split_url(
             "https://a:b%40c@h:9200/base",
-            "ELASTICDUMP_INPUT",
+            "SEARCHDUMP_INPUT",
             None,
             &env,
         )
@@ -2691,9 +2690,9 @@ mod tests {
         assert_eq!((user.as_deref(), pass.as_deref()), (Some("a"), Some("b@c")));
         let file = ("fu".to_string(), "fp".to_string());
         let (_, user, _) =
-            split_url("https://h:9200", "ELASTICDUMP_INPUT", Some(&file), &env).unwrap();
+            split_url("https://h:9200", "SEARCHDUMP_INPUT", Some(&file), &env).unwrap();
         assert_eq!(user.as_deref(), Some("fu"));
-        assert!(split_url("ftp://h", "ELASTICDUMP_INPUT", None, &env).is_err());
+        assert!(split_url("ftp://h", "SEARCHDUMP_INPUT", None, &env).is_err());
     }
 
     #[test]
@@ -2747,7 +2746,7 @@ mod tests {
         fs::remove_file(r.join("a.data.json.zst")).unwrap();
         // a manifest wins and failed entries are skipped
         let mut m = Manifest {
-            tool: "multielasticdump".into(),
+            tool: "searchdump-multi".into(),
             version: "t".into(),
             ..Default::default()
         };
@@ -2900,7 +2899,7 @@ mod tests {
         let parse = |a: &[&str]| {
             Args::try_parse_from(
                 [
-                    "multielasticdump",
+                    "searchdump-multi",
                     "--input",
                     "http://h:9200",
                     "--output",
@@ -2977,7 +2976,7 @@ mod tests {
     fn node_ignore_flags() {
         let p = |extra: &[&str]| {
             let mut v = vec![
-                "multielasticdump",
+                "searchdump-multi",
                 "--input=http://h:9200",
                 "--output=/tmp/x",
             ];

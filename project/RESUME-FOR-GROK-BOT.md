@@ -1,11 +1,11 @@
-# Resume elasticdump-rs (written for the Grok Bot picking this up)
+# Resume searchdump-rs, formerly elasticdump-rs-fork (written for the Grok Bot picking this up)
 
 ## Project
-A Rust rewrite of Node elasticdump, based on https://github.com/tenyears-tech/elasticdump-rs. The project lives at https://github.com/robertgoley/elasticdump-rs-fork (public). **Commit future work to `main` and push it to this fork with a normal `git push` (never force).** Never push to upstream (tenyears-tech) or any other repository, and never open PRs.
+A Rust rewrite of Node elasticdump, based on https://github.com/tenyears-tech/elasticdump-rs. The project lives at https://github.com/robertgoley/searchdump-rs (public; renamed from elasticdump-rs-fork on 2026-11-11, the old URL redirects). Since L-810a the crate is `searchdump-rs` with the binaries `searchdump` and `searchdump-multi`; env vars are `SEARCHDUMP_*` (old `ELASTICDUMP_*` names still work, deprecated). **Commit future work to `main` and push it to this fork with a normal `git push` (never force).** Never push to upstream (tenyears-tech) or any other repository, and never open PRs.
 
 ## Restore
     gh auth setup-git      # gh must be logged in as the fork owner
-    git clone https://github.com/robertgoley/elasticdump-rs-fork.git /workspace/elasticdump-rs
+    git clone https://github.com/robertgoley/searchdump-rs.git /workspace/elasticdump-rs
     mkdir -p /workspace/elasticdump-rs-plan && cp -a /workspace/elasticdump-rs/project/plan/. /workspace/elasticdump-rs-plan/
 `origin` is the fork and `main` tracks `origin/main`; that is the branch to work on and push. The old local branch `rewrite` (code only, no project/) was merged into `main` at a3b00c5 and is no longer the work branch.
 The junk files `oom` and `test_query_elasticdump_rs_test_857109_16.json` were removed from git in L-803 and are now in .gitignore; if they show up again, never commit them; keep `target/` out of commits.

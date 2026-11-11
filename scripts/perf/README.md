@@ -2,7 +2,7 @@
 
 **Status: defined and offline-tested; real Podman runs and initial baselines are pending.**
 This is the single-machine entrypoint for repeatable performance regression tests and
-comparisons with **Node elasticdump 6.125.1**, including both multielasticdump binaries.
+comparisons with **Node elasticdump 6.125.1**, including `searchdump-multi` against Node's `multielasticdump`.
 It complements, not replaces, the fault, memory, compression-level and concurrency
 investigations in [../load/README.md](../load/README.md).
 
@@ -59,13 +59,13 @@ Offline `--dry-run`/`--help` additionally need host Python **3.11+**, but do not
    [../it/images.lock](../it/images.lock), including Alpine/toxiproxy helpers (which are
    checked but not started as database engines). Missing pins are a hard prerequisite
    error, not a silently skipped engine. `../it/check-pins.sh` remains authoritative.
-2. The entrypoint builds `localhost/elasticdump-rs-perf:1` if absent, using
+2. The entrypoint builds `localhost/searchdump-rs-perf:1` if absent, using
    `Containerfile`: the existing public Rust/Debian builder digest, Python, curl,
    OpenSSL, a Podman remote client, Node/npm, and Rust **1.91.1**. npm uses the checked-in
    integrity-locked dependency graph, exact elasticdump 6.125.1, and `--ignore-scripts`.
    Lifecycle scripts are never executed. The apt-provided Node/runtime packages are not
    digest-pinned independently: retain the built controller image for comparable runs.
-3. Release `elasticdump-rs`, `multielasticdump`, `edgen`, `edverify` are built **inside
+3. Release `searchdump`, `searchdump-multi`, `edgen`, `edverify` are built **inside
    that controller**, before starting any engine, with
    `cargo +1.91.1 build --locked --release --workspace --bins`. The persistent target is
    `results/perf/build`; Cargo runs on every invocation to avoid stale executables.
@@ -167,7 +167,7 @@ records, not ten million multi-MB documents. For L1 use a dedicated host with ro
 all pinned images, build products, and engine storage in addition to the payload estimate.
 Podman storage may be on another filesystem: ensure it has the same free-space allowance.
 
-The controller holds the **same host `/tmp/elasticdump-rs-it.lock`** as IT/load runners for
+The controller holds the **same host `/tmp/searchdump-it.lock`** as IT/load runners for
 the entire sequence. Existing IT containers cause refusal without deleting them. Container
 RAM/CPU limits come from `up.sh` (CPU count is the host's available count for both tools);
 rootless systems must have cgroup-v2 delegation to enforce Podman caps. No claimed watchdog
@@ -243,7 +243,7 @@ child-only flags after `--`; Node's parent receives them directly. Thus both wri
 `INDEX.json`, unsplit, without metadata transfer. The source reference directory has
 nonempty mapping markers for Rust's safe manifest-free discovery (Node ignores those
 when data-only is selected). Both loads auto-create fresh prefixed target indices;
-pre-creation would make Rust multielasticdump refuse an existing index. Every restored
+pre-creation would make Rust searchdump-multi refuse an existing index. Every restored
 index is compared to its own source, so dynamic mapping problems fail the cell.
 Rust manifest/child logs are kept out of the payload-byte measurements. Parallelism is
 index-level **1, 4, 8**, not an unequally configured per-document writer.
@@ -299,7 +299,7 @@ refers to data payloads, not Rust's manifest. Full raw metrics retain sampled RS
 threads, I/O, context switches, retries and cluster stats.
 
 Caveat inherited from `measure.py`: wait4 max RSS is a process/descendant high-water value,
-**not the sum of simultaneous multielasticdump workers**, and can include the launcher's
+**not the sum of simultaneous searchdump-multi workers**, and can include the launcher's
 RSS floor; `/proc` sampling includes the parent and immediate children, not every
 recursive descendant. CPU/RSS multi figures are therefore diagnostic, not authoritative
 whole-tree accounting. Wall throughput remains comparable because it includes all work.

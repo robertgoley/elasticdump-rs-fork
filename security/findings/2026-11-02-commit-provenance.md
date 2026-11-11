@@ -5,7 +5,7 @@ Scope: all 351 commits reachable from `main` at 37fa3ac.
 ## Command
 ```
 git log --format='%an <%ae> | %cn <%ce> | %G?' | sort | uniq -c | sort -rn
-gh api repos/robertgoley/elasticdump-rs-fork/branches/main/protection
+gh api repos/robertgoley/searchdump-rs/branches/main/protection
 ```
 
 ## Results

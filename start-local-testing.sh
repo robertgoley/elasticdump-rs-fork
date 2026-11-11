@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start-local-testing.sh: prep, start, load and test elasticdump-rs on one local
+# start-local-testing.sh: prep, start, load and test searchdump on one local
 # machine against podman-hosted Elasticsearch/OpenSearch, one engine at a time.
 #
 #   ./start-local-testing.sh [options]
@@ -42,7 +42,7 @@ STEPS="prep,images,build,it,load,extra,perf"
 ENGINES="es710,es717,es819,elasticsearch8,elasticsearch,os13,opensearch"
 TIER=L0 REPS=3 PLACE=big UPDATE_BASELINES=0 HOST_TOOLS=0 INSTALL_DEPS=0 PULL=1 DRY=0
 TOOLCHAIN=1.91.1
-NODE_DIR="${NODE_DIR:-$HOME/.cache/elasticdump-rs/node-ed}"
+NODE_DIR="${NODE_DIR:-$HOME/.cache/searchdump/node-ed}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

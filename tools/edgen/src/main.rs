@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 #[command(
     name = "edgen",
     version,
-    about = "Seeded, byte-reproducible test data for elasticdump-rs"
+    about = "Seeded, byte-reproducible test data for searchdump"
 )]
 struct Cli {
     #[command(subcommand)]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Native-code allow-list (TST-SUP-021, L-213).
 
-Fails when a crate in the shipped Linux graph (normal + build deps of elasticdump-rs, x86_64 and
+Fails when a crate in the shipped Linux graph (normal + build deps of searchdump, x86_64 and
 aarch64 gnu) brings native code and is not on the allow-list. Native code is any of:
   * a `links = ...` key,
   * a build dependency on cc / cmake / bindgen / pkg-config / autotools,
@@ -31,7 +31,7 @@ def meta(plat):
 
 def closure(m):
     nodes = {n["id"]: n for n in m["resolve"]["nodes"]}
-    root = next(p["id"] for p in m["packages"] if p["name"] == "elasticdump-rs")
+    root = next(p["id"] for p in m["packages"] if p["name"] == "searchdump-rs")
     seen, st = set(), [root]
     while st:
         i = st.pop()
@@ -52,7 +52,7 @@ def sources(pkgdir):
 
 def tree_closure(m, plat, manifest):
     """Real feature-resolved graph of the shipped binary (normal + build deps) via `cargo tree`."""
-    out = subprocess.run(["cargo", "tree", "-p", "elasticdump-rs", "-e", "normal,build", "--target", plat,
+    out = subprocess.run(["cargo", "tree", "-p", "searchdump-rs", "-e", "normal,build", "--target", plat,
                           "--prefix", "none", "-f", "{p}", "--locked", "--manifest-path", manifest],
                          check=True, capture_output=True, text=True).stdout
     want = set()

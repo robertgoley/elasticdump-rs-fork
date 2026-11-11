@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-BIN=${EDRS_BIN:-$ROOT/target/debug/elasticdump-rs}
+BIN=${EDRS_BIN:-$ROOT/target/debug/searchdump}
 WORK=${ODT_WORK:-$(mktemp -d /tmp/edrs-odt.XXXXXX)}
 DOCS=${ODT_DOCS:-5000}
 PASS=0

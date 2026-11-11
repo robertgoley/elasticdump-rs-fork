@@ -16,20 +16,20 @@ use support::golden::{self, Meta, Normaliser, Recorder, Replay};
 use support::router_mock::{Reply, Route, RouterMock};
 
 fn bin(args: &[String]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"))
+    Command::new(env!("CARGO_BIN_EXE_searchdump"))
         .args(args)
         .arg("--quiet")
         .output()
-        .expect("spawn elasticdump-rs")
+        .expect("spawn searchdump")
 }
 
 /// Without `--quiet`, so server warnings reach stderr (TST-API-041).
 async fn run_loud(args: Vec<String>) -> Output {
     tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"))
+        Command::new(env!("CARGO_BIN_EXE_searchdump"))
             .args(&args)
             .output()
-            .expect("spawn elasticdump-rs")
+            .expect("spawn searchdump")
     })
     .await
     .unwrap()

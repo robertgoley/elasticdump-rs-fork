@@ -63,7 +63,7 @@ raw = frame(0x38, [(0, len(plain), plain)])
 rle = frame(0x38, [(0, 5, b'{"v":'), (1, 4096, b"7"), (0, 2, b"}\n")])
 skip = b"\x50\x2a\x4d\x18\x04\x00\x00\x00junk"
 seeds["zstd_in"] += [raw, rle, raw + skip + rle, raw[:-3], raw + b"junk", frame(0xa8, [(0, 1, b"{")])]
-binp = root / "target" / "release" / "elasticdump-rs"
+binp = root / "target" / "release" / "searchdump"
 if binp.exists():
     with tempfile.TemporaryDirectory() as td:
         src = pathlib.Path(td) / "in.json"

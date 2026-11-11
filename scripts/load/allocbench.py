@@ -118,11 +118,11 @@ def main():
     variants = [parse_variant(v) for v in a.variant]
     ops = a.ops.split(",")
     sizes = [int(x) for x in a.docs.split(",")]
-    lock = open("/tmp/elasticdump-rs-it.lock", "w")
+    lock = open("/tmp/searchdump-it.lock", "w")
     if os.environ.get("IT_LOCK_HELD") != "1":
         fcntl.flock(lock, fcntl.LOCK_EX)
     run_id = a.run_id or datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-allocbench"
-    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/elasticdump-rs-load"), run_id)
+    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/searchdump-load"), run_id)
     os.makedirs(work, mode=0o700, exist_ok=True)
     resdir = os.path.join(ROOT, "results", "load", run_id)
     os.makedirs(resdir, exist_ok=True)

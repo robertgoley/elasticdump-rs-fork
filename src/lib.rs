@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod config;
 pub mod endpoint;
+pub mod envnames;
 #[cfg(any(feature = "fuzz", test))]
 pub mod fuzz_api;
 pub mod http;
@@ -631,7 +632,7 @@ async fn es_source_options(
 /// in [`register_secrets`].
 fn register_early_secrets(cli: &Cli) {
     let env = [Direction::Input, Direction::Output]
-        .map(|d| std::env::var(format!("{}_PASSWORD", d.env_prefix())).ok());
+        .map(|d| crate::envnames::var(&format!("{}_PASSWORD", d.env_prefix())));
     for p in [
         &cli.input_password,
         &cli.output_password,
@@ -821,7 +822,7 @@ async fn run_meta(
 }
 
 /// `--type alias` with a two-segment `--input` URL and no `--input-index`:
-/// elasticdump reads `host/index/alias`; elasticdump-rs would read a base
+/// elasticdump reads `host/index/alias`; searchdump would read a base
 /// path. Follow elasticdump, with a warning.
 fn node_alias_url(cli: &Cli, input: &mut Endpoint) {
     let Endpoint::Es(ep) = input else { return };
@@ -1209,7 +1210,7 @@ mod compression_default_tests {
     use crate::pipeline::file_sink::Codec;
 
     fn codec(extra: &[&str]) -> Option<Codec> {
-        let mut v = vec!["elasticdump-rs", "--input", "http://localhost:9200/i"];
+        let mut v = vec!["searchdump", "--input", "http://localhost:9200/i"];
         v.extend_from_slice(&["--output", "dump.json"]);
         v.extend_from_slice(extra);
         let cli = Cli::try_parse_from(v).unwrap();

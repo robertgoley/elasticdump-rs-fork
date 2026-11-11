@@ -11,7 +11,7 @@
 ```
 scripts/data/fetch.sh --list                    # table: tier, licence class, pinned?
 scripts/data/fetch.sh --verify                  # manifest, licence gate and cached checksums
-scripts/data/fetch.sh http_logs_1k nasa_jul95   # download into $ED_DATA_CACHE (default /var/tmp/elasticdump-rs-data)
+scripts/data/fetch.sh http_logs_1k nasa_jul95   # download into $ED_DATA_CACHE (default /var/tmp/searchdump-data)
 scripts/data/fetch.sh --max-docs 100000 --out head.ndjson http_logs_191998   # prefix without full decompression
 scripts/data/convert.sh http_logs_191998 [--index NAME] [--max-docs N]       # -> converted/<name>.ndjson.zst (+ sha256)
 scripts/data/selftest.sh                        # offline test against a loopback HTTP server

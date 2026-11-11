@@ -18,7 +18,7 @@ case "${1:-up}" in
     if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$PORT "; then
       echo "toxiproxy: port $PORT is busy (set TOXIPROXY_PORT)" >&2; exit 1
     fi
-    podman run -d --name "$NAME" --label elasticdump-rs-it=1 --network host "$IMAGE" \
+    podman run -d --name "$NAME" --label searchdump-it=1 --network host "$IMAGE" \
       -host 127.0.0.1 -port "$PORT" >/dev/null
     for _ in $(seq 1 50); do
       if curl -fsS "http://127.0.0.1:$PORT/version" >/dev/null 2>&1; then

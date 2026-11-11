@@ -19,12 +19,12 @@ const ES819: &str =
 const CLEARED: &str = r#"{"succeeded":true,"num_freed":1}"#;
 
 async fn run(args: &[&str]) -> Output {
-    let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_searchdump"));
     for v in [
-        "ELASTICDUMP_INPUT_USERNAME",
-        "ELASTICDUMP_INPUT_PASSWORD",
-        "ELASTICDUMP_OUTPUT_USERNAME",
-        "ELASTICDUMP_OUTPUT_PASSWORD",
+        "SEARCHDUMP_INPUT_USERNAME",
+        "SEARCHDUMP_INPUT_PASSWORD",
+        "SEARCHDUMP_OUTPUT_USERNAME",
+        "SEARCHDUMP_OUTPUT_PASSWORD",
         "RUST_LOG",
     ] {
         c.env_remove(v);

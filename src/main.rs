@@ -91,18 +91,18 @@ fn install_panic_hook() {
 /// A panic report with the registered secrets and the command line's
 /// `user:password@` masked.
 fn panic_report(report: &str, args: &[String]) -> String {
-    let report = elasticdump_rs::endpoint::scrub_args(report, args);
-    elasticdump_rs::secrets::scrub(&report)
+    let report = searchdump_rs::endpoint::scrub_args(report, args);
+    searchdump_rs::secrets::scrub(&report)
 }
 
 async fn async_main() {
-    if let Err(error) = elasticdump_rs::run().await {
+    if let Err(error) = searchdump_rs::run().await {
         let args: Vec<String> = std::env::args().collect();
-        let msg = elasticdump_rs::endpoint::scrub_args(&format!("{error:#}"), &args);
-        let msg = elasticdump_rs::secrets::scrub(&msg);
-        let msg = elasticdump_rs::emfile_hint(msg);
+        let msg = searchdump_rs::endpoint::scrub_args(&format!("{error:#}"), &args);
+        let msg = searchdump_rs::secrets::scrub(&msg);
+        let msg = searchdump_rs::emfile_hint(msg);
         eprintln!("Error: {msg}");
-        std::process::exit(elasticdump_rs::exit_code(&error));
+        std::process::exit(searchdump_rs::exit_code(&error));
     }
 }
 
@@ -111,9 +111,9 @@ mod tests {
     /// D-4: a panic message that carries a password prints it masked.
     #[test]
     fn panic_reports_are_scrubbed() {
-        elasticdump_rs::secrets::register("FAKE-panic-pw-1");
+        searchdump_rs::secrets::register("FAKE-panic-pw-1");
         let args = vec![
-            "elasticdump-rs".to_string(),
+            "searchdump".to_string(),
             "--input=http://u:FAKE-panic-url-2@h:9200/i".to_string(),
         ];
         let r = super::panic_report(

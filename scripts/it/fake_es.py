@@ -2,9 +2,9 @@
 """Tiny in-memory stand-in for an Elasticsearch/OpenSearch node, for the
 multielasticdump round-trip test (scripts/it/multielasticdump-roundtrip.sh).
 
-Covers only what elasticdump-rs settings/analyzer/mapping/alias/data and
+Covers only what searchdump settings/analyzer/mapping/alias/data and
 template/component_template/index_template/policy/script runs and
-multielasticdump call: /, _cat/indices, _cat/aliases, index create/get/delete,
+searchdump-multi call: /, _cat/indices, _cat/aliases, index create/get/delete,
 _settings, _mapping, _aliases, _search + scroll, _bulk, _refresh, _count,
 _data_stream (a bulk create into a name that an index template with
 data_stream matches creates the stream), _template, _component_template,

@@ -1,6 +1,6 @@
 # edverify: a document-set verifier (TST-INF-005)
 
-edverify is a test-only tool. It does not depend on elasticdump-rs, so a bug in the tool under test cannot hide itself.
+edverify is a test-only tool. It does not depend on searchdump, so a bug in the tool under test cannot hide itself.
 
 ```
 edverify digest [--canonical [--decimal-numbers]] [--index-as NAME] <input>...       # JSON digest on stdout (or --out)

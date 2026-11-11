@@ -50,7 +50,7 @@ LOAD_PLACE=runner scripts/load/run.sh L1R dump-restore-logs
 
 **Tiers and places.** These are defined in `scenarios/tiers.toml`. The runner refuses, with exit code 2, a tier that is not allowed at the place, or one whose heap or estimated disk exceeds the place budget. On the box, L2 is never allowed.
 
-**Resource guards.** Before starting, the runner takes the shared lock `/tmp/elasticdump-rs-it.lock`. It then checks memory (MemAvailable ≥ 2×heap + 512 MB + tool budget) and disk.
+**Resource guards.** Before starting, the runner takes the shared lock `/tmp/searchdump-it.lock`. It then checks memory (MemAvailable ≥ 2×heap + 512 MB + tool budget) and disk.
 
 **Seeding.** The runner seeds each index from `edgen` through its own `_bulk` client. Edge-case documents that the engine rejects are recorded per reason in `seeds[].reject_reasons`, together with `seeds[].overwritten`; they are not counted as failures. The reference for verification is always the digest of what the engine stored.
 
@@ -273,7 +273,7 @@ the authoritative 10M curves on dedicated cores are Phase B (B10).
 `python3 scripts/load/nodecmp.py <tier> [--docs N] [--reps 3] [--node PATH] [--scenarios a,b,...] [--run-id ID] [--keep]`
 
 This is the load-scale version of `scripts/benchmark/quick-vs-node.py`. It runs the README Performance scenarios and
-the PLAN.md §8 scenarios for upstream Node elasticdump and for elasticdump-rs, with the same flags for both. The Node
+the PLAN.md §8 scenarios for upstream Node elasticdump and for searchdump, with the same flags for both. The Node
 CLI defaults to `/tmp/ed/node_modules/.bin/elasticdump`, or `$NODE_ED`. It must be installed with
 `--ignore-scripts`; the script only runs the CLI and never runs npm.
 

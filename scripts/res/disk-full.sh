@@ -3,14 +3,14 @@
 # The run must fail (exit 1) naming the error, leave the existing destination untouched and
 # leave no staging (".part-") or moved-aside (".edrs-replaced-") files behind.
 #
-#   scripts/res/disk-full.sh [path/to/elasticdump-rs]   (default target/debug/elasticdump-rs)
+#   scripts/res/disk-full.sh [path/to/searchdump]   (default target/debug/searchdump)
 #
 # sudo is used ONLY to mount and unmount a 2 MB tmpfs on a private temporary directory
 # (owner-approved scope: small tmpfs/loop mounts for disk-full tests); it is unmounted on
 # every exit path. Exit 0 = pass, 1 = fail, 77 = skipped (no passwordless sudo).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-bin="${1:-target/debug/elasticdump-rs}"
+bin="${1:-target/debug/searchdump}"
 [[ -x "$bin" ]] || { echo "missing $bin (cargo build first)" >&2; exit 1; }
 sudo -n true 2>/dev/null || { echo "disk-full: no passwordless sudo; skipping" >&2; exit 77; }
 work=$(mktemp -d)

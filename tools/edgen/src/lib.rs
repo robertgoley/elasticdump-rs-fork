@@ -30,7 +30,7 @@ pub const MIXED: &[(&str, u32)] = &[("logs", 60), ("metrics", 20), ("nested", 10
 pub enum Format {
     /// One `_source` per line.
     Source,
-    /// `{"_index","_id","_source"[,"_routing"]}` (elasticdump-rs --input=file).
+    /// `{"_index","_id","_source"[,"_routing"]}` (searchdump --input=file).
     Elasticdump,
     /// `_bulk` action + source line (harness seeding).
     Bulk,

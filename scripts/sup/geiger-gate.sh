@@ -26,11 +26,11 @@ for p in d["packages"]:
     n = sum(v["unsafe_"] for v in u.values())
     name = pid["name"]
     cur[name] = cur.get(name, 0) + n
-    if name == "elasticdump-rs":
+    if name == "searchdump-rs":
         forbid = p["unsafety"]["forbids_unsafe"]
 summary = {"total_used_unsafe": sum(cur.values()),
            "crates_with_unsafe": sum(1 for v in cur.values() if v),
-           "elasticdump_rs_forbids_unsafe": forbid,
+           "searchdump_rs_forbids_unsafe": forbid,
            "per_crate": dict(sorted(cur.items()))}
 if mode == "--update":
     json.dump(summary, open(base, "w"), indent=1, sort_keys=False); open(base, "a").write("\n")
@@ -39,7 +39,7 @@ if mode == "--update":
 b = json.load(open(base))
 bad = []
 if forbid is not True:
-    bad.append("elasticdump-rs no longer has #![forbid(unsafe_code)]")
+    bad.append("searchdump no longer has #![forbid(unsafe_code)]")
 for k, v in cur.items():
     old = b["per_crate"].get(k)
     if old is None and v:

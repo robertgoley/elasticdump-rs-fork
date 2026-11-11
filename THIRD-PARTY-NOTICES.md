@@ -1,12 +1,14 @@
 # Third-party notices
 
-elasticdump-rs is licensed under the MIT License (see [LICENSE](LICENSE)). It ships with, or is built from, the
+searchdump-rs is licensed under the MIT License (see [LICENSE](LICENSE), Copyright (c) 2025 TenYears). It is a
+derivative of [elasticdump-rs](https://github.com/tenyears-tech/elasticdump-rs) by TenYears (MIT); LICENSE is that
+project's license and copyright notice, kept as the MIT License requires. It ships with, or is built from, the
 third-party material below, each under its own license. This file and LICENSE are included in every release archive
-and in every container image (`/usr/share/doc/elasticdump-rs/`).
+and in every container image (`/usr/share/doc/searchdump-rs/`).
 
 ## 1. elasticsearch-dump test fixtures (Apache-2.0)
 
-elasticdump-rs is a compatible re-implementation of
+searchdump-rs is a compatible re-implementation of
 [elasticsearch-dump](https://github.com/elasticsearch-dump/elasticsearch-dump) (Apache-2.0, Copyright
 elasticsearch-dump contributors). Its behaviour and defaults were studied from that source; no upstream code is
 included in the binary. Twelve test fixtures are byte-identical copies from its `test/test-resources/` directory

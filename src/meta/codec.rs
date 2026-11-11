@@ -2,7 +2,7 @@
 //!
 //! elasticdump writes every metadata type except `mapping` as one line holding
 //! a JSON *string literal* of the document (`JSON.stringify` of the response
-//! body), and its restore path can only read that form. elasticdump-rs writes
+//! body), and its restore path can only read that form. searchdump writes
 //! the same form by default (`--metaFormat object` writes a plain object,
 //! which Node cannot read) and accepts both on restore.
 

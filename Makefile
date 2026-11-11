@@ -11,7 +11,7 @@
 #   make test-image            # SUP-017 for IMAGE_VARIANT: non-root, --read-only + /data, binary set, base digest
 #   make sbom scan             # syft SBOM + grype/trivy scan of the IMAGE_VARIANT image
 REGISTRY   ?= localhost
-IMAGE_NAME ?= elasticdump-rs
+IMAGE_NAME ?= searchdump-rs
 IMAGE_TAG  ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 IMAGE      := $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
@@ -23,11 +23,12 @@ SUFFIX_dhi-alpine := -alpine
 SUFFIX_dhi-debian := -debian-dev
 SUFFIX_public     := -debian-public
 SUFFIX_alpine     := -alpine-public
-# Full repo:tag for the built image (any image target): ELASTICDUMP_IMAGE=registry/repo:tag
+# Full repo:tag for the built image (any image target): SEARCHDUMP_IMAGE=registry/repo:tag
 # (environment or make variable). When set it replaces the default tags below.
-ELASTICDUMP_IMAGE ?=
-VARIANT_IMAGE := $(if $(ELASTICDUMP_IMAGE),$(ELASTICDUMP_IMAGE),$(IMAGE)$(SUFFIX_$(IMAGE_VARIANT)))
-imgtags = $(if $(ELASTICDUMP_IMAGE),-t $(ELASTICDUMP_IMAGE),$(1))
+# ELASTICDUMP_IMAGE is the deprecated name (before L-810a), still accepted.
+SEARCHDUMP_IMAGE ?= $(ELASTICDUMP_IMAGE)
+VARIANT_IMAGE := $(if $(SEARCHDUMP_IMAGE),$(SEARCHDUMP_IMAGE),$(IMAGE)$(SUFFIX_$(IMAGE_VARIANT)))
+imgtags = $(if $(SEARCHDUMP_IMAGE),-t $(SEARCHDUMP_IMAGE),$(1))
 
 CONTAINER ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 

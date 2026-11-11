@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""L-702 (TST-SUP-002): check strace output of elasticdump-rs against an allow-list.
+"""L-702 (TST-SUP-002): check strace output of searchdump against an allow-list.
 
     trace-check.py --allow FILE --case NAME --var KEY=VALUE ... TRACE_PREFIX
     trace-check.py --selftest

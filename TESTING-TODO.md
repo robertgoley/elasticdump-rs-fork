@@ -20,7 +20,7 @@ Every test idea that is **not** part of the other agent's task plan. The delegat
 - **Sequential speed suite (t89u): pending real-engine validation.** Defined/scripted in
   [scripts/perf/README.md](scripts/perf/README.md), entrypoint `scripts/perf/run-suite.sh`.
   Run all 37 cases across the 16 plain/secure profiles (all nine database images from
-  `images.lock`) with Node elasticdump 6.125.1 and both multielasticdump binaries. Validate
+  `images.lock`) with Node elasticdump 6.125.1, including `searchdump-multi` against Node's `multielasticdump`. Validate
   the Podman-only controller build/remote socket, named-volume cleanup, auth, every
   codec/split/metadata path and failure/interruption teardown. Then run L0 and dedicated-host
   L1, record reviewed per-engine baselines, rerun with the 10% regression gate, and retain
@@ -72,13 +72,13 @@ Builds on what is already done: cargo vet and deny, the `unsafe` inventory, SBOM
 
 ## 3. Tests that come with unbuilt features
 
-Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, interop and break tests when it is built (multielasticdump, AWS SigV4 and Serverless, S3/MinIO, CSV, SOCKS5, `--delete`, transforms). AWS tests (B13) stay blocked until the owner approves a named sandbox account.
+Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, interop and break tests when it is built (searchdump-multi, AWS SigV4 and Serverless, S3/MinIO, CSV, SOCKS5, `--delete`, transforms). AWS tests (B13) stay blocked until the owner approves a named sandbox account.
 
-## multielasticdump (added 2026-11-07)
+## searchdump-multi (added 2026-11-07)
 
 - Real-cluster round trip with `scripts/it` containers: ES 7/8 -> OpenSearch 2/3 with `--lifecycle drop`, a few hundred indices at `--parallel` 4-8, zstd and gzip, and a mid-run Ctrl-C then `--resume`.
-- Load an `oslogs.py backup` directory and dump with multielasticdump, then restore with `oslogs.py` (cross-tool compatibility).
-- Image check: `multielasticdump` runs inside each image and finds `/usr/local/bin/elasticdump-rs`.
+- Load an `oslogs.py backup` directory and dump with searchdump-multi, then restore with `oslogs.py` (cross-tool compatibility).
+- Image check: `searchdump-multi` runs inside each image and finds `/usr/local/bin/searchdump`.
 - Real-cluster run (not possible on Grok Bot's computer: no podman/docker and about 3 GB of free RAM). Needs a single-node Elasticsearch 8.x and OpenSearch 2.x (1 GB heap each, security on, self-signed TLS) on the build machine, for example `podman run --network=host` with `discovery.type=single-node`. Then:
   - Dump about 20 indices (some with aliases, one with custom analysis, one empty, one hidden) plus a data stream with its component and index templates, an ILM policy, a legacy template and a stored script, with `--matchType index,alias,datastream --types=all --fileSize=50mb --parallel=4 --interval=200`.
   - Load into a fresh Elasticsearch: counts match, templates and policy present, `GET _data_stream/NAME` shows the stream with its documents, analyzer works (`_analyze`).
@@ -88,8 +88,8 @@ Each feature in [FEATURES-TODO.md](FEATURES-TODO.md) needs its own contract, int
 
 ## OpenDAL storage path (added 2026-11-11, L-809a)
 
-- **Real Backblaze B2** (needs the owner's account; B2 is not allowed without approval): `B2_APPLICATION_KEY_ID= B2_APPLICATION_KEY= B2_BUCKET= B2_BUCKET_ID= scripts/opendal-tests/b2-real.sh` (values from the environment only, never in the repo). It covers a gzip round trip, split parts, refusal of an existing object, a wrong key failing without printing it, and multielasticdump copy to and from B2. Only parsing and settings are unit tested today; no B2 mock exists that OpenDAL can use.
+- **Real Backblaze B2** (needs the owner's account; B2 is not allowed without approval): `B2_APPLICATION_KEY_ID= B2_APPLICATION_KEY= B2_BUCKET= B2_BUCKET_ID= scripts/opendal-tests/b2-real.sh` (values from the environment only, never in the repo). It covers a gzip round trip, split parts, refusal of an existing object, a wrong key failing without printing it, and searchdump-multi copy to and from B2. Only parsing and settings are unit tested today; no B2 mock exists that OpenDAL can use.
 - **Real AWS S3** (needs owner approval and a named sandbox account, as B13): SigV4 against AWS itself, virtual-host style, `AWS_SESSION_TOKEN`, a bucket in a non-default region, SSE-C, and a large (multi-GB) multipart upload with `--fileSize`.
 - Break tests: kill the S3/SFTP server mid-upload (retries, abort of the multipart upload, partial split sets), slow links with `tc`, and a full disk on the SFTP server.
-- multielasticdump reads and writes storage URLs through a local staging directory; staging space equals the dump size. Direct streaming without staging is not built.
+- searchdump-multi reads and writes storage URLs through a local staging directory; staging space equals the dump size. Direct streaming without staging is not built.
 - Note: the shared rootless podman store on the Grok Bot box has damaged layers for the OpenSearch and Elasticsearch images (not repaired, since other agents use it); `cross.sh` used an isolated store via `ODT_OS_PODMAN_ARGS="--root ~/.local/share/edrs-odt-podman --runroot /tmp/edrs-odt-podman/run"`.

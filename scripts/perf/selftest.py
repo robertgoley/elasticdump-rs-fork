@@ -247,7 +247,7 @@ class ProtocolTests(unittest.TestCase):
             directory = Path(td)
             plan = S.make_plan(args(engines='es717-plain', cases='multi-restore-p4'))
             entry = plan['engines'][0]
-            er = S.EngineRun(args(), plan, entry, {'multielasticdump': 'multi'}, directory)
+            er = S.EngineRun(args(), plan, entry, {'searchdump-multi': 'multi'}, directory)
             er.url = 'http://127.0.0.1:1'
             er.tenv = {}
             er.rs_tls, er.node_tls = [], []
@@ -305,7 +305,7 @@ class ProtocolTests(unittest.TestCase):
             subprocess.run([str(S.ROOT / 'scripts/it/down.sh')], env=env, check=True)
             calls = log.read_text()
             self.assertIn('name=-suite-run$', calls)
-            self.assertIn('label=elasticdump-rs-run=suite-run', calls)
+            self.assertIn('label=searchdump-run=suite-run', calls)
             self.assertIn('rm -f -v our-container', calls)
             self.assertIn('volume rm our-volume', calls)
 

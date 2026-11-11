@@ -6,7 +6,7 @@
   scripts/data/fetch.sh NAME...                  # download (resume) and verify
   scripts/data/fetch.sh --max-docs N --out F NAME   # first N records, decompressed (prefix only)
 
-Env: ED_DATA_CACHE (default /var/tmp/elasticdump-rs-data), ED_DATASETS (manifest
+Env: ED_DATA_CACHE (default /var/tmp/searchdump-data), ED_DATASETS (manifest
 path, default datasets.toml at the repo root), CI=true or --ci enforces the
 CI licence gate (policy.ci_license_classes).
 """
@@ -52,7 +52,7 @@ def license_gate(name, d, policy, ci):
 
 
 def cache_dir():
-    d = os.environ.get("ED_DATA_CACHE", "/var/tmp/elasticdump-rs-data")
+    d = os.environ.get("ED_DATA_CACHE", "/var/tmp/searchdump-data")
     os.makedirs(d, mode=0o755, exist_ok=True)
     return d
 
@@ -72,7 +72,7 @@ def sha256_file(p):
 
 def download(url, part):
     have = os.path.getsize(part) if os.path.exists(part) else 0
-    req = urllib.request.Request(url, headers={"User-Agent": "elasticdump-rs-fetch/1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "searchdump-fetch/1"})
     if have:
         req.add_header("Range", f"bytes={have}-")
     with urllib.request.urlopen(req, timeout=120) as r:

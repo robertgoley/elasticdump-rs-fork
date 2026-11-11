@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the elasticdump-rs container image (L-808b). Local build only unless --push is given.
+# Build the searchdump container image (L-808b). Local build only unless --push is given.
 #
 #   scripts/build-image.sh [--variant glibc|alpine] [--platform linux/amd64|linux/arm64|both]
 #                          [--imagename REF] [--tag REF]... [--name REPO] [--jobs N] [--push]
@@ -11,13 +11,13 @@
 #           Default tags: REPO:<version> and REPO:latest
 #   alpine  dhi.io/rust:*-alpine-dev builder -> dhi.io/alpine-base:*-dev runtime, target
 #           `runtime-shell` (bash, apk); musl's own allocator. Default tag: REPO:<version>-alpine
-# REPO defaults to localhost/elasticdump-rs; <version> comes from Cargo.toml.
+# REPO defaults to localhost/searchdump-rs; <version> comes from Cargo.toml.
 #
 # --platform  linux/amd64 | linux/arm64 | both (default: the host's platform). A foreign platform
 #             runs the Rust build under emulation (qemu-user-static / binfmt_misc on the host) and
 #             is slow; `both` builds a manifest list (podman build --manifest).
-# --imagename REF  full repository and tag for the image, e.g. registry.example.com/team/elasticdump-rs:1.2.3;
-#             replaces the default tags. Same as the ELASTICDUMP_IMAGE environment variable (the option wins).
+# --imagename REF  full repository and tag for the image, e.g. registry.example.com/team/searchdump-rs:1.2.3;
+#             replaces the default tags. Same as the SEARCHDUMP_IMAGE environment variable (the option wins).
 # --tag REF   additional full image reference, repeatable; with no --imagename it replaces the default tags.
 # --push      push the tags after the build. Registry auth comes only from the container tool's
 #             existing login (`podman login <registry>`); this script never reads or takes credentials.
@@ -33,7 +33,7 @@
 # --network=none. Only the host needs registry access (or a proxy). Remove .vendor/ with
 # `rm -rf .vendor` when done; it is refreshed on every build.
 #
-# Environment: ELASTICDUMP_IMAGE (as --imagename); CONTAINER (podman | docker; default podman if installed). `both` and --push of a
+# Environment: SEARCHDUMP_IMAGE (as --imagename); CONTAINER (podman | docker; default podman if installed). `both` and --push of a
 # manifest list need podman.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -41,8 +41,8 @@ cd "$(dirname "$0")/.."
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "build-image.sh: $*" >&2; exit 2; }
 
-variant=glibc; platform=""; name=localhost/elasticdump-rs; jobs=2; push=0; dry=0
-tags=(); pf_images=(); imagename="${ELASTICDUMP_IMAGE:-}"
+variant=glibc; platform=""; name=localhost/searchdump-rs; jobs=2; push=0; dry=0
+tags=(); pf_images=(); imagename="${SEARCHDUMP_IMAGE:-${ELASTICDUMP_IMAGE:-}}"  # ELASTICDUMP_IMAGE: deprecated alias (L-810a)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --variant) [[ $# -ge 2 ]] || die "--variant needs a value"; variant="$2"; shift 2 ;;
@@ -95,7 +95,7 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 if [[ -n "$imagename" ]]; then
   # repo[:tag]; a bare repo gets :<version>. Reject whitespace and anything podman would misparse.
   [[ "$imagename" =~ ^[a-z0-9][a-z0-9._/:@-]*$ && "$imagename" != *//* ]] \
-    || die "--imagename/ELASTICDUMP_IMAGE '$imagename' is not a valid image reference (lowercase repo[:tag])"
+    || die "--imagename/SEARCHDUMP_IMAGE '$imagename' is not a valid image reference (lowercase repo[:tag])"
   last="${imagename##*/}"; [[ "$last" == *:* || "$last" == *@* ]] || imagename="$imagename:$version"
   tags=("$imagename" ${tags[@]+"${tags[@]}"})
 fi

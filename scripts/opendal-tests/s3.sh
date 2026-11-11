@@ -2,12 +2,12 @@
 # L-809a: OpenDAL s3:// tests against a local S3 server in podman (--network=host), over TLS
 # with a throw-away CA, including SSE-C.
 #   scripts/opendal-tests/s3.sh minio|rustfs
-# Env: EDRS_BIN (default target/debug/elasticdump-rs), ODT_DOCS (default 5000), KEEP=1 keeps
+# Env: EDRS_BIN (default target/debug/searchdump), ODT_DOCS (default 5000), KEEP=1 keeps
 # the container. Credentials are random per run and never leave $WORK.
 set -euo pipefail
 SERVER=${1:?usage: s3.sh minio|rustfs}
 . "$(dirname "$0")/common.sh"
-MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/multielasticdump}
+MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/searchdump-multi}
 
 case $SERVER in
   minio) PORT=${ODT_MINIO_PORT:-19900}; IMAGE=${ODT_MINIO_IMAGE:-docker.io/bitnamilegacy/minio:2025.7.23} ;;
@@ -130,13 +130,13 @@ if [ "$lines" -gt 20 ] && ! grep -qF "$SK" <<<"$msg" && ! grep -qF "$SSEC_B64" <
   ok "$SERVER: debug log ($lines lines, SSE-C run) holds neither the secret key nor the SSE-C key"
 else bad "$SERVER: debug log check ($lines lines)"; fi
 
-# 7. multielasticdump: whole dump directory local -> s3 -> local, byte for byte
+# 7. searchdump-multi: whole dump directory local -> s3 -> local, byte for byte
 TREE=$WORK/tree; mkdir -p "$TREE/_cluster" "$TREE/2026.11"
 cp "$IN" "$TREE/odt.data.json"; gzip -c "$IN" >"$TREE/2026.11/odt2.data.split-0.json.gz"
 gzip -c "$IN" >"$TREE/2026.11/odt2.data.split-1.json.gz"; echo '{"odt":{}}' >"$TREE/odt.mapping.json"
 echo '{}' >"$TREE/_cluster/policy.json"; echo '{"version":1}' >"$TREE/multielasticdump.json"
-check "$SERVER: multielasticdump copy local dir -> s3" "$MULTI" --direction copy --outputStorageConfig "$CFG" --input "$TREE" --output "$S3/tree"
-check "$SERVER: multielasticdump copy s3 -> local dir" "$MULTI" --direction copy --inputStorageConfig "$CFG" --input "$S3/tree" --output "$WORK/tree.back"
+check "$SERVER: searchdump-multi copy local dir -> s3" "$MULTI" --direction copy --outputStorageConfig "$CFG" --input "$TREE" --output "$S3/tree"
+check "$SERVER: searchdump-multi copy s3 -> local dir" "$MULTI" --direction copy --inputStorageConfig "$CFG" --input "$S3/tree" --output "$WORK/tree.back"
 check "$SERVER: copied tree identical (diff -r)" diff -r "$TREE" "$WORK/tree.back"
 check_fails "$SERVER: copy onto existing objects refused" "already exists" "$MULTI" --direction copy --outputStorageConfig "$CFG" --input "$TREE" --output "$S3/tree"
 

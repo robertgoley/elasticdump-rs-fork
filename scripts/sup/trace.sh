@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# L-702 (TST-SUP-002): syscall and file-access tracing of elasticdump-rs.
+# L-702 (TST-SUP-002): syscall and file-access tracing of searchdump.
 #
 #   scripts/sup/trace.sh [--selftest] [--cases plain,tls]
 #
@@ -30,7 +30,7 @@
 # Needs strace on PATH (host strace 6.13, results/local/tools.json; ptrace of an own child
 # needs no extra privilege). EDRS_BIN overrides the binary (default: cargo build --release).
 # Logs and traces: ${TRACE_LOG_DIR:-$IT_DIR/trace}/ (trace-summary.log, observed.tsv,
-# <case>/strace.*). Containers carry elasticdump-rs-it=1 and are removed by down.sh.
+# <case>/strace.*). Containers carry searchdump-it=1 and are removed by down.sh.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 command -v strace >/dev/null || { echo "trace: strace not found" >&2; exit 2; }
-IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-it}"
 export IT_DIR
 OUT="${TRACE_LOG_DIR:-$IT_DIR/trace}"
 rm -rf "$OUT"
@@ -62,7 +62,7 @@ if [[ -n "${EDRS_BIN:-}" ]]; then
   BIN=$(readlink -f "$EDRS_BIN")
 else
   cargo build --release --locked -q
-  BIN="$ROOT/target/release/elasticdump-rs"
+  BIN="$ROOT/target/release/searchdump"
 fi
 WORK="$OUT/work"
 TRACEHOME="$OUT/home"

@@ -29,8 +29,8 @@ impl Direction {
     }
     pub fn env_prefix(self) -> &'static str {
         match self {
-            Direction::Input => "ELASTICDUMP_INPUT",
-            Direction::Output => "ELASTICDUMP_OUTPUT",
+            Direction::Input => "SEARCHDUMP_INPUT",
+            Direction::Output => "SEARCHDUMP_OUTPUT",
         }
     }
 }
@@ -255,7 +255,7 @@ pub fn parse(raw: &str, dir: Direction, index_override: Option<&str>) -> Result<
         }
     }
     if lower.starts_with("csv://") {
-        bail!("--{flag} csv: CSV transports are not supported by elasticdump-rs");
+        bail!("--{flag} csv: CSV transports are not supported by searchdump");
     }
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
         if raw.is_empty() {
@@ -450,7 +450,7 @@ fn strip_eol(v: &str) -> String {
 ///    overriding one field;
 /// 2. `user:password@` in the URL;
 /// 3. `--httpAuthFile`, and otherwise
-///    `ELASTICDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (used when its
+///    `SEARCHDUMP_{INPUT,OUTPUT}_{USERNAME,PASSWORD}` (used when its
 ///    username is set): only when 1 and 2 together do not give both a
 ///    username and a password (Node applies the auth file when the URL
 ///    lacks either), and then as a pair, with any flag still winning.
@@ -567,8 +567,8 @@ mod tests {
     #[test]
     fn auth_precedence_url_then_file_then_env_then_cli_override() {
         let env = |k: &str| match k {
-            "ELASTICDUMP_INPUT_USERNAME" => Some("envu".to_string()),
-            "ELASTICDUMP_INPUT_PASSWORD" => Some("envp".to_string()),
+            "SEARCHDUMP_INPUT_USERNAME" => Some("envu".to_string()),
+            "SEARCHDUMP_INPUT_PASSWORD" => Some("envp".to_string()),
             _ => None,
         };
         let file = ("fileu".to_string(), "filep".to_string());
@@ -640,10 +640,10 @@ mod tests {
     #[test]
     fn auth_precedence_matrix_for_both_directions() {
         let env = |k: &str| match k {
-            "ELASTICDUMP_INPUT_USERNAME" => Some("env-input-u".to_string()),
-            "ELASTICDUMP_INPUT_PASSWORD" => Some("FAKE-env-input\r\n".to_string()),
-            "ELASTICDUMP_OUTPUT_USERNAME" => Some("env-output-u".to_string()),
-            "ELASTICDUMP_OUTPUT_PASSWORD" => Some("FAKE-env-output".to_string()),
+            "SEARCHDUMP_INPUT_USERNAME" => Some("env-input-u".to_string()),
+            "SEARCHDUMP_INPUT_PASSWORD" => Some("FAKE-env-input\r\n".to_string()),
+            "SEARCHDUMP_OUTPUT_USERNAME" => Some("env-output-u".to_string()),
+            "SEARCHDUMP_OUTPUT_PASSWORD" => Some("FAKE-env-output".to_string()),
             _ => None,
         };
         let no_env = |_: &str| None;

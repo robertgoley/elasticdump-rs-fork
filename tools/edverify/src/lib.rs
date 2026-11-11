@@ -12,7 +12,7 @@
 //! changed, missing or duplicated document changes exactly one bucket and a
 //! re-scan of that bucket names the `_id`.
 //!
-//! This crate deliberately does not depend on elasticdump-rs.
+//! This crate deliberately does not depend on searchdump.
 
 use anyhow::{Context, Result, anyhow, bail};
 use sha2::{Digest as _, Sha256};

@@ -10,10 +10,10 @@
 //!    (`s3://bucket/key?endpoint=http://127.0.0.1:9000&region=eu-west-1`); a secret or a
 //!    password in the URL is refused;
 //! 2. the INI file of `--inputStorageConfig` / `--outputStorageConfig` (or
-//!    `ELASTICDUMP_INPUT_STORAGE_CONFIG` / `ELASTICDUMP_OUTPUT_STORAGE_CONFIG`), the storage
+//!    `SEARCHDUMP_INPUT_STORAGE_CONFIG` / `SEARCHDUMP_OUTPUT_STORAGE_CONFIG`), the storage
 //!    counterpart of `--httpAuthFile`: top-level `key = value` lines, optionally overridden by a
 //!    `[<scheme>]` and then a `[<scheme>.<bucket-or-host>]` section;
-//! 3. the environment: `ELASTICDUMP_<SCHEME>_<SETTING>` (`ELASTICDUMP_S3_SSE_C_KEY_FILE`), then
+//! 3. the environment: `SEARCHDUMP_<SCHEME>_<SETTING>` (`SEARCHDUMP_S3_SSE_C_KEY_FILE`), then
 //!    the standard names (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
 //!    `AWS_ENDPOINT_URL`, `AWS_REGION`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`).
 //!
@@ -116,7 +116,7 @@ const INI_ALIASES: &[(&str, Scheme, &str)] = &[
     ("key_file", Scheme::Sftp, "key"),
 ];
 
-/// Standard environment names read after `ELASTICDUMP_<SCHEME>_<SETTING>`.
+/// Standard environment names read after `SEARCHDUMP_<SCHEME>_<SETTING>`.
 fn standard_env(scheme: Scheme, key: &str) -> &'static [&'static str] {
     match (scheme, key) {
         (Scheme::S3, "access_key_id") => &["AWS_ACCESS_KEY_ID"],
@@ -133,12 +133,12 @@ fn standard_env(scheme: Scheme, key: &str) -> &'static [&'static str] {
 static CONFIG_FILES: OnceLock<[Option<PathBuf>; 2]> = OnceLock::new();
 
 fn env_config(dir: crate::endpoint::Direction) -> Option<PathBuf> {
-    std::env::var_os(format!("{}_STORAGE_CONFIG", dir.env_prefix()))
+    crate::envnames::var_os(&format!("{}_STORAGE_CONFIG", dir.env_prefix()))
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
 }
 
-/// `--inputStorageConfig` / `--outputStorageConfig` (else their `ELASTICDUMP_*` variables).
+/// `--inputStorageConfig` / `--outputStorageConfig` (else their `SEARCHDUMP_*` variables).
 /// Set once at start-up.
 pub fn set_config_files(input: Option<PathBuf>, output: Option<PathBuf>) {
     use crate::endpoint::Direction;
@@ -161,7 +161,7 @@ pub fn config_file(dir: crate::endpoint::Direction) -> Option<PathBuf> {
 }
 
 /// One storage location: a backend, its bucket or host, and an object key (or, for
-/// multielasticdump's `--output`, a key prefix).
+/// searchdump-multi's `--output`, a key prefix).
 pub struct RemoteSpec {
     pub scheme: Scheme,
     /// S3/B2 bucket, SFTP `host[:port]`; empty for `fs`.
@@ -250,7 +250,7 @@ pub fn redact(raw: &str) -> String {
 
 fn env_name(scheme: Scheme, key: &str) -> String {
     format!(
-        "ELASTICDUMP_{}_{}",
+        "SEARCHDUMP_{}_{}",
         scheme.name().to_ascii_uppercase(),
         key.to_ascii_uppercase()
     )
@@ -361,13 +361,13 @@ pub fn parse(raw: &str, config: Option<&std::path::Path>) -> Result<Option<Remot
 fn secret_hint(scheme: Scheme) -> &'static str {
     match scheme {
         Scheme::S3 => {
-            "put it in --inputStorageConfig/--outputStorageConfig (secret=, sse_c_key_file=) or AWS_SECRET_ACCESS_KEY / ELASTICDUMP_S3_* variables"
+            "put it in --inputStorageConfig/--outputStorageConfig (secret=, sse_c_key_file=) or AWS_SECRET_ACCESS_KEY / SEARCHDUMP_S3_* variables"
         }
         Scheme::B2 => {
             "put it in --inputStorageConfig/--outputStorageConfig (secret=) or B2_APPLICATION_KEY"
         }
         Scheme::Sftp => {
-            "use an SSH key (key_file= in --inputStorageConfig/--outputStorageConfig, ?key=/path, or ELASTICDUMP_SFTP_KEY) or ssh-agent"
+            "use an SSH key (key_file= in --inputStorageConfig/--outputStorageConfig, ?key=/path, or SEARCHDUMP_SFTP_KEY) or ssh-agent"
         }
         Scheme::Fs => "fs:// takes no credentials",
     }
@@ -458,7 +458,7 @@ fn resolve_settings(
         let env = std::iter::once(env_name(scheme, key))
             .chain(standard_env(scheme, key).iter().map(|s| s.to_string()));
         for name in env {
-            if let Ok(v) = std::env::var(&name)
+            if let Some(v) = crate::envnames::var(&name)
                 && !v.is_empty()
             {
                 out.insert(key.to_string(), v);
@@ -474,7 +474,7 @@ impl RemoteSpec {
         self.settings.get(key).map(String::as_str)
     }
 
-    /// The same location with another key (split parts, multielasticdump per-index files).
+    /// The same location with another key (split parts, searchdump-multi per-index files).
     pub fn with_key(&self, key: impl Into<String>) -> RemoteSpec {
         let key = key.into();
         let mut c = self.clone();
@@ -775,7 +775,7 @@ mod op {
     }
 }
 
-/// A directory side (multielasticdump): a storage URL, or a local path read and written
+/// A directory side (searchdump-multi): a storage URL, or a local path read and written
 /// through OpenDAL's `fs` service. The key always ends in `/` (a prefix).
 pub fn parse_dir(raw: &str, config: Option<&std::path::Path>) -> Result<RemoteSpec> {
     let mut spec = match parse(raw, config)? {
@@ -1127,7 +1127,7 @@ mod tests {
         assert_eq!(s.setting("application_key_id"), Some("KEYID"));
         assert_eq!(s.setting("bucket_id"), Some("x"));
         if std::env::var_os("B2_APPLICATION_KEY").is_none()
-            && std::env::var_os("ELASTICDUMP_B2_APPLICATION_KEY").is_none()
+            && std::env::var_os("SEARCHDUMP_B2_APPLICATION_KEY").is_none()
         {
             let e = s.validate().unwrap_err().to_string();
             assert!(e.contains("application_key"), "{e}");

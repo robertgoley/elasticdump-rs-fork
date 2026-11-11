@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# elasticdump-rs container image. scripts/build-image.sh (or the Makefile) picks the variant.
+# searchdump container image. scripts/build-image.sh (or the Makefile) picks the variant.
 #
 # Default (target `runtime`, tags <ver> and latest): Docker Hardened Images, Debian 13 / glibc,
 # mimalloc as the global allocator (the default for *-linux-gnu builds, see Cargo.toml)
@@ -53,19 +53,19 @@ COPY tools ./tools
 RUN --network=none --mount=type=cache,target=/src/target,id=edrs-target \
     test -f .vendor/config.toml \
       || { echo "no .vendor/: run scripts/vendor-crates.sh on the host first (or use scripts/build-image.sh / make image)" >&2; exit 1; } \
- && cargo build --locked --offline --release --config .vendor/config.toml --bin elasticdump-rs --bin multielasticdump \
- && install -D -m 0755 target/release/elasticdump-rs /out/elasticdump-rs \
- && install -D -m 0755 target/release/multielasticdump /out/multielasticdump \
- && /out/elasticdump-rs --version && /out/multielasticdump --version
+ && cargo build --locked --offline --release --config .vendor/config.toml --bin searchdump --bin searchdump-multi \
+ && install -D -m 0755 target/release/searchdump /out/searchdump \
+ && install -D -m 0755 target/release/searchdump-multi /out/searchdump-multi \
+ && /out/searchdump --version && /out/searchdump-multi --version
 # CA bundle for runtimes that lack one (runtime-shell copies it only when missing).
 RUN install -D -m 0644 /etc/ssl/certs/ca-certificates.crt /out/ca-certificates.crt
 # License and third-party notices, shipped in every image (L-808c).
-COPY LICENSE THIRD-PARTY-NOTICES.md /out/root/usr/share/doc/elasticdump-rs/
+COPY LICENSE THIRD-PARTY-NOTICES.md /out/root/usr/share/doc/searchdump-rs/
 # Root tree for the COPY-only `runtime` stage (bases without a shell): the binary, the
 # `elasticdump` symlink for scripts written for the Node tool, and an empty /data.
-RUN install -D -m 0755 /out/elasticdump-rs /out/root/usr/local/bin/elasticdump-rs \
- && install -D -m 0755 /out/multielasticdump /out/root/usr/local/bin/multielasticdump \
- && ln -s elasticdump-rs /out/root/usr/local/bin/elasticdump \
+RUN install -D -m 0755 /out/searchdump /out/root/usr/local/bin/searchdump \
+ && install -D -m 0755 /out/searchdump-multi /out/root/usr/local/bin/searchdump-multi \
+ && ln -s searchdump /out/root/usr/local/bin/elasticdump \
  && install -d -m 0755 /out/root/data
 
 # ----------------------------------------------------------------- base (labels, env)
@@ -75,23 +75,23 @@ ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG BASE_IMAGE
 ARG BASE_TAG
-LABEL org.opencontainers.image.title="elasticdump-rs" \
+LABEL org.opencontainers.image.title="searchdump-rs" \
       org.opencontainers.image.description="Back up, restore and copy Elasticsearch and OpenSearch data (elasticdump-compatible CLI, written in Rust)" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/elasticsearch-dump/elasticsearch-dump" \
+      org.opencontainers.image.source="https://github.com/robertgoley/searchdump-rs" \
       org.opencontainers.image.base.name="${BASE_IMAGE}:${BASE_TAG}"
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # ----------------------------------------------------------------- runtime-shell
 # Bases with a shell (Alpine, Debian -dev, debian:trixie-slim): `--target runtime-shell`.
 FROM base AS runtime-shell
-COPY --from=builder /out/elasticdump-rs /usr/local/bin/elasticdump-rs
-# Bulk dump/load of regex-selected indices (runs elasticdump-rs from the same directory).
-COPY --from=builder /out/multielasticdump /usr/local/bin/multielasticdump
-COPY --from=builder /out/root/usr/share/doc/elasticdump-rs/ /usr/share/doc/elasticdump-rs/
+COPY --from=builder /out/searchdump /usr/local/bin/searchdump
+# Bulk dump/load of regex-selected indices (runs searchdump from the same directory).
+COPY --from=builder /out/searchdump-multi /usr/local/bin/searchdump-multi
+COPY --from=builder /out/root/usr/share/doc/searchdump-rs/ /usr/share/doc/searchdump-rs/
 # - `elasticdump` symlink for scripts written for the Node tool
 # - CA bundle only when the base image has none
 # - /data: writable working directory for dumps (mount a volume here)
@@ -99,7 +99,7 @@ RUN --mount=type=bind,from=builder,source=/out/ca-certificates.crt,target=/tmp/c
     if command -v apk >/dev/null 2>&1; then \
       apk upgrade --no-cache && apk add --no-cache bash ca-certificates libgcc; \
     fi \
- && ln -s elasticdump-rs /usr/local/bin/elasticdump \
+ && ln -s searchdump /usr/local/bin/elasticdump \
  && if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then \
       mkdir -p /etc/ssl/certs && cp /tmp/ca.crt /etc/ssl/certs/ca-certificates.crt; \
     fi \
@@ -108,7 +108,7 @@ RUN --mount=type=bind,from=builder,source=/out/ca-certificates.crt,target=/tmp/c
 # also works on bases without that passwd entry.
 USER 65532:65532
 WORKDIR /data
-ENTRYPOINT ["/usr/local/bin/elasticdump-rs"]
+ENTRYPOINT ["/usr/local/bin/searchdump"]
 CMD ["--help"]
 
 # ----------------------------------------------------------------- runtime (default)
@@ -116,9 +116,9 @@ CMD ["--help"]
 # glibc, libgcc_s, the CA bundle and the 65532 nonroot user.
 FROM base AS runtime
 COPY --from=builder /out/root/usr/local/bin/ /usr/local/bin/
-COPY --from=builder /out/root/usr/share/doc/elasticdump-rs/ /usr/share/doc/elasticdump-rs/
+COPY --from=builder /out/root/usr/share/doc/searchdump-rs/ /usr/share/doc/searchdump-rs/
 COPY --from=builder --chown=65532:65532 /out/root/data /data
 USER 65532:65532
 WORKDIR /data
-ENTRYPOINT ["/usr/local/bin/elasticdump-rs"]
+ENTRYPOINT ["/usr/local/bin/searchdump"]
 CMD ["--help"]

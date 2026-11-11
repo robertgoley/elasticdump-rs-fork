@@ -11,10 +11,10 @@
 # Prints RESULT lines; exit 0 = every case as expected.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-BIN="${1:-target/release/elasticdump-rs}"
+BIN="${1:-target/release/searchdump}"
 : "${IT_ES_URL:?source \$IT_DIR/env first}" "${IT_CONTAINER:?}"
-podman inspect -f '{{index .Config.Labels "elasticdump-rs-it"}}' "$IT_CONTAINER" | grep -qx 1 \
-  || { echo "refusing: $IT_CONTAINER is not an elasticdump-rs-it container" >&2; exit 2; }
+podman inspect -f '{{index .Config.Labels "searchdump-it"}}' "$IT_CONTAINER" | grep -qx 1 \
+  || { echo "refusing: $IT_CONTAINER is not an searchdump-it container" >&2; exit 2; }
 U="${IT_ES_URL%/}"; N="${N:-20000}"; W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 fail=0
 j() { curl -s -H 'Content-Type: application/json' "$@"; }

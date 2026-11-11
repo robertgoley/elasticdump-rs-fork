@@ -2,7 +2,7 @@
 """TST-API-085 / L-506: differential bulk encoding against Node elasticdump.
 
 N seeded random documents (default 10000) are restored file -> "cluster" by Node elasticdump
-and by elasticdump-rs, each against scripts/node/recorder.py, which records the _bulk NDJSON.
+and by searchdump, each against scripts/node/recorder.py, which records the _bulk NDJSON.
 Per document (keyed by _id) the action line and the source line are compared byte for byte.
 A difference is "documented" only if it is fully explained by Node re-serialising the parsed
 JSON (escape forms, number forms, integer-like key order: README "Intentional differences"),
@@ -18,7 +18,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--n', type=int, default=10000)
 ap.add_argument('--seed', type=int, default=506)
 ap.add_argument('--node-ed', default=os.environ.get('NODE_ELASTICDUMP', '/tmp/ed/node_modules/elasticdump/bin/elasticdump'))
-ap.add_argument('--bin', default='target/release/elasticdump-rs')
+ap.add_argument('--bin', default='target/release/searchdump')
 ap.add_argument('--json')
 a = ap.parse_args()
 here = os.path.dirname(os.path.abspath(__file__))

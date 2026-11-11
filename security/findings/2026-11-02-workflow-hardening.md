@@ -10,7 +10,7 @@ rg -n -A3 '^permissions:|^\s+permissions:' .github/workflows
 rg -n 'pull_request_target|workflow_run|issue_comment' .github/workflows
 rg -n '\$\{\{\s*github\.(event|head_ref)' .github/workflows      # injection candidates
 rg -n -o 'secrets\.[A-Z_]+' .github/workflows ; rg -c persist-credentials .github/workflows
-gh api repos/robertgoley/elasticdump-rs-fork/branches/main/protection
+gh api repos/robertgoley/searchdump-rs/branches/main/protection
 ```
 
 ## Results

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Backup and restore one OpenSearch index with elasticdump-rs.
+"""Backup and restore one OpenSearch index with searchdump.
 
-elasticdump-rs runs in podman on the host network. When the cluster uses
+searchdump runs in podman on the host network. When the cluster uses
 basic auth, credentials go in an env file, not on the process command
 line. Cluster calls and the settings cleanup use the Python standard library.
 """
@@ -21,15 +21,15 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Fork: https://github.com/robertgoley/elasticdump-rs-fork
+# Fork: https://github.com/robertgoley/searchdump-rs
 # The image defaults to uid 65532. Dump directories belong to the invoking
 # user, so the container runs as 0:0. Under rootless podman that uid is the
 # invoking user; under rootful podman it matches the old Node image.
-IMAGE = "sjc.vultrcr.com/eti1/elasticdump-rs:0.1.0"
+IMAGE = "sjc.vultrcr.com/eti1/searchdump-rs:0.1.0"
 CONTAINER_USER = "0:0"
 LIFECYCLE_MODES = ("drop", "convert")
 # Data-file compression. gzip stays the default so existing backups restore
-# unchanged. zstd1 and zstd3 are elasticdump-rs --compressionType zstd at
+# unchanged. zstd1 and zstd3 are searchdump --compressionType zstd at
 # levels 1 and 3; both write INDEX.data.json.zst.
 COMPRESSIONS = {
     "gzip": ("gz", ("--fsCompress",)),
@@ -39,7 +39,7 @@ COMPRESSIONS = {
 DATA_FLAGS = (
     "--limit=5000",
     "--scrollTime=10m",
-    # Accepted for compatibility. elasticdump-rs always uses POST.
+    # Accepted for compatibility. searchdump always uses POST.
     "--scroll-with-post",
     "--retryAttempts=5",
     "--retryDelay=2000",
@@ -75,7 +75,7 @@ restore loads those files onto the named index, in that order.
 --compression selects data-file compression. The default, gzip, writes
 INDEX.data.json.gz. zstd1 and zstd3 write INDEX.data.json.zst at zstd
 level 1 or 3. restore must name the compression used for that data file.
---lifecycle applies to restore and is passed through to elasticdump-rs.
+--lifecycle applies to restore and is passed through to searchdump.
 The default, drop, passes
 --excludeSettings=index.lifecycle,index.routing.allocation.include._tier_preference.
 convert passes --convertIlmToIsm, which translates an ILM policy document
@@ -180,7 +180,7 @@ class Cluster:
 
 
 def lifecycle_flags(mode: str) -> tuple[str, ...]:
-    # elasticdump-rs drops these on a settings restore. A file does not name
+    # searchdump drops these on a settings restore. A file does not name
     # the source engine, so the tool keeps them unless --excludeSettings says so.
     if mode == "drop":
         return (
@@ -262,11 +262,11 @@ def auth_env(username: str, password: str, *, output: bool) -> list[str]:
     lines = ["NODE_TLS_REJECT_UNAUTHORIZED=0"]
     if not username:
         return lines
-    lines.append(f"ELASTICDUMP_INPUT_USERNAME={username}")
-    lines.append(f"ELASTICDUMP_INPUT_PASSWORD={password}")
+    lines.append(f"SEARCHDUMP_INPUT_USERNAME={username}")
+    lines.append(f"SEARCHDUMP_INPUT_PASSWORD={password}")
     if output:
-        lines.append(f"ELASTICDUMP_OUTPUT_USERNAME={username}")
-        lines.append(f"ELASTICDUMP_OUTPUT_PASSWORD={password}")
+        lines.append(f"SEARCHDUMP_OUTPUT_USERNAME={username}")
+        lines.append(f"SEARCHDUMP_OUTPUT_PASSWORD={password}")
     return lines
 
 
@@ -411,7 +411,7 @@ def restore_index(
         settings_flags = lifecycle_flags(lifecycle)
 
         print(f"restore settings for {index}")
-        print("elasticdump-rs " + " ".join(settings_flags))
+        print("searchdump " + " ".join(settings_flags))
         require_success(
             run_dump(
                 env_file,
@@ -428,7 +428,7 @@ def restore_index(
             env_file, mounts, f"/dump/{index}.mapping.json", target, "mapping"
         )
         if mapping_code != 0:
-            print("mapping via elasticdump-rs failed, applying directly", file=sys.stderr)
+            print("mapping via searchdump failed, applying directly", file=sys.stderr)
             client.put_mapping(mapping)
 
         print(f"restore data for {index}")
@@ -454,7 +454,7 @@ def restore_index(
 
 
 def normalize_credential(value: str) -> str:
-    # elasticdump-rs drops a trailing CR/LF. A password that keeps one
+    # searchdump drops a trailing CR/LF. A password that keeps one
     # never matches and the cluster returns 401.
     return value.rstrip("\r\n")
 

@@ -13,7 +13,7 @@
 # Writes $IT_DIR/env (source it) with IT_ES_URL, IT_PROFILE and, for the
 # secure profile, IT_ADMIN_USER/IT_ADMIN_PW/IT_CA/IT_CLIENT_CERT/IT_CLIENT_KEY/
 # IT_CLIENT_KEY_ENC/IT_CLIENT_KEY_PASS. Containers carry the label
-# elasticdump-rs-it=1 so down.sh can always find them.
+# searchdump-it=1 so down.sh can always find them.
 set -euo pipefail
 
 PROFILE="${1:-opensearch-plain}"
@@ -53,7 +53,7 @@ RUN_ID="${RUN_ID:-$$}"
 # F-13: per-run secrets live in a private directory (not world-readable /tmp
 # defaults): umask 077, IT_DIR mode 0700, random passwords and key passphrase.
 umask 077
-IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-it}"
 gen_secret() { printf 'It-%s-Aa1!' "$(openssl rand -hex 12)"; }
 KEY_PASS="${IT_KEY_PASS:-$(openssl rand -hex 16)}"
 HEAP="${OS_HEAP:-512m}"
@@ -147,7 +147,7 @@ case "$PROFILE" in
   opensearch-plain)
     PORT="${PORT:-19200}"
     NAME="it-os-plain-${RUN_ID}"
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+    engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -e discovery.type=single-node \
       -e DISABLE_SECURITY_PLUGIN=true -e DISABLE_INSTALL_DEMO_CONFIG=true \
@@ -161,7 +161,7 @@ case "$PROFILE" in
     NAME="it-os-sec-${RUN_ID}"
     ADMIN_PW="${IT_ADMIN_PW:-$(gen_secret)}"
     [[ $OS_LEGACY_ADMIN == 1 ]] && ADMIN_PW=admin
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+    engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -e discovery.type=single-node \
       -e "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${ADMIN_PW}" \
@@ -183,7 +183,7 @@ case "$PROFILE" in
       # IT_ES_EXTRA_SETTINGS="k=v k=v" (load fault runs, L-804): extra static node settings,
       # e.g. thread_pool.write.size=1 thread_pool.write.queue_size=1 for a 429 storm.
       for kv in ${IT_ES_EXTRA_SETTINGS:-}; do OFF_MOUNTS+=(-e "$kv"); done
-      engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+      engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
         -p "127.0.0.1:${PORT}:9200" "${OFF_MOUNTS[@]}" \
         -e discovery.type=single-node \
         -e xpack.security.enabled=false \
@@ -196,7 +196,7 @@ case "$PROFILE" in
     NAME="it-es-plain-${RUN_ID}"
     if [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]]; then
       DATA="${NAME}-data"
-      engine volume create --label elasticdump-rs-it=1 --label "elasticdump-rs-run=${RUN_ID}" "$DATA" >/dev/null
+      engine volume create --label searchdump-it=1 --label "searchdump-run=${RUN_ID}" "$DATA" >/dev/null
     else
       DATA=$(es_data_dir "$NAME")
     fi
@@ -207,7 +207,7 @@ case "$PROFILE" in
     MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:Z")
     [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]] && MOUNTS=(-v "$DATA:/bitnami/elasticsearch/data:U")
     [[ "$ES_TAG" != 7.10* ]] && MOUNTS+=(-v "$IT_DIR/es-plain.yml:/opt/bitnami/elasticsearch/config/my_elasticsearch.yml:ro,Z")
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+    engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       "${MOUNTS[@]}" \
       -e "ELASTICSEARCH_HEAP_SIZE=${ES_HEAP}" \
@@ -226,7 +226,7 @@ case "$PROFILE" in
     if [[ $ES_OFFICIAL == 1 ]]; then
       CERTS=$(es_pki)
       C=/usr/share/elasticsearch/config/certs
-      engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+      engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
         -p "127.0.0.1:${PORT}:9200" \
         -v "$CERTS:$C:ro,Z" \
         -e discovery.type=single-node \
@@ -245,13 +245,13 @@ case "$PROFILE" in
     else
     if [[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]]; then
       DATA="${NAME}-data"
-      engine volume create --label elasticdump-rs-it=1 --label "elasticdump-rs-run=${RUN_ID}" "$DATA" >/dev/null
+      engine volume create --label searchdump-it=1 --label "searchdump-run=${RUN_ID}" "$DATA" >/dev/null
     else
       DATA=$(es_data_dir "$NAME")
     fi
     CERTS=$(es_pki)
     # ES 9 entitlements only let the SSL module read files under config/
-    engine run -d --name "$NAME" --label elasticdump-rs-it=1 "${CAPS[@]}" \
+    engine run -d --name "$NAME" --label searchdump-it=1 "${CAPS[@]}" \
       -p "127.0.0.1:${PORT}:9200" \
       -v "$DATA:/bitnami/elasticsearch/data:$([[ "${IT_ES_DATA_VOLUME:-0}" == 1 ]] && echo U || echo Z)" \
       -v "$CERTS:/opt/bitnami/elasticsearch/config/certs:ro,Z" \

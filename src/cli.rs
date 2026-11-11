@@ -1,5 +1,5 @@
 //! Command line interface. Flag spellings follow elasticdump exactly; flags
-//! marked "extension" are elasticdump-rs additions.
+//! marked "extension" are searchdump additions.
 
 use clap::{ArgAction, Parser, ValueEnum};
 
@@ -94,7 +94,7 @@ fn parse_type(value: &str) -> Result<DumpType, String> {
 
 #[derive(Parser, Clone)]
 #[command(
-    name = "elasticdump-rs",
+    name = "searchdump",
     author,
     version,
     about = "Back up, restore and copy Elasticsearch and OpenSearch indices, mappings and settings (elasticdump-compatible CLI)",
@@ -465,12 +465,12 @@ pub struct Cli {
 
     /// Extension (L-809a): INI file with settings and credentials for an s3://, b2:// or sftp://
     /// --input (key=, secret=, endpoint=, region=, key_file=, sse_c_key_file=, ...), like
-    /// --httpAuthFile; default $ELASTICDUMP_INPUT_STORAGE_CONFIG
+    /// --httpAuthFile; default $SEARCHDUMP_INPUT_STORAGE_CONFIG
     #[arg(long = "inputStorageConfig")]
     pub input_storage_config: Option<String>,
 
     /// Extension (L-809a): the same for an s3://, b2:// or sftp:// --output; default
-    /// $ELASTICDUMP_OUTPUT_STORAGE_CONFIG
+    /// $SEARCHDUMP_OUTPUT_STORAGE_CONFIG
     #[arg(long = "outputStorageConfig")]
     pub output_storage_config: Option<String>,
 
@@ -724,7 +724,7 @@ const OUT_OF_SCOPE: &[(&str, OosAction, &str)] = &[
     (
         "s3*",
         OosAction::Warn,
-        "Node's --s3* flags are not supported; s3:// URLs take their settings from AWS_*/ELASTICDUMP_S3_* variables or --inputStorageConfig/--outputStorageConfig (README, OpenDAL storage)",
+        "Node's --s3* flags are not supported; s3:// URLs take their settings from AWS_*/SEARCHDUMP_S3_* variables or --inputStorageConfig/--outputStorageConfig (README, OpenDAL storage)",
     ),
     ("csv*", OosAction::Warn, "CSV is not supported"),
     (
@@ -781,10 +781,10 @@ pub fn prescan_out_of_scope(args: Vec<String>) -> Result<(Vec<String>, Vec<Strin
         };
         match oos_lookup(name) {
             Some((OosAction::Error, why)) => {
-                return Err(format!("--{name}: {why} by elasticdump-rs"));
+                return Err(format!("--{name}: {why} by searchdump"));
             }
             Some((OosAction::Warn, why)) => {
-                warnings.push(format!("Ignoring --{name}: {why} by elasticdump-rs"));
+                warnings.push(format!("Ignoring --{name}: {why} by searchdump"));
                 if !has_inline_value
                     && let Some(next) = iter.peek()
                     && !next.starts_with("--")
@@ -804,7 +804,7 @@ mod tests {
 
     fn parse(extra: &[&str]) -> Result<Cli, clap::Error> {
         let mut v = vec![
-            "elasticdump-rs",
+            "searchdump",
             "--input",
             "http://localhost:9200/i",
             "--output",

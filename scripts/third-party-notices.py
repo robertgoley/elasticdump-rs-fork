@@ -28,7 +28,7 @@ def section():
     rows = []
     for key in listed:
         name, version = key.split(" ")[:2]
-        if name == "elasticdump-rs":
+        if name == "searchdump-rs":
             continue
         p = pkgs.get((name, version), {})
         lic = p.get("license") or ("see " + p["license_file"] if p.get("license_file") else "?")

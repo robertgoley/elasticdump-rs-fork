@@ -8,8 +8,12 @@ use std::process::{Command, Output, Stdio};
 use support::mock_es::{CannedResponse, MockEs};
 
 fn bin() -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"));
-    c.env_remove("ELASTICDUMP_INPUT_USERNAME")
+    let mut c = Command::new(env!("CARGO_BIN_EXE_searchdump"));
+    c.env_remove("SEARCHDUMP_INPUT_USERNAME")
+        .env_remove("SEARCHDUMP_INPUT_PASSWORD")
+        .env_remove("SEARCHDUMP_OUTPUT_USERNAME")
+        .env_remove("SEARCHDUMP_OUTPUT_PASSWORD")
+        .env_remove("ELASTICDUMP_INPUT_USERNAME")
         .env_remove("ELASTICDUMP_INPUT_PASSWORD")
         .env_remove("ELASTICDUMP_OUTPUT_USERNAME")
         .env_remove("ELASTICDUMP_OUTPUT_PASSWORD")
@@ -391,8 +395,8 @@ async fn credentials_from_auth_file_env_and_url() {
             auth.to_str().unwrap().into(),
         ],
         vec![
-            ("ELASTICDUMP_INPUT_USERNAME".into(), "envuser".into()),
-            ("ELASTICDUMP_INPUT_PASSWORD".into(), "envpass".into()),
+            ("SEARCHDUMP_INPUT_USERNAME".into(), "envuser".into()),
+            ("SEARCHDUMP_INPUT_PASSWORD".into(), "envpass".into()),
         ],
     )
     .await;
@@ -414,8 +418,8 @@ async fn credentials_from_auth_file_env_and_url() {
             "--quiet".into(),
         ],
         vec![
-            ("ELASTICDUMP_INPUT_USERNAME".into(), "envuser".into()),
-            ("ELASTICDUMP_INPUT_PASSWORD".into(), "envpass".into()),
+            ("SEARCHDUMP_INPUT_USERNAME".into(), "envuser".into()),
+            ("SEARCHDUMP_INPUT_PASSWORD".into(), "envpass".into()),
         ],
     )
     .await;
@@ -424,6 +428,62 @@ async fn credentials_from_auth_file_env_and_url() {
         mock.requests()[0]
             .to_ascii_lowercase()
             .contains(&basic("envuser", "envpass"))
+    );
+
+    // L-810a: the old ELASTICDUMP_* names still work (deprecated, with a warning that does not
+    // show the value); the new SEARCHDUMP_* name wins when both are set
+    let mock = MockEs::serve(scroll_script(&[])).await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+        ],
+        vec![
+            ("ELASTICDUMP_INPUT_USERNAME".into(), "olduser".into()),
+            (
+                "ELASTICDUMP_INPUT_PASSWORD".into(),
+                "FAKE-oldpass-l810".into(),
+            ),
+        ],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(
+        mock.requests()[0]
+            .to_ascii_lowercase()
+            .contains(&basic("olduser", "FAKE-oldpass-l810"))
+    );
+    assert!(
+        stderr(&o)
+            .contains("ELASTICDUMP_INPUT_USERNAME is deprecated; use SEARCHDUMP_INPUT_USERNAME"),
+        "{}",
+        stderr(&o)
+    );
+    assert!(!stderr(&o).contains("FAKE-oldpass-l810"));
+    let mock = MockEs::serve(scroll_script(&[])).await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+            "--quiet".into(),
+        ],
+        vec![
+            ("SEARCHDUMP_INPUT_USERNAME".into(), "newuser".into()),
+            ("SEARCHDUMP_INPUT_PASSWORD".into(), "newpass".into()),
+            ("ELASTICDUMP_INPUT_USERNAME".into(), "olduser".into()),
+            ("ELASTICDUMP_INPUT_PASSWORD".into(), "oldpass".into()),
+        ],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(
+        mock.requests()[0]
+            .to_ascii_lowercase()
+            .contains(&basic("newuser", "newpass"))
     );
 
     // URL credentials win over env
@@ -439,7 +499,7 @@ async fn credentials_from_auth_file_env_and_url() {
             "$".into(),
             "--quiet".into(),
         ],
-        vec![("ELASTICDUMP_INPUT_USERNAME".into(), "envuser".into())],
+        vec![("SEARCHDUMP_INPUT_USERNAME".into(), "envuser".into())],
     )
     .await;
     assert!(o.status.success(), "{}", stderr(&o));

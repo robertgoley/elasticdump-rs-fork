@@ -1,6 +1,6 @@
 # Supply-chain controls
 
-How elasticdump-rs implements the SUP-* requirements (TEST-REQUIREMENTS.md §7.3).
+How searchdump implements the SUP-* requirements (TEST-REQUIREMENTS.md §7.3).
 Each section names the gate that enforces it and how to run it locally.
 
 ## cargo-vet (SUP-004, L-201)
@@ -65,13 +65,13 @@ Negative check (2026-10-29): adding `libz-sys` and `num-traits` reports
 
 ## Test-only tools
 
-`tools/edverify` and `tools/edgen` are workspace members, but they are never shipped: `default-members` is the root crate, and the image builds only `elasticdump-rs`. In cargo-vet they have `criteria = "safe-to-run"` (`[policy.edgen]`, `[policy.edverify]`), so `rand`, `rand_chacha` and `ppv-lite86` need only the safe-to-run level they already had as dev-dependencies.
+`tools/edverify` and `tools/edgen` are workspace members, but they are never shipped: `default-members` is the root crate, and the image builds only `searchdump`. In cargo-vet they have `criteria = "safe-to-run"` (`[policy.edgen]`, `[policy.edverify]`), so `rand`, `rand_chacha` and `ppv-lite86` need only the safe-to-run level they already had as dev-dependencies.
 
 ## Unused dependencies and enabled features (SUP-007, L-204)
 
 - `cargo machete` runs in the `supply-chain` job on every PR and push. `rust-ini` is in
   `[package.metadata.cargo-machete] ignored`: it is imported as `ini`, which machete does not match to the package
-  name. `cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load` runs weekly in
+  name. `cargo +nightly udeps --workspace --all-targets --features searchdump-rs/load` runs weekly in
   `security.yml`; it must compile the `it`/`load` tests, otherwise `lipsum` (used only by
   `tests/integration_test.rs`) is reported as unused. L-204 removed `thiserror`, which was declared but never used.
 - No `cargo hack` on the box. The crate's own features (`it`, `load`, `chaos`, `fuzz`, and the deprecated aliases
@@ -107,7 +107,7 @@ Every non-default feature enabled in `Cargo.toml` is listed below with its reaso
 `supply-chain/build-inventory.json` lists every package that runs code at build time: build scripts and proc macros.
 
 - **All of Cargo.lock:** 45 build scripts and 18 proc macros.
-- **Shipped graph:** normal and build dependencies of `elasticdump-rs` on x86_64/aarch64 Linux, 26 build scripts and 10 proc macros. This is the feature-resolved graph from `cargo tree`; L-213 refined the over-approximated metadata closure, which had given 32/14.
+- **Shipped graph:** normal and build dependencies of `searchdump` on x86_64/aarch64 Linux, 26 build scripts and 10 proc macros. This is the feature-resolved graph from `cargo tree`; L-213 refined the over-approximated metadata closure, which had given 32/14.
 
 Each entry is pinned as `name@version` and carries a review note.
 
@@ -129,7 +129,7 @@ Verified locally on 2026-10-29 with `rust:1.99-trixie`: the probe showed the net
 
 `scripts/sup/egress.sh` runs the suites with no way off the box and fails on any attempt to
 leave it. Everything runs in one rootless pod created with `podman pod create --network none`
-(label `elasticdump-rs-it=1`): its network namespace has loopback only. Nothing on the host
+(label `searchdump-it=1`): its network namespace has loopback only. Nothing on the host
 changes: no firewall rules, routes or other containers are touched.
 
 * A logging DNS sink (`scripts/sup/egress-sink.py`) listens on 127.0.0.1:53 and [::1]:53 in
@@ -145,7 +145,7 @@ Phases, each counted on its own: `T1-unit`, `T1-contract`, `T1-plant`
 (`tests/egress_plant.rs`), `T7-chaos` (the mock-based chaos profile), `node-start` (the
 cluster from `scripts/it/up.sh` started inside the pod with `IT_POD`), `T2-it` (the IT suite
 against it, default `--profile opensearch-plain`) and `T2-image` (the built
-`localhost/elasticdump-rs:<version>` image dumping an index to a file and restoring it).
+`localhost/searchdump-rs:<version>` image dumping an index to a file and restoring it).
 A phase fails when its command fails, when it made a connection attempt off loopback, or
 when it asked DNS for any name other than `localhost` and the reserved `*.invalid`, `*.test`,
 `*.example` and `*.localhost` names that tests use to provoke resolution errors
@@ -256,7 +256,7 @@ What differs between them, and must not reach the binary:
 | | build a | build b |
 |---|---|---|
 | user | container root | uid/gid 4242 |
-| sources | `/src` | `/home/builder/work/deeper/elasticdump-rs` |
+| sources | `/src` | `/home/builder/work/deeper/searchdump` |
 | vendor / `CARGO_HOME` / target | `/vendor`, `/cargo-home`, `/target` | `/opt/v2/vendor`, `/var/tmp/ch2`, `/home/builder/tgt` |
 | umask, TZ, hostname | 022, UTC, `repro-a` | 077, Asia/Kolkata, `repro-b` |
 | start time | t | after build a plus `REPRO_PAUSE` (5 s) |

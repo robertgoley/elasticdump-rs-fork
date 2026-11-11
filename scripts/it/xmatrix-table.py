@@ -44,7 +44,7 @@ def cut(result):
 
 def main():
     base = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
-        "IT_XMATRIX_DIR", os.path.expanduser("~/.cache/elasticdump-rs-xmatrix"))
+        "IT_XMATRIX_DIR", os.path.expanduser("~/.cache/searchdump-xmatrix"))
     cells = {}
     for f in sorted(glob.glob(os.path.join(base, "actual-*.toml"))):
         for line in open(f, encoding="utf-8"):

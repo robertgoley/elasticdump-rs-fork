@@ -58,10 +58,10 @@ def offline():
 
 
 def online(a):
-    lock = open("/tmp/elasticdump-rs-it.lock", "w")
+    lock = open("/tmp/searchdump-it.lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     run_id = datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-leakcheck"
-    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/elasticdump-rs-load"), run_id)
+    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/searchdump-load"), run_id)
     os.makedirs(work, mode=0o700, exist_ok=True)
     base = dict(line.split("=", 1) for line in subprocess.run(
         [os.path.join(ROOT, "scripts/it/matrix.sh"), a.engine], check=True, capture_output=True,

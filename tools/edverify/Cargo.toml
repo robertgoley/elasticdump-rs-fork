@@ -3,11 +3,11 @@ name = "edverify"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.91"
-description = "Test-only document-set verifier for elasticdump-rs (TST-INF-005)"
+description = "Test-only document-set verifier for searchdump (TST-INF-005)"
 license = "MIT"
 publish = false
 
-# Independent of the code under test: no dependency on elasticdump-rs.
+# Independent of the code under test: no dependency on searchdump.
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.4", features = ["derive"] }

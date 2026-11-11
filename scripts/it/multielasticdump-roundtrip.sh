@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# multielasticdump dump -> load round trip against two in-memory fake nodes
+# searchdump-multi dump -> load round trip against two in-memory fake nodes
 # (scripts/it/fake_es.py). No containers, no network beyond 127.0.0.1.
 # Usage: scripts/it/multielasticdump-roundtrip.sh [BIN_DIR]   (default target/debug; builds it)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/debug}
-[[ $# -ge 1 ]] || cargo build --quiet --bin elasticdump-rs --bin multielasticdump
-M=$BIN/multielasticdump
+[[ $# -ge 1 ]] || cargo build --quiet --bin searchdump --bin searchdump-multi
+M=$BIN/searchdump-multi
 W=${KEEP_W:-$(mktemp -d)}; pids=()
 trap 'kill "${pids[@]}" 2>/dev/null || true; [[ -n ${KEEP_W:-} ]] || rm -rf "$W"' EXIT
 free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])'; }
@@ -97,4 +97,4 @@ else
   echo "skip  Node checks (set NODE_ED_BIN to the bin dir of an elasticdump 6.x npm install)"
 fi
 if grep -h UNHANDLED "$W"/*.log; then bad "fake node saw requests it does not handle"; fi
-[[ $fail == 0 ]] && echo "multielasticdump round trip: all checks passed" || { echo "multielasticdump round trip: FAILED"; exit 1; }
+[[ $fail == 0 ]] && echo "searchdump-multi round trip: all checks passed" || { echo "searchdump-multi round trip: FAILED"; exit 1; }

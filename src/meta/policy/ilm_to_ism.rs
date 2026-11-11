@@ -261,8 +261,7 @@ pub fn convert_for(name: &str, ilm: &Value, lenient: bool, caps: IsmCaps) -> Res
         }
     }
 
-    let mut description =
-        format!("Converted from Elasticsearch ILM policy '{name}' by elasticdump-rs");
+    let mut description = format!("Converted from Elasticsearch ILM policy '{name}' by searchdump");
     if let Some(meta) = ilm.get("_meta").and_then(Value::as_object) {
         if let Some(d) = meta.get("description").and_then(Value::as_str) {
             description = d.to_string();
@@ -1262,7 +1261,7 @@ mod tests {
         let c = convert(name, &ilm, false).unwrap();
         assert_eq!(
             c.policy["description"],
-            format!("Converted from Elasticsearch ILM policy '{name}' by elasticdump-rs")
+            format!("Converted from Elasticsearch ILM policy '{name}' by searchdump")
         );
         assert!(
             c.notes
@@ -1320,9 +1319,7 @@ mod tests {
                     .and_then(Value::as_str)
                     .map(str::to_string)
                     .unwrap_or_else(|| {
-                        format!(
-                            "Converted from Elasticsearch ILM policy '{name}' by elasticdump-rs"
-                        )
+                        format!("Converted from Elasticsearch ILM policy '{name}' by searchdump")
                     });
                 assert_eq!(c.policy["description"], want, "{tag}");
                 let is_managed = p.pointer("/_meta/managed") == Some(&Value::Bool(true));

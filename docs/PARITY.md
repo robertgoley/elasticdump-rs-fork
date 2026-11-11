@@ -89,7 +89,7 @@ Legend:
 | Option | Default | Status | Planned | Ms |
 |---|---|---|---|---|
 | URL basic auth | – | ✅ | keep (percent-decoding, redacted logs) | – |
-| `ELASTICDUMP_INPUT_USERNAME/PASSWORD`, `ELASTICDUMP_OUTPUT_…` | – | ✅ | Used when the URL has no credentials | M1 |
+| `SEARCHDUMP_INPUT_USERNAME/PASSWORD`, `SEARCHDUMP_OUTPUT_…` | – | ✅ | Used when the URL has no credentials | M1 |
 | `--httpAuthFile` | null | ✅ | INI `user=`/`password=`. Applies to both endpoints when the URL (plus `--{input,output}-username/-password`) lacks a username or password. Error `Malformed Auth File`. Warns when world-readable; CRLF trimmed (L-645) | M1 |
 | `--tlsAuth` | false | ✅ | Accepted. Rust **always** honours `--ca/--cert/--key` when given; Node silently ignores them without `--tlsAuth` (divergence). Warn when cert flags are set without `--tlsAuth` | M1 |
 | `--ca`, `--input-ca`, `--output-ca` | null | ✅ | PEM bundle per direction. The shared `--ca` wins over the direction flag when both are set (Node assignment order) | M1 |
@@ -128,7 +128,7 @@ The following are accepted with a warning, or rejected, according to the policy 
 * S3/MinIO (`s3://`, `--s3*`);
 * AWS (`--aws*`, `--sessionToken`);
 * `--transform`, `--searchBodyTemplate`, `--inputTransport`/`--outputTransport`;
-* `multielasticdump`;
+* `searchdump-multi`;
 * `--inputSocksProxy/Port` and `--outputSocksProxy/Port`;
 * `--heapSnapshot`;
 * `--openSearchServerless` and `--force-os-version` (serverless offset/limit mode);

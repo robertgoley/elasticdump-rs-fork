@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Maintainer-only benchmark for comparing elasticdump-rs with the original
+# Maintainer-only benchmark for comparing searchdump with the original
 # Node.js elasticdump. The default Elasticsearch setup models this project's
 # production dump target: a static, read-optimized index that uses the default
 # Elasticsearch codec and is force-merged before timed export runs.
@@ -31,7 +31,7 @@ BENCH_USE_EXPLICIT_IDS="${BENCH_USE_EXPLICIT_IDS:-1}"
 BENCH_SEARCH_TYPES="${BENCH_SEARCH_TYPES:-scroll,pit}"
 BENCH_SCROLL_TIME="${BENCH_SCROLL_TIME:-10m}"
 BENCH_PIT_KEEP_ALIVE="${BENCH_PIT_KEEP_ALIVE:-10m}"
-BENCH_INDEX_PREFIX="${BENCH_INDEX_PREFIX:-elasticdump_rs_bench}"
+BENCH_INDEX_PREFIX="${BENCH_INDEX_PREFIX:-searchdump_rs_bench}"
 BENCH_INDEX_NAME="${BENCH_INDEX_NAME:-}"
 BENCH_WORKDIR="${BENCH_WORKDIR:-}"
 BENCH_RS_BIN="${BENCH_RS_BIN:-}"
@@ -87,16 +87,16 @@ Options:
   --index-name NAME           Explicit benchmark index name
   --index-prefix PREFIX       Prefix for generated benchmark index names
   --workdir DIR               Artifact work directory
-  --rs-bin PATH               Path to the elasticdump-rs binary
+  --rs-bin PATH               Path to the searchdump binary
   --elasticdump-cmd CMD       Command used to invoke the original elasticdump
   --cpu-cores N               Limit each timed tool run to N CPU cores
                               (Linux: taskset affinity; macOS: cpulimit
                               duty-cycle cap; empty = unlimited)
-  --rs-slices N               Pass --slices N to elasticdump-rs runs
+  --rs-slices N               Pass --slices N to searchdump runs
                               (0 or empty = unsliced; N >= 2 enables sliced
                               retrieval and suffixes rs variant labels with
                               -sN; Elasticsearch rejects slice.max=1)
-  --rs-workers N              Pass --workers N to elasticdump-rs runs
+  --rs-workers N              Pass --workers N to searchdump runs
                               (empty = match --rs-slices when sliced,
                               otherwise the tool default)
   --help                      Show this help text
@@ -787,15 +787,15 @@ resolve_rs_binary() {
     return
   fi
 
-  if [[ -x "${REPO_ROOT}/target/release/elasticdump-rs" ]]; then
-    RS_BIN="${REPO_ROOT}/target/release/elasticdump-rs"
+  if [[ -x "${REPO_ROOT}/target/release/searchdump" ]]; then
+    RS_BIN="${REPO_ROOT}/target/release/searchdump"
     return
   fi
 
   require_command cargo
-  log "Building release elasticdump-rs binary"
-  cargo build --release --bin elasticdump-rs --manifest-path "${REPO_ROOT}/Cargo.toml"
-  RS_BIN="${REPO_ROOT}/target/release/elasticdump-rs"
+  log "Building release searchdump binary"
+  cargo build --release --bin searchdump --manifest-path "${REPO_ROOT}/Cargo.toml"
+  RS_BIN="${REPO_ROOT}/target/release/searchdump"
 }
 
 resolve_cpu_limit_wrapper() {
@@ -979,7 +979,7 @@ build_benchmark_variants() {
 
   BENCH_VARIANTS=()
   for search_type in "${BENCH_SEARCH_TYPE_LIST[@]}"; do
-    BENCH_VARIANTS+=("elasticdump-rs:${search_type}")
+    BENCH_VARIANTS+=("searchdump-rs:${search_type}")
     BENCH_VARIANTS+=("elasticdump:${search_type}")
   done
 }
@@ -998,7 +998,7 @@ rs_variant_label() {
   local search_type="$1"
   local label
 
-  label="$(variant_label "elasticdump-rs" "${search_type}")"
+  label="$(variant_label "searchdump" "${search_type}")"
   if rs_slices_enabled; then
     label="${label}-s${BENCH_RS_SLICES}"
   fi
@@ -1055,7 +1055,7 @@ run_one_series_entry() {
   fi
 }
 
-run_elasticdump_rs_entry() {
+run_searchdump_rs_entry() {
   local phase="$1"
   local run_number="$2"
   local run_total="$3"
@@ -1160,8 +1160,8 @@ run_benchmark_round() {
     variant="${BENCH_VARIANTS[variant_index]}"
     IFS=':' read -r tool_name search_type <<< "${variant}"
 
-    if [[ "${tool_name}" == "elasticdump-rs" ]]; then
-      run_elasticdump_rs_entry "${phase}" "${run_number}" "${run_total}" "${results_file}" "${search_type}"
+    if [[ "${tool_name}" == "searchdump" ]]; then
+      run_searchdump_rs_entry "${phase}" "${run_number}" "${run_total}" "${results_file}" "${search_type}"
     else
       run_elasticdump_entry "${phase}" "${run_number}" "${run_total}" "${results_file}" "${search_type}"
     fi
@@ -1377,7 +1377,7 @@ def print_comparison(label, lhs, rhs):
 
 print_comparison("Scroll rs vs node", rs_scroll_tool, "elasticdump-scroll")
 print_comparison("PIT rs vs node", rs_pit_tool, "elasticdump-pit")
-print_comparison("elasticdump-rs PIT vs Scroll", rs_pit_tool, rs_scroll_tool)
+print_comparison("searchdump PIT vs Scroll", rs_pit_tool, rs_scroll_tool)
 print_comparison("elasticdump PIT vs Scroll", "elasticdump-pit", "elasticdump-scroll")
 PY
 }
@@ -1393,9 +1393,9 @@ setup_runtime() {
 
   if [[ -n "${BENCH_WORKDIR}" ]]; then
     mkdir -p -- "${BENCH_WORKDIR}"
-    WORKDIR="$(mktemp -d "${BENCH_WORKDIR}/elasticdump-rs-bench.XXXXXX")"
+    WORKDIR="$(mktemp -d "${BENCH_WORKDIR}/searchdump-bench.XXXXXX")"
   else
-    WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/elasticdump-rs-bench.XXXXXX")"
+    WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/searchdump-bench.XXXXXX")"
   fi
   WORKDIR_CREATED=1
 }

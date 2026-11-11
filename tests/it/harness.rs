@@ -317,7 +317,7 @@ impl Cluster {
 }
 
 pub fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_elasticdump-rs")
+    env!("CARGO_BIN_EXE_searchdump")
 }
 
 /// Run the CLI without `--quiet` (for `--debug` assertions).
@@ -326,7 +326,7 @@ pub async fn run_loud(args: Vec<String>) -> Output {
         Command::new(bin())
             .args(&args)
             .output()
-            .expect("spawn elasticdump-rs")
+            .expect("spawn searchdump")
     })
     .await
     .unwrap()
@@ -348,7 +348,7 @@ pub async fn run_env(args: Vec<String>, envs: Vec<(String, String)>) -> Output {
         for (k, v) in envs {
             cmd.env(k, v);
         }
-        cmd.output().expect("spawn elasticdump-rs")
+        cmd.output().expect("spawn searchdump")
     })
     .await
     .unwrap()

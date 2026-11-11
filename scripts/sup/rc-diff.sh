@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$TDIR" && -z "$EDIR" || -z "$TDIR" && -n "$EDIR" ]] && { echo "rc-diff: give both --trace-dir and --egress-dir, or neither" >&2; exit 2; }
-IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-it}"
 export IT_DIR
 OUT="${RC_DIFF_DIR:-$IT_DIR/rc-diff}"
 mkdir -p "$OUT"

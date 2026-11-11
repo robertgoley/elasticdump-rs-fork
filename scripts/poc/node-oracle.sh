@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # node-oracle.sh <es-url> <workdir>
-# TST-INJ-017 / L-513: run Node elasticdump and elasticdump-rs on the injection PoC files
+# TST-INJ-017 / L-513: run Node elasticdump and searchdump on the injection PoC files
 # against one live (throwaway test) engine and print one RESULT line per tool and case.
 #   INJ-F1: scripts/poc/inj-f1.sh variants 1 and 2 (pretty-printed _source -> NDJSON framing)
 #   INJ-F2: analyzer `{"*":...}` (closes every index?), alias `{"*":{"aliases":...}}` (alias on
 #           every index?), data `_index: "_all"` / `"*"`
-# NODE_ED (default /tmp/ed/node_modules/.bin/elasticdump), RS (default target/release/elasticdump-rs).
+# NODE_ED (default /tmp/ed/node_modules/.bin/elasticdump), RS (default target/release/searchdump).
 set -uo pipefail
 U="${1:?url}"; W="${2:?workdir}"
 cd "$(dirname "$0")/../.."
-NODE_ED="${NODE_ED:-/tmp/ed/node_modules/.bin/elasticdump}"; RS="${RS:-target/release/elasticdump-rs}"
+NODE_ED="${NODE_ED:-/tmp/ed/node_modules/.bin/elasticdump}"; RS="${RS:-target/release/searchdump}"
 mkdir -p "$W"
 j() { curl -s -H 'Content-Type: application/json' "$@"; }
 for tool in rs node; do

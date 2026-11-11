@@ -1,7 +1,7 @@
 //! Retry classification and execution shared by every Elasticsearch/OpenSearch
 //! request.
 //!
-//! Data-safety rule (inherited from elasticdump-rs): scroll continuations
+//! Data-safety rule (inherited from upstream elasticdump-rs): scroll continuations
 //! advance a server-side cursor, so they are retried only when the request
 //! provably did not take effect (HTTP 429 or a connect-phase failure). Every
 //! other request is idempotent and retried per the configured [`RetryOn`] set.

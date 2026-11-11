@@ -19,7 +19,7 @@ mb_of() {
 
 guard_lock() {
   [[ "${IT_LOCK_HELD:-0}" == 1 ]] && return 0
-  local lock="${IT_LOCK:-/tmp/elasticdump-rs-it.lock}"
+  local lock="${IT_LOCK:-/tmp/searchdump-it.lock}"
   exec 8>>"$lock"
   if ! flock -n 8; then
     echo "guard: another IT/load run holds $lock; waiting (max ${IT_LOCK_WAIT:-3600}s)" >&2

@@ -26,18 +26,18 @@ if [[ "$host_tools" == 1 ]]; then
   command -v podman >/dev/null || { echo 'podman is required (rootless; no sudo).' >&2; exit 2; }
   command -v python3 >/dev/null || { echo 'host-tools mode needs Python 3.11+.' >&2; exit 2; }
   if [[ -z "${PERF_BIN_DIR:-}" ]]; then
-    cargo "+${PERF_TOOLCHAIN:-1.91.1}" build --release --bins -p elasticdump-rs -p edgen -p edverify \
+    cargo "+${PERF_TOOLCHAIN:-1.91.1}" build --release --bins -p searchdump-rs -p edgen -p edverify \
       -j "${PERF_BUILD_JOBS:-2}" >&2
     export PERF_BIN_DIR="$root/target/release"
   fi
   export NODE_ED_BIN="${NODE_ED_BIN:-/workspace/node-ed/node_modules/.bin}"
   export PERF_HOST_ID="${PERF_HOST_ID:-$(hostname)}"
-  touch /tmp/elasticdump-rs-it.lock
+  touch /tmp/searchdump-it.lock
   exec python3 scripts/perf/suite.py "$@"
 fi
 command -v podman >/dev/null || { echo 'podman is required (rootless; no sudo).' >&2; exit 2; }
 [[ $(podman info --format '{{.Host.Security.Rootless}}') == true ]] || { echo 'Use rootless podman.' >&2; exit 2; }
-image="${PERF_CONTROLLER_IMAGE:-localhost/elasticdump-rs-perf:1}"
+image="${PERF_CONTROLLER_IMAGE:-localhost/searchdump-rs-perf:1}"
 if ! podman image exists "$image"; then
   podman build --network=host -f scripts/perf/Containerfile -t "$image" scripts/perf
 fi
@@ -63,10 +63,10 @@ for ((i=0; i<100; i++)); do
   sleep 0.1
 done
 [[ -S "$socket_dir/podman.sock" ]] || { echo 'podman socket readiness timed out.' >&2; exit 2; }
-touch /tmp/elasticdump-rs-it.lock
+touch /tmp/searchdump-it.lock
 args=(--rm --network=host --security-opt label=disable
   -v "$socket_dir:$socket_dir" -v "$root:$root" -w "$root"
-  -v /tmp/elasticdump-rs-it.lock:/tmp/elasticdump-rs-it.lock
+  -v /tmp/searchdump-it.lock:/tmp/searchdump-it.lock
   -e "CONTAINER_HOST=unix://$socket_dir/podman.sock"
   -e "PERF_HOST_ID=${PERF_HOST_ID:-$(hostname)}"
   -e "PERF_CONTROLLER_ID=$(podman image inspect --format '{{.Id}}' "$image")")

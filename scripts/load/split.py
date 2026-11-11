@@ -101,7 +101,7 @@ def main():
     if not ok:
         print(f"SPLIT-SUMMARY tier={a.tier} place={a.place} REFUSED: {why}")
         return 2
-    lock = open("/tmp/elasticdump-rs-it.lock", "w")
+    lock = open("/tmp/searchdump-it.lock", "w")
     if os.environ.get("IT_LOCK_HELD") != "1":
         fcntl.flock(lock, fcntl.LOCK_EX)
     need_mem = plan["heap_mb"] * 2 + 512 + plan["place"]["tool_mem_mb"] + 256
@@ -109,11 +109,11 @@ def main():
         print(f"SPLIT-SUMMARY tier={a.tier} SKIPPED (MemAvailable {R.meminfo_avail_mb()} MB < {need_mem} MB)")
         return 3
     run_id = a.run_id or datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + f"-split-{a.tier}"
-    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/elasticdump-rs-load"), run_id)
+    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/searchdump-load"), run_id)
     os.makedirs(work, mode=0o700, exist_ok=True)
     resdir = os.path.join(ROOT, "results", "load", run_id)
     os.makedirs(resdir, exist_ok=True)
-    edgen, edverify, tool = R.tool_path("edgen"), R.tool_path("edverify"), R.tool_path("elasticdump-rs")
+    edgen, edverify, tool = R.tool_path("edgen"), R.tool_path("edverify"), R.tool_path("searchdump")
     base = {}
     for line in subprocess.run([os.path.join(ROOT, "scripts/it/matrix.sh"), a.engine],
                                check=True, capture_output=True, text=True).stdout.splitlines():

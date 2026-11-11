@@ -296,10 +296,10 @@ def prerequisites(a, plan):
             missing.append(tag + "@" + digest)
     if missing:
         raise ValueError("Pinned images missing; pull them explicitly before testing:\n" + "\n".join(missing))
-    if capture(["podman", "ps", "-aq", "--filter", "label=elasticdump-rs-it=1"]):
+    if capture(["podman", "ps", "-aq", "--filter", "label=searchdump-it=1"]):
         raise ValueError("existing IT containers found; stop their owning run before starting (nothing removed)")
     bindir = Path(os.environ.get("PERF_BIN_DIR", ROOT / "results/perf/build/release"))
-    binaries = ("elasticdump-rs", "multielasticdump", "edgen", "edverify")
+    binaries = ("searchdump", "searchdump-multi", "edgen", "edverify")
     if "PERF_BIN_DIR" in os.environ:
         if any(not os.access(bindir / b, os.X_OK) for b in binaries):
             raise ValueError("PERF_BIN_DIR must contain all four release binaries")
@@ -374,8 +374,8 @@ class EngineRun:
         self.rs_tls, self.node_tls, self.edv_tls = [], [], []
         if user:
             self.tenv.update(EDV_USER=user, EDV_PASSWORD=pw,
-                             ELASTICDUMP_INPUT_USERNAME=user, ELASTICDUMP_INPUT_PASSWORD=pw,
-                             ELASTICDUMP_OUTPUT_USERNAME=user, ELASTICDUMP_OUTPUT_PASSWORD=pw)
+                             SEARCHDUMP_INPUT_USERNAME=user, SEARCHDUMP_INPUT_PASSWORD=pw,
+                             SEARCHDUMP_OUTPUT_USERNAME=user, SEARCHDUMP_OUTPUT_PASSWORD=pw)
             # Node parent's discovery does not use child transport auth env. Keep auth OUT of argv/logs.
             # Node reads --httpAuthFile with the `ini` parser (lib/add-auth.js) and throws
             # "Malformed Auth File" unless both `user` and `password` keys are present. Values are
@@ -397,7 +397,7 @@ class EngineRun:
         # Node re-serialises every document through JSON.parse/stringify, which rewrites number
         # spelling (79.746790 -> 79.74679, 1.0 -> 1, 1e308 -> 1e+308) without changing the value.
         # Its outputs are compared by exact decimal value; a changed value (integers above 2^53,
-        # long mantissas) still fails. elasticdump-rs keeps bytes, so it keeps the strict check.
+        # long mantissas) still fails. searchdump keeps bytes, so it keeps the strict check.
         numbers = ["--decimal-numbers"] if tool == "node" else []
         # Bounded scroll pages for large documents: edverify's default (4 slices x 1000 docs) asks
         # the engine for ~150 MB (edge: 1 MB docs, 10k arrays) or every 3-10 MB `big` doc at once,
@@ -413,7 +413,7 @@ class EngineRun:
             raise
 
     def plain(self, args):
-        checked([self.tools["elasticdump-rs"], *args, *self.rs_tls], env=self.tenv, stdout=subprocess.DEVNULL)
+        checked([self.tools["searchdump"], *args, *self.rs_tls], env=self.tenv, stdout=subprocess.DEVNULL)
 
     def seed(self, dataset):
         n = self.plan["sizes"][dataset]
@@ -470,7 +470,7 @@ class EngineRun:
         self.cl.req("DELETE", "/" + target, ok404=True)
         if meta == "settings":
             # Both tools apply index settings by CREATING the index (Node: PUT /<index> with the
-            # settings body; elasticdump-rs refuses an existing index because static settings such
+            # settings body; searchdump refuses an existing index because static settings such
             # as number_of_shards cannot be changed). A pre-created target made rs exit 1 and let
             # the metadata check compare two harness-made indices; leave the target absent.
             return
@@ -491,9 +491,9 @@ class EngineRun:
         multi = case["dataset"] == "many"
         docs = len(self.sources) if meta else self.count
         if multi:
-            exe = self.tools["multielasticdump"] if tool == "rs" else self.tools["node-multielasticdump"]
+            exe = self.tools["searchdump-multi"] if tool == "rs" else self.tools["node-multielasticdump"]
         else:
-            exe = self.tools["elasticdump-rs"] if tool == "rs" else self.tools["node-elasticdump"]
+            exe = self.tools["searchdump"] if tool == "rs" else self.tools["node-elasticdump"]
         tls = self.rs_tls if tool == "rs" else self.node_tls
         output = None
         if multi:
@@ -509,7 +509,7 @@ class EngineRun:
                 flags += ["--match=^perf-src-"]
                 # Node 6.125.1 knows only matchType alias|datastream ("invalid matchType index", exit 1);
                 # its default `alias` lists /_aliases and tests the INDEX name as well as alias names.
-                # elasticdump-rs names that selection `index` (its default; its `alias` = alias names only).
+                # searchdump names that selection `index` (its default; its `alias` = alias names only).
                 flags += ["--matchType=index"] if tool == "rs" else []
             else:
                 inp, output = str(self.refdir), self.url
@@ -764,7 +764,7 @@ def main():
         if not a.baseline_dir.is_relative_to(ROOT):
             raise ValueError("--baseline-dir must be inside the mounted repository")
         # One lock covers the ENTIRE sequence, including prerequisite builds and teardown.
-        lock_path = Path("/tmp/elasticdump-rs-it.lock")
+        lock_path = Path("/tmp/searchdump-it.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

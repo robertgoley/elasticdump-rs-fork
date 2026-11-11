@@ -263,8 +263,8 @@ async fn credentials_from_env_and_auth_file() {
         &index,
         s_args(&["--input", &url, "--input-ca", &s.ca]),
         vec![
-            ("ELASTICDUMP_INPUT_USERNAME".into(), s.user.clone()),
-            ("ELASTICDUMP_INPUT_PASSWORD".into(), s.pw.clone()),
+            ("SEARCHDUMP_INPUT_USERNAME".into(), s.user.clone()),
+            ("SEARCHDUMP_INPUT_PASSWORD".into(), s.pw.clone()),
         ],
     )
     .await;

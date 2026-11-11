@@ -10,7 +10,7 @@ set -euo pipefail
 SERVER=${1:?usage: sftp.sh openssh|dropbear}
 . "$(dirname "$0")/common.sh"
 HERE=$(cd "$(dirname "$0")" && pwd)
-MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/multielasticdump}
+MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/searchdump-multi}
 case $SERVER in
   openssh) PORT=${ODT_OPENSSH_PORT:-19922} ;;
   dropbear) PORT=${ODT_DROPBEAR_PORT:-19923} ;;
@@ -86,8 +86,8 @@ check_fails "$SERVER: password in the URL refused" "SSH key" ed --input "$IN" --
 TREE=$WORK/tree; mkdir -p "$TREE/_cluster" "$TREE/g1"
 cp "$IN" "$TREE/odt.data.json"; gzip -c "$IN" >"$TREE/g1/odt2.data.split-0.json.gz"
 echo '{}' >"$TREE/_cluster/policy.json"; echo '{"version":1}' >"$TREE/multielasticdump.json"
-check "$SERVER: multielasticdump copy local dir -> sftp" "$MULTI" --direction copy --outputStorageConfig "$CFG" --input "$TREE" --output "$URL/tree"
-check "$SERVER: multielasticdump copy sftp -> local dir" "$MULTI" --direction copy --inputStorageConfig "$CFG" --input "$URL/tree" --output "$WORK/tree.back"
+check "$SERVER: searchdump-multi copy local dir -> sftp" "$MULTI" --direction copy --outputStorageConfig "$CFG" --input "$TREE" --output "$URL/tree"
+check "$SERVER: searchdump-multi copy sftp -> local dir" "$MULTI" --direction copy --inputStorageConfig "$CFG" --input "$URL/tree" --output "$WORK/tree.back"
 check "$SERVER: copied tree identical (diff -r)" diff -r "$TREE" "$WORK/tree.back"
 
 summary "sftp ($SERVER)"

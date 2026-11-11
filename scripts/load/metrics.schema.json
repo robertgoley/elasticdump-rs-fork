@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "elasticdump-rs/load-metrics/v1",
-  "title": "elasticdump-rs load metrics (TST-INF-006, TST-LOAD-003)",
+  "$id": "searchdump-rs/load-metrics/v1",
+  "title": "searchdump load metrics (TST-INF-006, TST-LOAD-003)",
   "type": "object",
   "required": ["schema", "run_id", "started", "command", "exit_code", "wall_s", "user_s", "sys_s", "cpu_s",
                "max_rss_kb", "rss_peak_kb_sampled", "fds_peak", "threads_peak", "vol_ctx_switches", "invol_ctx_switches",

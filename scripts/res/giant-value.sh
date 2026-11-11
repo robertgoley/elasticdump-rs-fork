@@ -3,13 +3,13 @@
 # second document is a single 2 GB value. Under a 512 MB cgroup (cg-run.sh) the run must
 # stop with the --maxDocMb error (exit 1) naming document 2, not be OOM-killed (137).
 #
-#   scripts/res/giant-value.sh [path/to/elasticdump-rs]   (default target/debug/elasticdump-rs)
+#   scripts/res/giant-value.sh [path/to/searchdump]   (default target/debug/searchdump)
 #
 # GIANT_EXTRA="--maxDocMb 0" shows the uncapped behaviour (OOM kill, 137).
 # Exit 0 = pass, 1 = fail, 77 = skipped (no cgroup v2 / sudo).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-bin="${1:-target/debug/elasticdump-rs}"
+bin="${1:-target/debug/searchdump}"
 [[ -x "$bin" ]] || { echo "missing $bin (cargo build first)" >&2; exit 1; }
 work=$(mktemp -d)
 gen=""

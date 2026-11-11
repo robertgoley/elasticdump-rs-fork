@@ -284,7 +284,7 @@ def selftest():
                and norm_value("/etc/ssl/certs") == "/etc/ssl/certs"
                and norm_value("/sys/fs/cgroup/agent/memory.max") == "/sys/fs/cgroup/*/memory.max"
                and norm_value("/sys/fs/cgroup/memory.max") == "/sys/fs/cgroup/memory.max"
-               and norm_name("elasticdump-rs-egress-1262826") == "elasticdump-rs-egress-N")
+               and norm_name("searchdump-egress-1262826") == "searchdump-egress-N")
     ok &= norm_ok
     print("selftest %-22s: %s" % ("normalisation", "OK" if norm_ok else "FAIL"))
     # a sign-off rule without a reason is refused

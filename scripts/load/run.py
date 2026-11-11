@@ -11,7 +11,7 @@ The runner does the following, in order:
 3. Provisions ONE engine through scripts/it/up.sh.
 4. Creates each seed index with `edgen mapping` and seeds it from `edgen gen --format bulk` through the harness's own `_bulk` client. Edge-case documents that the engine rejects are counted, not failed.
 5. Takes a reference digest per index with `edverify` in cluster mode.
-6. Runs the scenario steps (dump / restore / copy) with elasticdump-rs under measure.sh, and checks each against the reference with `edverify diff`.
+6. Runs the scenario steps (dump / restore / copy) with searchdump under measure.sh, and checks each against the reference with `edverify diff`.
 7. Leak check: no open scroll/PIT contexts, no `.part` files, no unexpected indices.
 8. Tears down. Results go to results/load/<run-id>/<scenario>.json, recording the seeds, image, tool version and per-step metrics.
 
@@ -425,7 +425,7 @@ class NodeWatch(threading.Thread):
 
     def run(self):
         while not self.stop.wait(2):
-            ids = subprocess.run(["podman", "ps", "-q", "--filter", "label=elasticdump-rs-it=1",
+            ids = subprocess.run(["podman", "ps", "-q", "--filter", "label=searchdump-it=1",
                                   "--filter", f"name={self.rid}"], capture_output=True, text=True).stdout.split()
             for cid in ids:
                 pid = subprocess.run(["podman", "inspect", "--format", "{{.State.Pid}}", cid],
@@ -495,15 +495,15 @@ def main():
         return 0
 
     # Guards: lock, memory and disk (TST-INF-007).
-    lock = open("/tmp/elasticdump-rs-it.lock", "w")
+    lock = open("/tmp/searchdump-it.lock", "w")
     if os.environ.get("IT_LOCK_HELD") != "1":
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            log("waiting for the IT/load lock (/tmp/elasticdump-rs-it.lock)")
+            log("waiting for the IT/load lock (/tmp/searchdump-it.lock)")
             fcntl.flock(lock, fcntl.LOCK_EX)
     run_id = a.run_id or datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + f"-{a.tier}"
-    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/elasticdump-rs-load"), run_id)
+    work = os.path.join(os.environ.get("LOAD_WORK", "/var/tmp/searchdump-load"), run_id)
     need_mem = plan["heap_mb"] * 2 + 512 + plan["place"]["tool_mem_mb"] + 256
     skip = None
     if meminfo_avail_mb() < need_mem:
@@ -514,7 +514,7 @@ def main():
         print(f"LOAD-SUMMARY scenario={scenario['name']} tier={a.tier} SKIPPED (resource guard: {skip})")
         return 1 if os.environ.get("IT_REQUIRED") == "1" else 3
 
-    edgen, edverify, tool = tool_path("edgen"), tool_path("edverify"), tool_path("elasticdump-rs")
+    edgen, edverify, tool = tool_path("edgen"), tool_path("edverify"), tool_path("searchdump")
     os.makedirs(work, mode=0o700, exist_ok=True)
     place = plan["place"]
     # place.cpus: CPU affinity for this process and everything it starts (the engine
@@ -527,7 +527,7 @@ def main():
     if place.get("data_on_work"):
         it_dir = os.path.join(work, "it")
     else:
-        it_dir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "elasticdump-rs-load")
+        it_dir = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache"), "searchdump-load")
     env = dict(os.environ, IT_DIR=it_dir, IT_LOCK_HELD="1", RUN_ID=rid)
     if place.get("data_on_work"):
         env["IT_ES_DATA_MOUNT"] = "1"
@@ -569,8 +569,8 @@ def main():
         tenv = dict(os.environ)
         if user:
             tenv.update(EDV_USER=user, EDV_PASSWORD=pw,
-                        ELASTICDUMP_INPUT_USERNAME=user, ELASTICDUMP_INPUT_PASSWORD=pw,
-                        ELASTICDUMP_OUTPUT_USERNAME=user, ELASTICDUMP_OUTPUT_PASSWORD=pw)
+                        SEARCHDUMP_INPUT_USERNAME=user, SEARCHDUMP_INPUT_PASSWORD=pw,
+                        SEARCHDUMP_OUTPUT_USERNAME=user, SEARCHDUMP_OUTPUT_PASSWORD=pw)
         tls_tool = ["--ca", ca] if ca and url.startswith("https") else []
         tls_edv = ["--ca", ca] if ca and url.startswith("https") else []
         flavour = engine_mapping_flavour(engine)

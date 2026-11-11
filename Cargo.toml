@@ -1,21 +1,23 @@
 [package]
-name = "elasticdump-rs"
+name = "searchdump-rs"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.91"
-description = "High-performance Elasticsearch data dumper"
+description = "Fast Elasticsearch/OpenSearch dump, restore and copy tool with an elasticdump-compatible CLI (derived from elasticdump-rs)"
 authors = ["TenYears <opensource@tenyears.tech>"]
 license = "MIT"
-repository = "https://github.com/tenyears-tech/elasticdump-rs"
+repository = "https://github.com/robertgoley/searchdump-rs"
+homepage = "https://github.com/robertgoley/searchdump-rs"
+# Derived from elasticdump-rs by TenYears (https://github.com/tenyears-tech/elasticdump-rs, MIT).
 
 # Test-only tools (TST-INF-005/009) share the lock file; `cargo build`/`test`
-# at the root still builds only elasticdump-rs.
+# at the root still builds only searchdump-rs.
 [workspace]
 members = [".", "tools/edverify", "tools/edgen"]
 default-members = ["."]
 
 [lib]
-name = "elasticdump_rs"
+name = "searchdump_rs"
 path = "src/lib.rs"
 
 [package.metadata.cargo-machete]
@@ -23,7 +25,7 @@ path = "src/lib.rs"
 ignored = ["rust-ini"]
 
 [[bin]]
-name = "elasticdump-rs"
+name = "searchdump"
 path = "src/main.rs"
 
 [dependencies]

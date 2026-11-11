@@ -18,7 +18,7 @@ jobs:
         with: { toolchain: 1.91.1, components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --lib --bins --tests --features elasticdump-rs/load -- -D warnings
+      - run: cargo clippy --workspace --lib --bins --tests --features searchdump-rs/load -- -D warnings
       # L-301 / INF-001: tiers from .config/nextest.toml (T0 unit, T1 contract); JUnit in target/nextest/<tier>/
       - run: cargo install --locked --version 0.9.150 cargo-nextest
       # L-313 / INF-013: no auto-retry; quarantines need owner + date and expire after 14 days.

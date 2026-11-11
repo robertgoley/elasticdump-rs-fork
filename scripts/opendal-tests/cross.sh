@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # L-809a: store-to-store transfers without a cluster (local -> s3 -> sftp -> local) with
-# elasticdump-rs and multielasticdump --direction copy, and (unless ODT_NO_CLUSTER=1) a
-# cluster run: OpenSearch -> s3 dump, s3 -> OpenSearch restore, multielasticdump dump to and
+# searchdump and searchdump-multi --direction copy, and (unless ODT_NO_CLUSTER=1) a
+# cluster run: OpenSearch -> s3 dump, s3 -> OpenSearch restore, searchdump-multi dump to and
 # load from storage URLs through a staging directory. Uses MinIO and OpenSSH (podman,
 # --network=host) and, for the cluster part, a throw-away OpenSearch 2 (security off,
 # 512 MB heap, 127.0.0.1 only).
 set -euo pipefail
 . "$(dirname "$0")/common.sh"
 HERE=$(cd "$(dirname "$0")" && pwd)
-MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/multielasticdump}
+MULTI=${EDRS_MULTI_BIN:-$(dirname "$BIN")/searchdump-multi}
 OS_PORT=${ODT_OS_PORT:-19930}
 OS_NAME=edrs-odt-opensearch
 # ODT_OS_PODMAN_ARGS: extra podman options for the OpenSearch container only, e.g. a separate
@@ -28,7 +28,7 @@ ed() { "$BIN" --quiet "$@"; }
 IN=$WORK/in.json
 make_input "$IN"
 
-# elasticdump-rs, one file through three stores; gzip kept as given
+# searchdump, one file through three stores; gzip kept as given
 check "local -> s3 (gzip)" ed --outputStorageConfig "$S3_CFG" --input "$IN" --output "$S3_URL/x.json.gz" --fsCompress
 check "s3 -> sftp (gzip)" ed --inputStorageConfig "$S3_CFG" --outputStorageConfig "$SFTP_CFG" \
   --input "$S3_URL/x.json.gz" --output "$SFTP_URL/x.json.gz" --fsCompress
@@ -38,15 +38,15 @@ check "local -> s3 with SSE-C" ed --outputStorageConfig "$S3_CFG_SSEC" --input "
 check "s3 (SSE-C, read with the key) -> sftp" ed --inputStorageConfig "$S3_CFG_SSEC" --outputStorageConfig "$SFTP_CFG" \
   --input "$S3_URL/enc.json" --output "$SFTP_URL/enc.json"
 
-# multielasticdump: a whole dump directory local -> s3 -> sftp -> local, byte for byte
+# searchdump-multi: a whole dump directory local -> s3 -> sftp -> local, byte for byte
 TREE=$WORK/tree; mkdir -p "$TREE/_cluster" "$TREE/2026.11"
 cp "$IN" "$TREE/a.data.json"; gzip -c "$IN" >"$TREE/2026.11/b.data.split-0.json.gz"
 gzip -c "$IN" >"$TREE/2026.11/b.data.split-1.json.gz"
 if command -v zstd >/dev/null; then zstd -q -c "$IN" >"$TREE/c.data.json.zst"; fi
 echo '{"a":{}}' >"$TREE/a.mapping.json"; echo '{}' >"$TREE/_cluster/policy.json"; echo '{"version":1}' >"$TREE/multielasticdump.json"
-check "multielasticdump copy local -> s3" "$MULTI" --direction copy --outputStorageConfig "$S3_CFG" --input "$TREE" --output "$S3_URL/tree"
-check "multielasticdump copy s3 -> sftp" "$MULTI" --direction copy --inputStorageConfig "$S3_CFG" --outputStorageConfig "$SFTP_CFG" --input "$S3_URL/tree" --output "$SFTP_URL/tree"
-check "multielasticdump copy sftp -> local" "$MULTI" --direction copy --inputStorageConfig "$SFTP_CFG" --input "$SFTP_URL/tree" --output "$WORK/tree.back"
+check "searchdump-multi copy local -> s3" "$MULTI" --direction copy --outputStorageConfig "$S3_CFG" --input "$TREE" --output "$S3_URL/tree"
+check "searchdump-multi copy s3 -> sftp" "$MULTI" --direction copy --inputStorageConfig "$S3_CFG" --outputStorageConfig "$SFTP_CFG" --input "$S3_URL/tree" --output "$SFTP_URL/tree"
+check "searchdump-multi copy sftp -> local" "$MULTI" --direction copy --inputStorageConfig "$SFTP_CFG" --input "$SFTP_URL/tree" --output "$WORK/tree.back"
 check "tree identical after three stores (diff -r: compression, split parts, manifest kept)" diff -r "$TREE" "$WORK/tree.back"
 
 if [ "${ODT_NO_CLUSTER:-0}" != 1 ]; then
@@ -73,19 +73,19 @@ PY
   done
   count() { curl -s "$OS/$1/_count" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("count", -1))'; }
   check "OpenSearch seeded" test "$(count odt-a)" = "$DOCS"
-  check "elasticdump-rs OpenSearch -> s3 (zstd, split)" ed --outputStorageConfig "$S3_CFG" --input "$OS/odt-a" --output "$S3_URL/os/odt-a.json" --compressionType zstd --maxRows 2000
-  check "elasticdump-rs mapping OpenSearch -> s3" ed --outputStorageConfig "$S3_CFG" --input "$OS/odt-a" --output "$S3_URL/os/odt-a.mapping.json" --type mapping
-  check "elasticdump-rs mapping s3 -> OpenSearch (new index)" ed --inputStorageConfig "$S3_CFG" --input "$S3_URL/os/odt-a.mapping.json" --output "$OS/odt-r" --type mapping
+  check "searchdump OpenSearch -> s3 (zstd, split)" ed --outputStorageConfig "$S3_CFG" --input "$OS/odt-a" --output "$S3_URL/os/odt-a.json" --compressionType zstd --maxRows 2000
+  check "searchdump mapping OpenSearch -> s3" ed --outputStorageConfig "$S3_CFG" --input "$OS/odt-a" --output "$S3_URL/os/odt-a.mapping.json" --type mapping
+  check "searchdump mapping s3 -> OpenSearch (new index)" ed --inputStorageConfig "$S3_CFG" --input "$S3_URL/os/odt-a.mapping.json" --output "$OS/odt-r" --type mapping
   for n in 0 1 2; do
     ed --inputStorageConfig "$S3_CFG" --input "$S3_URL/os/odt-a.split-$n.json.zst" --output "$OS/odt-r" >>"$WORK/test.log" 2>&1 || true
   done
   curl -sf -X POST "$OS/odt-r/_refresh" >/dev/null
-  check "elasticdump-rs s3 parts -> OpenSearch restore, all documents" test "$(count odt-r)" = "$DOCS"
-  check "multielasticdump dump OpenSearch -> s3:// (staged)" "$MULTI" --direction dump --input "$OS" --output "$S3_URL/multi" \
+  check "searchdump s3 parts -> OpenSearch restore, all documents" test "$(count odt-r)" = "$DOCS"
+  check "searchdump-multi dump OpenSearch -> s3:// (staged)" "$MULTI" --direction dump --input "$OS" --output "$S3_URL/multi" \
     --outputStorageConfig "$S3_CFG" --match '^odt-[ab]$' --compression zstd3 --maxRows 2000 --logDir "$WORK/multi-logs"
-  check "multielasticdump copy of that dump s3 -> sftp" "$MULTI" --direction copy --inputStorageConfig "$S3_CFG" --outputStorageConfig "$SFTP_CFG" \
+  check "searchdump-multi copy of that dump s3 -> sftp" "$MULTI" --direction copy --inputStorageConfig "$S3_CFG" --outputStorageConfig "$SFTP_CFG" \
     --input "$S3_URL/multi" --output "$SFTP_URL/multi"
-  check "multielasticdump load sftp:// -> OpenSearch (staged, --suffix -copy)" "$MULTI" --direction load --input "$SFTP_URL/multi" \
+  check "searchdump-multi load sftp:// -> OpenSearch (staged, --suffix -copy)" "$MULTI" --direction load --input "$SFTP_URL/multi" \
     --inputStorageConfig "$SFTP_CFG" --output "$OS" --suffix=-copy --logDir "$WORK/multi-logs"
   curl -sf -X POST "$OS/_refresh" >/dev/null
   check "loaded indices complete" test "$(count odt-a-copy)" = "$DOCS" -a "$(count odt-b-copy)" = "$DOCS"

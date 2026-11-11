@@ -4,7 +4,7 @@
 #   scripts/sup/egress.sh [--tiers T1,T2,T7] [--profile PROFILE] [--image IMAGE] [--selftest]
 #
 # Everything runs inside one rootless pod created with `podman pod create --network none`
-# (label elasticdump-rs-it=1): its network namespace has loopback only, so nothing can
+# (label searchdump-it=1): its network namespace has loopback only, so nothing can
 # leave the box, and nothing on the host (firewall, routes, other containers) is touched.
 # Inside it:
 #   * a logging DNS sink (egress-sink.py) on 127.0.0.1:53 / [::1]:53 answers every query with
@@ -16,7 +16,7 @@
 #   T7  chaos nextest profile (mock-based fault injection)
 #   T2  the IT suite against PROFILE (default opensearch-plain), the node running in the pod
 #       (scripts/it/up.sh with IT_POD), then the built image (IMAGE, default
-#       localhost/elasticdump-rs:<version>) dumping and restoring an index from the pod
+#       localhost/searchdump-rs:<version>) dumping and restoring an index from the pod
 # The run fails when a phase fails, or when any phase made an unexpected connection attempt
 # or DNS query. Expected names: localhost, and the reserved *.invalid / *.test / *.example /
 # *.localhost names tests use to provoke resolution failures (EGRESS_ALLOW_DNS overrides the
@@ -28,7 +28,7 @@
 # Logs: ${EGRESS_LOG_DIR:-$IT_DIR/egress}/ (dns.log, phase logs, egress-summary.log).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-# one IT/load/egress run at a time (TST-INF-007); down.sh removes every elasticdump-rs-it=1 container
+# one IT/load/egress run at a time (TST-INF-007); down.sh removes every searchdump-it=1 container
 # shellcheck source=../res/guards.sh
 source scripts/res/guards.sh
 guard_lock
@@ -47,11 +47,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 ALLOW="${EGRESS_ALLOW_DNS:-^(localhost|.*\.localhost|.*\.invalid|.*\.test|.*\.example|invalid|test|example)\.?$}"
-IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-it}"
 export IT_DIR
 OUT="${EGRESS_LOG_DIR:-$IT_DIR/egress}"
 mkdir -p "$OUT"
-POD="elasticdump-rs-egress-$$"
+POD="searchdump-egress-$$"
 export EGRESS_DIR="$OUT/ns"
 mkdir -p "$EGRESS_DIR"
 printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > "$EGRESS_DIR/resolv.conf"
@@ -71,7 +71,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-podman pod create --name "$POD" --network none --label elasticdump-rs-it=1 >/dev/null
+podman pod create --name "$POD" --network none --label searchdump-it=1 >/dev/null
 podman pod start "$POD" >/dev/null
 rm -f "$OUT/sink.ready"
 "${NS[@]}" python3 scripts/sup/egress-sink.py "$OUT/dns.log" "$OUT/sink.ready" > "$OUT/sink.out" 2>&1 8>&- &
@@ -148,7 +148,7 @@ if has T2; then
   phase T2-it "${NS[@]}" env IT_ES_URL="$IT_ES_URL" \
     cargo test --profile it --features it --test it -j "${CARGO_JOBS:-4}" -- --test-threads="${IT_THREADS:-4}"
   if [[ -z "$IMAGE" ]]; then
-    IMAGE="localhost/elasticdump-rs:$(awk -F'"' '/^version/ {print $2; exit}' Cargo.toml)"
+    IMAGE="localhost/searchdump-rs:$(awk -F'"' '/^version/ {print $2; exit}' Cargo.toml)"
   fi
   if podman image exists "$IMAGE"; then
     data="$OUT/image-data"

@@ -40,20 +40,20 @@ jobs:
         env: { ZIGTARGET: "${{ matrix.zigtarget }}" }
       - env: { TARGET: "${{ matrix.target }}" }
         run: |
-          f="target/$TARGET/release/elasticdump-rs"
+          f="target/$TARGET/release/searchdump"
           file "$f"
           case "$TARGET" in
             *-gnu) objdump -T "$f" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 ;;
           esac
-          d="elasticdump-rs-$TARGET"
+          d="searchdump-rs-$TARGET"
           mkdir "$d"
           cp "$f" LICENSE THIRD-PARTY-NOTICES.md "$d/"
           tar czf "$d.tar.gz" "$d"
-          sha256sum "elasticdump-rs-$TARGET.tar.gz" > "elasticdump-rs-$TARGET.tar.gz.sha256"
+          sha256sum "searchdump-rs-$TARGET.tar.gz" > "searchdump-rs-$TARGET.tar.gz.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: elasticdump-rs-${{ matrix.target }}
-          path: elasticdump-rs-${{ matrix.target }}.tar.gz*
+          name: searchdump-rs-${{ matrix.target }}
+          path: searchdump-rs-${{ matrix.target }}.tar.gz*
 
   # L-705 / TST-SUP-016: behaviour diff of this release candidate against the previous release's
   # profile (results/profiles/): SUP-002 trace + SUP-001 egress runs, condensed and diffed; any

@@ -50,14 +50,14 @@ build() {
     -e CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" -e CARGO_INCREMENTAL=0 -e SOURCE_DATE_EPOCH="$SDE" \
     -e RUSTFLAGS="--remap-path-prefix=$src=/build/src --remap-path-prefix=$ven=/build/vendor --remap-path-prefix=$ch=/build/cargo-home" \
     -v "$d/src:$src:ro,Z" -v "$d/vendor:$ven:ro,Z" -v "$d/cargo-home:$ch:Z" -v "$d/target:$tgt:Z" \
-    -w "$src" "$IMG" sh -c "umask $um && cargo build --offline --locked --release --bin elasticdump-rs" \
+    -w "$src" "$IMG" sh -c "umask $um && cargo build --offline --locked --release --bin searchdump" \
     >"$W/$name.log" 2>&1 || { tail -30 "$W/$name.log"; exit 2; }
   # build b's files belong to a sub-uid with umask 077: read them inside the user namespace
-  podman unshare cat "$d/target/release/elasticdump-rs" >"$W/bin-$name"
+  podman unshare cat "$d/target/release/searchdump" >"$W/bin-$name"
 }
 build a 0:0 022 UTC /src /vendor /cargo-home /target
 sleep "${REPRO_PAUSE:-5}"
-build b 4242:4242 077 Asia/Kolkata /home/builder/work/deeper/elasticdump-rs /opt/v2/vendor /var/tmp/ch2 /home/builder/tgt
+build b 4242:4242 077 Asia/Kolkata /home/builder/work/deeper/searchdump /opt/v2/vendor /var/tmp/ch2 /home/builder/tgt
 
 sa="$(sha256sum <"$W/bin-a" | cut -d' ' -f1)"; sb="$(sha256sum <"$W/bin-b" | cut -d' ' -f1)"
 if [[ -n "${REPRO_OUT:-}" ]]; then

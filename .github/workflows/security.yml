@@ -130,7 +130,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, nightly
         with: { toolchain: nightly }
       - run: cargo +nightly install --locked --version 0.1.61 cargo-udeps
-      - run: cargo +nightly udeps --workspace --all-targets --features elasticdump-rs/load
+      - run: cargo +nightly udeps --workspace --all-targets --features searchdump-rs/load
 
   # L-212 / SUP-019: weekly crate publisher/ownership diff against supply-chain/publishers.json.
   # Exit 10 (job fails) when an existing crate gains or loses an owner; the report is an artefact.
@@ -169,9 +169,9 @@ jobs:
       - run: cargo +nightly install --locked --version 0.9.1 cargo-llvm-cov
       - run: cargo +nightly install --locked --version 0.9.150 cargo-nextest
       - run: cargo +nightly install --locked --version 0.2.1 rustfilt
-      - run: cargo llvm-cov --no-report nextest -p elasticdump-rs --features load --profile unit
-      - run: cargo llvm-cov --no-report nextest -p elasticdump-rs --features load --profile contract
-      - run: cargo llvm-cov report -p elasticdump-rs --json --output-path cov.json
+      - run: cargo llvm-cov --no-report nextest -p searchdump-rs --features load --profile unit
+      - run: cargo llvm-cov --no-report nextest -p searchdump-rs --features load --profile contract
+      - run: cargo llvm-cov report -p searchdump-rs --json --output-path cov.json
       - run: scripts/sup/uncovered.py cov.json --root "$PWD" >> "$GITHUB_STEP_SUMMARY"
 
   # L-206 / SUP-009: build-time code inventory gate + release build with --network none.

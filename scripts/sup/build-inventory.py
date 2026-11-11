@@ -38,9 +38,9 @@ def kinds(pkg):
 
 
 def shipped_closure(m):
-    """Packages reachable from elasticdump-rs via normal + build deps (no dev deps)."""
+    """Packages reachable from searchdump via normal + build deps (no dev deps)."""
     nodes = {n["id"]: n for n in m["resolve"]["nodes"]}
-    root = next(p["id"] for p in m["packages"] if p["name"] == "elasticdump-rs")
+    root = next(p["id"] for p in m["packages"] if p["name"] == "searchdump-rs")
     seen, stack = set(), [root]
     while stack:
         i = stack.pop()
@@ -75,7 +75,7 @@ def inventory():
 
 def tree_closure(m, plat, manifest):
     """Real feature-resolved graph of the shipped binary (normal + build deps) via `cargo tree`."""
-    out = subprocess.run(["cargo", "tree", "-p", "elasticdump-rs", "-e", "normal,build", "--target", plat,
+    out = subprocess.run(["cargo", "tree", "-p", "searchdump-rs", "-e", "normal,build", "--target", plat,
                           "--prefix", "none", "-f", "{p}", "--locked", "--manifest-path", manifest],
                          check=True, capture_output=True, text=True).stdout
     want = set()

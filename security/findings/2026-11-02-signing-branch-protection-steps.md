@@ -23,7 +23,7 @@ Nothing here was changed by Grok Bot; these are owner actions. Context: 349/351 
    bots a separate GitHub account. Keep private keys out of the repo.
 
 ## 2. Ruleset on `main` (GitHub web UI)
-Repo `robertgoley/elasticdump-rs-fork` → Settings → Rules → Rulesets → New branch ruleset:
+Repo `robertgoley/searchdump-rs` → Settings → Rules → Rulesets → New branch ruleset:
 - Name `main-protection`, Enforcement **Active**, Target branches: *Include default branch*.
 - Bypass list: empty (or only yourself, "for pull requests only" is not needed since agents push directly).
 - Enable: **Restrict deletions**, **Block force pushes**, **Require signed commits**.
@@ -34,7 +34,7 @@ Repo `robertgoley/elasticdump-rs-fork` → Settings → Rules → Rulesets → N
 
 CLI alternative (after enabling signing first, otherwise your next push is rejected):
 ```
-gh api -X POST repos/robertgoley/elasticdump-rs-fork/rulesets --input - <<'JSON'
+gh api -X POST repos/robertgoley/searchdump-rs/rulesets --input - <<'JSON'
 {"name":"main-protection","target":"branch","enforcement":"active",
  "conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},
  "rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_signatures"}]}
@@ -42,7 +42,7 @@ JSON
 ```
 
 ## 3. Check
-`gh api repos/robertgoley/elasticdump-rs-fork/rules/branches/main` lists the three rules; an unsigned push is
+`gh api repos/robertgoley/searchdump-rs/rules/branches/main` lists the three rules; an unsigned push is
 rejected with `GH013: Repository rule violations`.
 
 Order matters: set up signing on **every** committer (both agents) before activating "Require signed commits", or

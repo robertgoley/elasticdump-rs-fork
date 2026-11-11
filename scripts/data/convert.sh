@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
 done
 EDGEN="${EDGEN:-target/release/edgen}"
 [[ -x "$EDGEN" ]] || CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo build -q --release -p edgen
-cache="${ED_DATA_CACHE:-/var/tmp/elasticdump-rs-data}"
+cache="${ED_DATA_CACHE:-/var/tmp/searchdump-data}"
 read -r conv comp < <(python3 - "$name" <<'PY'
 import os, sys, tomllib
 d = tomllib.load(open(os.environ.get("ED_DATASETS", "datasets.toml"), "rb"))["datasets"][sys.argv[1]]

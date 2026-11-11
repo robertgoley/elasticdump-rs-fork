@@ -3,7 +3,7 @@
 # reach the network. The steps are:
 #   1. `cargo vendor --locked` on the host (the only step that downloads);
 #   2. `podman run --network none` with the sources and vendor dir mounted read-only, running
-#      `cargo build --offline --locked --release --bin elasticdump-rs`;
+#      `cargo build --offline --locked --release --bin searchdump`;
 #   3. a probe inside the same sandbox shows that DNS and TCP really fail.
 #   scripts/sup/offline-build.sh [builder-image]   (default: the public rust:1.99-trixie builder, see Makefile)
 # CI: the `offline-build` job in security.yml. Memory: one LTO link, about 2 GB (CARGO_BUILD_JOBS=2).
@@ -30,6 +30,6 @@ podman run --rm --network none --name "edl-offline-$$" \
     if getent hosts crates.io >/dev/null 2>&1; then echo "PROBE FAIL: DNS works"; exit 3; fi
     if (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null; then echo "PROBE FAIL: TCP works"; exit 3; fi
     echo "probe: network unreachable (ok)"
-    cargo build --offline --locked --release --bin elasticdump-rs --target-dir /target
-    /target/release/elasticdump-rs --version'
+    cargo build --offline --locked --release --bin searchdump --target-dir /target
+    /target/release/searchdump --version'
 echo "offline-build: OK" >&2

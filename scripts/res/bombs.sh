@@ -5,11 +5,11 @@
 #   gz-space    2 GiB of whitespace, gzip -9 (~2 MB, ~1000:1), then one doc    -> exit 0, 1 document
 # Every case must finish without an OOM kill (exit 137). Reduced scale (A); GB-scale campaigns are B.
 #
-#   scripts/res/bombs.sh [path/to/elasticdump-rs]   (default target/release/elasticdump-rs)
+#   scripts/res/bombs.sh [path/to/searchdump]   (default target/release/searchdump)
 # Exit 0 = pass, 1 = fail, 77 = skipped (no cgroup v2 / sudo).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-bin="${1:-target/release/elasticdump-rs}"
+bin="${1:-target/release/searchdump}"
 [[ -x "$bin" ]] || { echo "missing $bin (cargo build --release first)" >&2; exit 1; }
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

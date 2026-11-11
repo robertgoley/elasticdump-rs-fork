@@ -12,7 +12,7 @@
 #   VENDOR_IMAGE=img:tag use another image that has cargo
 #   CONTAINER=podman|docker
 #   VENDOR_NETWORK=...   container network for the fetch (default host; DNS must work there)
-#   VENDOR_CACHE_VOLUME  named volume for the cargo cache (default elasticdump-rs-cargo-cache)
+#   VENDOR_CACHE_VOLUME  named volume for the cargo cache (default searchdump-cargo-cache)
 # Only this step uses the network (crates.io; HTTPS_PROXY / HTTP_PROXY / NO_PROXY /
 # CARGO_HTTP_PROXY are passed into the container when set). .vendor/ is gitignored; it is refreshed
 # on every run and can be removed with `rm -rf .vendor`.
@@ -33,8 +33,8 @@ else
   # --network=host: use the host's resolver/proxy setup (default container DNS fails on hosts whose
   # resolv.conf points at systemd-resolved 127.0.0.53, e.g. Ubuntu). VENDOR_NETWORK overrides it.
   # The cargo registry cache lives in a named volume (VENDOR_CACHE_VOLUME) so reruns only fetch
-  # crates that changed; `podman volume rm elasticdump-rs-cargo-cache` clears it.
-  vol="${VENDOR_CACHE_VOLUME:-elasticdump-rs-cargo-cache}"
+  # crates that changed; `podman volume rm searchdump-cargo-cache` clears it.
+  vol="${VENDOR_CACHE_VOLUME:-searchdump-cargo-cache}"
   volopt=""; [[ "$C" == *podman* ]] && volopt=":U"   # podman: chown the cache volume to the container user
   copts=(run --rm --network="${VENDOR_NETWORK:-host}" -v "$PWD:/src:Z" -v "$vol:/cargo-home${volopt:-}"
          -w /src -e CARGO_HOME=/cargo-home -e CARGO_TERM_COLOR=never)

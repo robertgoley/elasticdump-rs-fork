@@ -39,7 +39,7 @@ fn es_url() -> &'static str {
         std::env::var("IT_ES_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
     })
 }
-const TEST_INDEX_PREFIX: &str = "elasticdump_rs_test";
+const TEST_INDEX_PREFIX: &str = "searchdump_rs_test";
 
 // Static counter to ensure unique index names for parallel test execution
 static INDEX_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -58,7 +58,7 @@ fn get_unique_test_index() -> String {
 fn unique_output_path(label: &str) -> std::path::PathBuf {
     let counter = INDEX_COUNTER.fetch_add(1, Ordering::SeqCst);
     std::env::temp_dir().join(format!(
-        "elasticdump_rs_{}_{}_{}.jsonl",
+        "searchdump_rs_{}_{}_{}.jsonl",
         label,
         std::process::id(),
         counter
@@ -303,9 +303,9 @@ async fn setup_test_data(test_index: &str) -> Result<()> {
     Ok(())
 }
 
-// Run the elasticdump-rs command
+// Run the searchdump command
 fn elasticdump_binary() -> &'static str {
-    env!("CARGO_BIN_EXE_elasticdump-rs")
+    env!("CARGO_BIN_EXE_searchdump")
 }
 
 /// A `Command` for the binary with any ambient HTTP proxy disabled, so requests
@@ -331,7 +331,7 @@ fn run_elasticdump_command(args: &[&str]) -> Result<()> {
         .stderr(Stdio::inherit())
         .status()?;
 
-    assert!(status.success(), "elasticdump-rs command failed");
+    assert!(status.success(), "searchdump command failed");
 
     Ok(())
 }
@@ -369,7 +369,7 @@ async fn test_basic_dump() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command
+    // Run the searchdump command
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -429,7 +429,7 @@ async fn test_filtered_dump() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command with a filter query using --searchBody
+    // Run the searchdump command with a filter query using --searchBody
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -479,7 +479,7 @@ async fn test_stdout_output() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run elasticdump-rs with output to stdout, captured to a file
+    // Run searchdump with output to stdout, captured to a file
     let output = binary_command()
         .args([
             "--input",
@@ -492,7 +492,7 @@ async fn test_stdout_output() -> Result<()> {
         .spawn()?
         .wait_with_output()?;
 
-    assert!(output.status.success(), "elasticdump-rs command failed");
+    assert!(output.status.success(), "searchdump command failed");
 
     // Parse the output to count and validate documents
     let output_str = String::from_utf8(output.stdout)?;
@@ -537,7 +537,7 @@ async fn test_pagination_and_complex_query() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command with a smaller batch size and complex query
+    // Run the searchdump command with a smaller batch size and complex query
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -651,7 +651,7 @@ async fn test_search_body_from_file() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command using --searchBody=@file
+    // Run the searchdump command using --searchBody=@file
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1000,7 +1000,7 @@ async fn test_sliced_scroll() -> Result<()> {
     // Set up test data
     setup_test_data(&test_index).await?;
 
-    // Run elasticdump-rs with slices=4
+    // Run searchdump with slices=4
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1073,7 +1073,7 @@ async fn test_sliced_scroll_with_query() -> Result<()> {
     let query_file = scratch(&format!("test_slice_query_{}.json", test_index));
     std::fs::write(&query_file, r#"{"query": {"term": {"tags": "even"}}}"#)?;
 
-    // Run elasticdump-rs with slices=3 and a query to get only even-tagged documents
+    // Run searchdump with slices=3 and a query to get only even-tagged documents
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1250,7 +1250,7 @@ async fn test_basic_pit() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command with PIT
+    // Run the searchdump command with PIT
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1356,7 +1356,7 @@ async fn test_pit_with_query() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command with PIT and a query
+    // Run the searchdump command with PIT and a query
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1411,7 +1411,7 @@ async fn test_sliced_pit() -> Result<()> {
     // Setup test data
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command with PIT and slices
+    // Run the searchdump command with PIT and slices
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1598,7 +1598,7 @@ async fn test_sliced_pit_large_dataset() -> Result<()> {
         .send()
         .await?;
 
-    // Run the elasticdump-rs command with PIT and slices
+    // Run the searchdump command with PIT and slices
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1689,7 +1689,7 @@ async fn test_create_data_for_manual_testing() -> Result<()> {
     // Tell the user the index name so they can use it for manual testing
     println!("\n=============================================");
     println!("Manual test data created in index: {}", test_index);
-    println!("Run elasticdump-rs with:");
+    println!("Run searchdump with:");
     println!(
         "cargo run -- --input {}/{} --output <your_output_file>",
         es_url(),
@@ -1710,7 +1710,7 @@ async fn test_dump_correctness() -> Result<()> {
     // Setup test data (100 documents)
     setup_test_data(&test_index).await?;
 
-    // Run the elasticdump-rs command for a basic dump
+    // Run the searchdump command for a basic dump
     run_elasticdump_command(&[
         "--input",
         &format!("{}/{}", es_url(), test_index),
@@ -1929,7 +1929,7 @@ async fn run_binary(args: Vec<String>) -> std::process::Output {
         binary_command()
             .args(args)
             .output()
-            .expect("failed to spawn elasticdump-rs")
+            .expect("failed to spawn searchdump")
     })
     .await
     .expect("subprocess task panicked")
@@ -1949,7 +1949,7 @@ fn test_limit_zero_is_rejected() {
             "0",
         ])
         .output()
-        .expect("failed to spawn elasticdump-rs");
+        .expect("failed to spawn searchdump");
 
     assert!(!output.status.success(), "--limit 0 must be rejected");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2010,7 +2010,7 @@ async fn test_failed_dump_preserves_existing_output() -> Result<()> {
     let sentinel = "sentinel content that must survive\n";
     std::fs::write(&dest, sentinel)?;
 
-    let missing_index = format!("elasticdump_rs_missing_{}", std::process::id());
+    let missing_index = format!("searchdump_rs_missing_{}", std::process::id());
     let output = run_elasticdump_command_capture(&[
         "--input",
         &format!("{}/{}", es_url(), missing_index),

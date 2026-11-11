@@ -39,7 +39,7 @@ __pycache__/
 
 # stray files from an early test run (removed in L-803, user approved)
 /oom
-/test_query_elasticdump_rs_test_857109_16.json
+/test_query_searchdump_rs_test_857109_16.json
 
 # Host-vendored crates for the offline image build (scripts/vendor-crates.sh, L-808i)
 /.vendor/

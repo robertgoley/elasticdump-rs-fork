@@ -13,7 +13,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 what="${1:-all}"
-export IT_XMATRIX_DIR="${IT_XMATRIX_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-xmatrix}"
+export IT_XMATRIX_DIR="${IT_XMATRIX_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-xmatrix}"
 mkdir -p "$IT_XMATRIX_DIR"
 profiles="${XMATRIX_PROFILES:-opensearch-plain:2 opensearch-plain:3 os13-plain: es710-plain: es710-secure: es717-plain: elasticsearch8-plain: es819-plain: elasticsearch-plain:}"
 rc=0

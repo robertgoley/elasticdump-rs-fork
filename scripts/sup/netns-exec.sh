@@ -13,7 +13,7 @@ pod="$1"; shift
 inf=$(podman pod inspect "$pod" --format '{{.InfraContainerID}}')
 pid=$(podman inspect --format '{{.State.Pid}}' "$inf")
 [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { echo "netns-exec: pod $pod is not running" >&2; exit 2; }
-dir="${EGRESS_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-egress/$pod}"
+dir="${EGRESS_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-egress/$pod}"
 mkdir -p "$dir"
 [[ -f "$dir/resolv.conf" ]] || printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > "$dir/resolv.conf"
 # shellcheck disable=SC2016

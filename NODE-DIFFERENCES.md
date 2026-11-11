@@ -1,6 +1,6 @@
 # Differences caused by Node elasticdump being incomplete or buggy
 
-This file lists only the places where elasticdump-rs behaves differently **because Node elasticdump
+This file lists only the places where searchdump behaves differently **because Node elasticdump
 (6.125.1, `lib/…` paths below) is incomplete, buggy, or has dead behaviour**. Two other lists are separate:
 
 * intentional design choices (zstd, staged split files, `--filterManaged`, …): README,
@@ -9,7 +9,7 @@ This file lists only the places where elasticdump-rs behaves differently **becau
 
 "File-compatible" means a file written by one tool restores with the other.
 
-| # | Area | Node behaviour (source) | elasticdump-rs behaviour | File-compatible | Test coverage |
+| # | Area | Node behaviour (source) | searchdump behaviour | File-compatible | Test coverage |
 |---|---|---|---|---|---|
 | 1 | PIT sort on OpenSearch | `searchBody.sort = ['_shard_doc']` for every engine (`lib/transports/__es__/_data.js:39`). OpenSearch rejects `_shard_doc` ("No mapping found for [_shard_doc]"), and a `_doc`-only sort was measured to lose documents across PIT pages | OpenSearch: `[{"_doc":"asc"},{"_id":{"order":"asc","unmapped_type":"keyword"}}]`; ES ≥ 7.12: `_shard_doc`; ES 7.10/7.11: `_doc` + `_id` | n/a (search only) | `engine::pit_request_shape_matches_engine`, `smoke::pit_dump_returns_all_docs_unsliced_and_sliced` (all profiles) |
 | 2 | PIT on clusters without it | Opens a PIT and fails (ES OSS builds, OpenSearch < 2.4); sliced PIT fails on ES < 7.15 ("`slice` cannot be used outside of a scroll context") | Warns and falls back to scroll (sliced scroll for slices); same documents | n/a | `engine::pit_request_shape_matches_engine`, `data::exact_size_with_scroll_and_sliced_pit` on es710 / os13 |
@@ -57,12 +57,12 @@ digits. Split parts: `--fileSize` counts UTF-8 bytes in Rust and JavaScript stri
 data splits into more Rust parts (7 vs 5 in the test). Node's own bigint fixtures round-trip byte for byte.
 
 Exit status for failed writes (L-444, Q3): Node exits 0 when bulk items fail (default
-`--ignore-es-write-errors true`). elasticdump-rs continues past failed items the same way but exits **3**
+`--ignore-es-write-errors true`). searchdump continues past failed items the same way but exits **3**
 ("finished with failed writes") unless `--ignore-es-write-errors` or `--ignore-errors` is given explicitly;
 `--ignore-es-write-errors false` stops at the first failed item with status 1, as in Node.
 
 Escaping corpus (L-511, TST-INJ-014; IT `node_interop::xv_escaping_corpus_round_trips_byte_for_byte`, OpenSearch
-2.19.7 and Elasticsearch 8.19.23, 88 documents into an `enabled: false` index): elasticdump-rs returns every
+2.19.7 and Elasticsearch 8.19.23, 88 documents into an `enabled: false` index): searchdump returns every
 `_source` byte for byte (multiset digest equal) and every `_id` decodes to the string sent; the engines themselves
 store a lone surrogate escape inside an `_id` (`"\ud800"`) as U+FFFD. Node 6.125.1 changes all 88 sources on the way
 file -> engine -> file because it parses and re-serialises them. Most changes are only re-escaping (`\/` -> `/`,

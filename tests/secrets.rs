@@ -7,12 +7,12 @@ use std::process::Output;
 use support::mock_es::{CannedResponse, MockEs};
 
 fn bin() -> std::process::Command {
-    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_searchdump"));
     for k in [
-        "ELASTICDUMP_INPUT_USERNAME",
-        "ELASTICDUMP_INPUT_PASSWORD",
-        "ELASTICDUMP_OUTPUT_USERNAME",
-        "ELASTICDUMP_OUTPUT_PASSWORD",
+        "SEARCHDUMP_INPUT_USERNAME",
+        "SEARCHDUMP_INPUT_PASSWORD",
+        "SEARCHDUMP_OUTPUT_USERNAME",
+        "SEARCHDUMP_OUTPUT_PASSWORD",
         "RUST_LOG",
         "HTTP_PROXY",
         "http_proxy",
@@ -225,8 +225,8 @@ async fn secret_canaries_never_leak() {
                         )
                     }
                     "env" => {
-                        env.push(("ELASTICDUMP_INPUT_USERNAME", "envuser".into()));
-                        env.push(("ELASTICDUMP_INPUT_PASSWORD", "CNRY-env-5".into()));
+                        env.push(("SEARCHDUMP_INPUT_USERNAME", "envuser".into()));
+                        env.push(("SEARCHDUMP_INPUT_PASSWORD", "CNRY-env-5".into()));
                         (format!("{base}/idx"), file_out)
                     }
                     "input-flags" => {
@@ -380,8 +380,8 @@ async fn credential_flags_pick_their_endpoint_and_never_leak() {
             false,
             s(&["--httpAuthFile", &crlf]),
             vec![
-                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
-                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+                ("SEARCHDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("SEARCHDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
             ],
             Some("url-u:FAKE-url-pw-9".into()),
         ),
@@ -390,8 +390,8 @@ async fn credential_flags_pick_their_endpoint_and_never_leak() {
             false,
             s(&["--httpAuthFile", &crlf, "--noUrlCreds"]),
             vec![
-                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
-                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+                ("SEARCHDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("SEARCHDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
             ],
             Some("file-u:FAKE-file-pw-4".into()),
         ),
@@ -400,8 +400,8 @@ async fn credential_flags_pick_their_endpoint_and_never_leak() {
             false,
             s(&["--noUrlCreds"]),
             vec![
-                ("ELASTICDUMP_OUTPUT_USERNAME", "env-u".into()),
-                ("ELASTICDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
+                ("SEARCHDUMP_OUTPUT_USERNAME", "env-u".into()),
+                ("SEARCHDUMP_OUTPUT_PASSWORD", "FAKE-env-pw-5".into()),
             ],
             Some("env-u:FAKE-env-pw-5".into()),
         ),

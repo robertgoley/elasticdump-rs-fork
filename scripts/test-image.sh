@@ -5,7 +5,7 @@
 #     variant selects docker/image-binaries.<variant>.txt (default dhi-static; --update rewrites it
 #     after review). Images without /bin/sh (dhi-static) are inspected through `export`, not a shell.
 # Checks:
-#   1. --version / --help work; the entrypoint is elasticdump-rs; the elasticdump symlink and the CA
+#   1. --version / --help work; the entrypoint is searchdump; the elasticdump symlink and the CA
 #      bundle are present (plus bash on images that have a shell)
 #   2. it runs as non-root (65532), and the working dir is /data
 #   3. read-only root filesystem: a file->file dump into a writable /data volume works under
@@ -25,7 +25,7 @@ runs() { "$C" run --rm "$IMG" "$1" >/dev/null; }
 check "--version" runs --version
 check "--help" runs --help
 ep=$($C image inspect "$IMG" --format '{{json .Config.Entrypoint}}')
-check "entrypoint elasticdump-rs ($ep)" test "$ep" = '["/usr/local/bin/elasticdump-rs"]'
+check "entrypoint searchdump ($ep)" test "$ep" = '["/usr/local/bin/searchdump"]'
 
 # Root filesystem listing without running anything inside the image.
 if ! { $C create --name edl-ti-c-$$ "$IMG" >/dev/null && $C export edl-ti-c-$$ > "$W/rootfs.tar" \
@@ -34,11 +34,11 @@ $C rm -f edl-ti-c-$$ >/dev/null 2>&1
 has() { awk -v p="$1" '$6 == p' "$W/rootfs.lst" | grep -q .; }
 shell=0; has bin/sh && shell=1
 ca_size=$(awk '$6 == "etc/ssl/certs/ca-certificates.crt" {print $3}' "$W/rootfs.lst")
-check "multielasticdump in /usr/local/bin" has usr/local/bin/multielasticdump
-check "elasticdump symlink -> elasticdump-rs" grep -qE ' usr/local/bin/elasticdump -> (/usr/local/bin/)?elasticdump-rs$' "$W/rootfs.lst"
+check "searchdump-multi in /usr/local/bin" has usr/local/bin/searchdump-multi
+check "elasticdump symlink -> searchdump" grep -qE ' usr/local/bin/elasticdump -> (/usr/local/bin/)?searchdump$' "$W/rootfs.lst"
 check "CA bundle present (${ca_size:-0} bytes)" test "${ca_size:-0}" -gt 0
-check "THIRD-PARTY-NOTICES.md in /usr/share/doc/elasticdump-rs" grep -qE ' usr/share/doc/elasticdump-rs/THIRD-PARTY-NOTICES\.md$' "$W/rootfs.lst"
-check "LICENSE in /usr/share/doc/elasticdump-rs" grep -qE ' usr/share/doc/elasticdump-rs/LICENSE$' "$W/rootfs.lst"
+check "THIRD-PARTY-NOTICES.md in /usr/share/doc/searchdump-rs" grep -qE ' usr/share/doc/searchdump-rs/THIRD-PARTY-NOTICES\.md$' "$W/rootfs.lst"
+check "LICENSE in /usr/share/doc/searchdump-rs" grep -qE ' usr/share/doc/searchdump-rs/LICENSE$' "$W/rootfs.lst"
 if [[ $shell == 1 ]]; then
   hasbash() { has bin/bash || has usr/bin/bash; }
   check "bash present (image has a shell)" hasbash

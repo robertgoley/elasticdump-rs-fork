@@ -187,7 +187,7 @@ pub fn resolve_endpoint_auth(
     dir: Direction,
     auth_file: Option<&(String, String)>,
 ) {
-    let env = |k: &str| std::env::var(k).ok();
+    let env = |k: &str| crate::envnames::var(k);
     let (u, p) = match dir {
         Direction::Input => (cli.input_username.as_deref(), cli.input_password.as_deref()),
         Direction::Output => (
@@ -204,7 +204,7 @@ pub fn build_client(
     dir: Direction,
     gate: RequestGate,
 ) -> Result<EsClient> {
-    let env = |k: &str| std::env::var(k).ok();
+    let env = |k: &str| crate::envnames::var(k);
     let tls = tls_for(cli, dir, &env);
     if (tls.cert.is_some() || tls.key.is_some()) && cli.tls_auth != Some(true) {
         log::warn!(

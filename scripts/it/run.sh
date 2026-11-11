@@ -32,7 +32,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 PROFILE="${1:-all}"
 shift || true
-IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/elasticdump-rs-it}"
+IT_DIR="${IT_DIR:-${XDG_RUNTIME_DIR:-$HOME/.cache}/searchdump-it}"
 export IT_DIR
 IT_CROSS_DIR="${IT_CROSS_DIR:-$IT_DIR-cross}"
 export IT_CROSS_DIR

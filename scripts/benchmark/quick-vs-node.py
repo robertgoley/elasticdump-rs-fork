@@ -12,7 +12,7 @@ scripts/load/nodecmp.py (LOAD-011).
 """
 import json, os, resource, subprocess, sys, time, urllib.request, random
 URL = os.environ.get("URL", "http://127.0.0.1:19200")
-RUST = os.environ.get("RUST_BIN", "target/it/elasticdump-rs")
+RUST = os.environ.get("RUST_BIN", "target/it/searchdump")
 NODE = os.environ.get("NODE_BIN", "elasticdump")
 N = int(os.environ.get("N", "200000"))
 D = os.environ.get("BENCH_DIR", "/tmp/edbench")

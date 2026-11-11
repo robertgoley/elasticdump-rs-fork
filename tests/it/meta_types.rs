@@ -19,7 +19,7 @@ fn tls(c: &Cluster, a: &mut Vec<String>, input: &str, output: &str) {
     }
 }
 
-/// Run elasticdump-rs (quiet) for `--type ty`.
+/// Run searchdump (quiet) for `--type ty`.
 async fn rs(c: &Cluster, input: &str, output: &str, ty: &str, extra: &[&str]) -> Output {
     let mut a = s(&["--input", input, "--output", output, "--type", ty]);
     tls(c, &mut a, input, output);
@@ -1404,7 +1404,7 @@ async fn xv_index_name_validation_agrees_with_the_cluster() {
     }
     let mut disagreements = Vec::new();
     for name in &names {
-        let ours = elasticdump_rs::rename::validate_index_name(name).is_ok();
+        let ours = searchdump_rs::rename::validate_index_name(name).is_ok();
         let path = percent_encoding::utf8_percent_encode(name, percent_encoding::NON_ALPHANUMERIC)
             .to_string();
         if path.is_empty() {
@@ -1447,7 +1447,7 @@ async fn xv_ilm_to_ism_oracle_converted_policies_are_accepted() {
         eprintln!("SKIP: ISM is OpenSearch only");
         return;
     }
-    use elasticdump_rs::meta::policy::ilm_to_ism::{IsmCaps, convert_for};
+    use searchdump_rs::meta::policy::ilm_to_ism::{IsmCaps, convert_for};
     let caps = IsmCaps {
         shrink: !c.version().await.starts_with("1."),
     };

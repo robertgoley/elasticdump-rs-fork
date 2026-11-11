@@ -1,5 +1,5 @@
 [package]
-name = "elasticdump-rs-fuzz"
+name = "searchdump-rs-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-elasticdump-rs = { path = "..", default-features = false, features = ["fuzz"] }
+searchdump-rs = { path = "..", default-features = false, features = ["fuzz"] }
 
 # Not part of the main workspace (nightly + sanitizer builds only).
 [workspace]

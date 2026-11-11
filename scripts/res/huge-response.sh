@@ -3,13 +3,13 @@
 # endless search response (chunked, no Content-Length). Under a 512 MB cgroup (cg-run.sh)
 # the dump must stop with the --maxResponseMb error (exit 1), not be OOM-killed (137).
 #
-#   scripts/res/huge-response.sh [path/to/elasticdump-rs]   (default target/debug/elasticdump-rs)
+#   scripts/res/huge-response.sh [path/to/searchdump]   (default target/debug/searchdump)
 #
 # HUGE_EXTRA="--maxResponseMb 0" shows the uncapped behaviour (OOM kill, 137).
 # Exit 0 = pass, 1 = fail, 77 = skipped (no cgroup v2 / sudo).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-bin="${1:-target/debug/elasticdump-rs}"
+bin="${1:-target/debug/searchdump}"
 [[ -x "$bin" ]] || { echo "missing $bin (cargo build first)" >&2; exit 1; }
 work=$(mktemp -d)
 trap 'kill "$srv" 2>/dev/null; rm -rf "$work"' EXIT

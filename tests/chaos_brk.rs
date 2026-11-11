@@ -11,12 +11,12 @@ const INFO: &str = r#"{"version":{"distribution":"opensearch","number":"2.19.0"}
 const CLEARED: &str = r#"{"succeeded":true,"num_freed":1}"#;
 
 fn bin() -> Command {
-    let mut c = Command::new(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    let mut c = Command::new(env!("CARGO_BIN_EXE_searchdump"));
     for v in [
-        "ELASTICDUMP_INPUT_USERNAME",
-        "ELASTICDUMP_INPUT_PASSWORD",
-        "ELASTICDUMP_OUTPUT_USERNAME",
-        "ELASTICDUMP_OUTPUT_PASSWORD",
+        "SEARCHDUMP_INPUT_USERNAME",
+        "SEARCHDUMP_INPUT_PASSWORD",
+        "SEARCHDUMP_OUTPUT_USERNAME",
+        "SEARCHDUMP_OUTPUT_PASSWORD",
         "NODE_TLS_REJECT_UNAUTHORIZED",
         "RUST_LOG",
         "SSL_CERT_FILE",
@@ -646,7 +646,7 @@ fn dns_sandbox_command(
         nsswitch.display(),
         resolv.display()
     ));
-    c.arg("sh").arg(env!("CARGO_BIN_EXE_elasticdump-rs"));
+    c.arg("sh").arg(env!("CARGO_BIN_EXE_searchdump"));
     for v in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -2900,7 +2900,7 @@ async fn l636_full_or_closed_standard_streams() {
         .await
         .unwrap()
     };
-    let b = env!("CARGO_BIN_EXE_elasticdump-rs");
+    let b = env!("CARGO_BIN_EXE_searchdump");
     let o = sh(format!("'{b}' --input '{inp}' --output '$' > /dev/full")).await;
     assert_eq!(o.status.code(), Some(1));
     assert!(
@@ -2948,7 +2948,7 @@ async fn l637_fd_limit_is_survived_or_explained() {
         })
         .start()
         .await;
-    let b = env!("CARGO_BIN_EXE_elasticdump-rs");
+    let b = env!("CARGO_BIN_EXE_searchdump");
     let inp = input.display().to_string();
     let url = format!("{}/z", m.url());
     let sh = |script: String| async move {
