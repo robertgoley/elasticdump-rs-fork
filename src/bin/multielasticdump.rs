@@ -35,6 +35,7 @@ use clap::{Parser, ValueEnum};
 use elasticdump_rs::endpoint::read_auth_file;
 use elasticdump_rs::http::gate::RequestGate;
 use elasticdump_rs::http::tls::TlsOptions;
+use elasticdump_rs::http::retry::error_chain;
 use elasticdump_rs::http::{Body, ClientOptions, EsClient};
 use regex::Regex;
 use reqwest::Method;
@@ -1095,7 +1096,7 @@ impl Cluster {
             .client
             .send(method.clone(), segs, query, false, body)
             .await
-            .map_err(|e| anyhow!("{method} /{}: {e}", segs.join("/")))?;
+            .map_err(|e| anyhow!("{method} /{}: {}", segs.join("/"), error_chain(&e)))?;
         let status = resp.status().as_u16();
         let bytes = resp.bytes().await?.to_vec();
         Ok((status, bytes))
