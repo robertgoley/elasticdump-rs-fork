@@ -42,6 +42,19 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   (`_data.js:115`), so it never actually sends the sort and writes `"_score": 1`; that is why the
   flag is opt-in and, without it, requests and dump lines are unchanged. NODE-DIFFERENCES.md #27.
 
+- **Scroll slices capped to the shard count (1.1-4), new flags `--sliceCap` (default `true`) and
+  `--sliceField=<field>`.** A sliced scroll with more slices than primary shards makes the engine
+  filter every document of a shard per extra slice (ES 7.10, one shard: 2 slices 2.1-2.2 s vs
+  0.8-0.9 s unsliced). A scroll dump now reads `index.number_of_shards` of the input indices and
+  lowers `--slices` to the smallest count with a warning (one shard: unsliced). `--sliceCap=false`
+  keeps the requested number. `--sliceField` adds `"field"` to every slice (numeric/date field
+  with doc values, checked with `GET /<index>/_mapping/field/<field>`; a missing, non-numeric or
+  doc-values-less field is an error before the first search) and disables the cap. PIT is not
+  capped. When the settings or mapping cannot be read, a warning is printed and the flags are
+  used as given. The live IT tests that exercise slicing on purpose pass `--sliceCap=false`.
+  Node compatibility: none (Node has no slicing). Perf note: `dump-scroll-s2/s4/s8` on the
+  one-shard perf index now run unsliced.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

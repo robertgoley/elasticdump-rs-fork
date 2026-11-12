@@ -211,7 +211,8 @@ Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
   (default true), `--closeIndex`, `--excludeTemplateFields`, `--convertIlmToIsm`, `--lenientPolicyConversion`,
   `--metaFormat string|object`, `--renamePrefix`, `--renameIndex`, `--renameAliases`, `--renamePatterns`.
 
-Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices`, `--workers`, `--bufferSize`,
+Rust-only extensions (all opt-in): `--compressionType zstd`, `--slices` (with `--sliceCap`, default true, and
+`--sliceField`; see "Tuning"), `--workers`, `--bufferSize`,
 `--searchType scroll|pit`, `--skip-existing`, `--force` (allow the same file/index as input and output; the output index is compared after `--prefix`/`--suffix`, so `--input …/idx --output …/idx --suffix=-copy` is not refused, `--input …/p-idx --output …/idx --prefix p-` is; a host-only `--output` writes each input index to its own name after `--renamePrefix`/`--renameIndex` and the affixes, so `--input …/idx --output …` is refused unless an affix or rename rule changes the name, and a wildcard input is refused only with neither), `--excludeSettings`, `--maxBulkBytes`, `--retryOn`,
 `--retryBackoff`, `--noImplicitRetry`, `--insecure`/`--input-insecure`/`--output-insecure`, `--username`/`--password`
 (aliases of `--input-username`/`--input-password`), `--caFile`, `--requestTimeout` (seconds; a deadline for the whole request, body included), `--idleTimeout` (seconds of server silence before a request fails or is retried; default 300, 0 = never; unlike Node, a stalled server cannot hang a run), `--maxResponseMb` (largest response body read into memory, default 256, 0 = unlimited; a bigger page fails with a hint to lower `--limit` instead of an OOM kill), `--allowMerge` (let `--renamePrefix`/`--renameIndex` rename several source indices to one target; refused by default, before anything is read for a cluster source, and before the batch is sent for a file source), `--maxDocMb` (largest single document read from a file or stdin, default 100 like `http.max_content_length`, 0 = unlimited; a bigger one stops the run naming its position instead of being buffered whole), `--allowMissingSource` (dump hits that carry no `_source`: indices whose mapping has `_source.enabled: false`, or a `--searchBody` that turns `_source` off. By default the first hit without `_source` stops the dump before anything of that page is written, and the error names the cause; a search body with `"_source": false` is refused before the first search, naming the search body and suggesting to remove it or pass this flag. **Behaviour change (L-455b):** `"_source": false` used to be allowed without the flag. `stored_fields` without `_source` is refused the same way (L-455a). `"_source": []` is not refused: on OpenSearch 1.3-3.x and Elasticsearch 7.17-9.1 it returns the whole `_source`. **Behaviour change (L-455c):** an empty `_source` (`{}`) is refused like a missing one. A filter that excludes every field (`{"excludes":["*"]}`, which returns `{}` for every hit) is refused before the first search. Otherwise the first hit whose `_source` is `{}` stops the dump, and the error names the document's `_index` and `_id` and the likely cause: the search body's `_source` filter, or a document that is really empty. **A document that is genuinely empty (`{}`) in the source index also needs `--allowMissingSource`.** These dumps used to write `{}`), `--noProxy` (ignore `HTTP(S)_PROXY`/`ALL_PROXY`; when an
@@ -1016,8 +1017,12 @@ A 1M-doc dump (about 7 s, bound by the cluster) took no longer with gzip 1/6 or 
 6, so it isn't worth using; `--compressionLevel 9` with gzip and levels 19 and up with zstd print a warning.
 
 Tuning: sliced retrieval (`--slices`) is what uses more cores. With scroll, match `--slices` to the primary-shard
-count (more slices than shards adds a per-document slice filter); PIT (`--searchAfter --pit`) tolerates more slices
-than shards. Keep `--workers` ≥ `--slices`. Sliced output does not keep a global document order.
+count (more slices than shards adds a per-document slice filter); since 1.1 a scroll dump does this itself: `--slices`
+above the smallest primary-shard count of the input indices is lowered to it with a warning (one shard: unsliced).
+`--sliceCap=false` keeps the number as given, and `--sliceField=<field>` (a numeric or date field with doc values,
+checked against the mapping) slices on that field instead of `_id` and is not capped. When the shard count cannot be
+read (no `view_index_metadata` privilege) the slices are used as given, with a warning. PIT (`--searchAfter --pit`)
+tolerates more slices than shards and is never capped. Keep `--workers` ≥ `--slices`. Sliced output does not keep a global document order.
 `scripts/benchmark/compare-with-elasticdump.sh` (from upstream elasticdump-rs) compares both tools on your own cluster.
 
 ## Testing

@@ -388,6 +388,344 @@ async fn scroll_doc_sort_is_opt_in_and_strips_the_hit_sort() {
     }
 }
 
+// 1.1-4: --slices above the primary-shard count is capped (one shard: unsliced) with a
+// warning; --sliceCap=false keeps it; --sliceField adds "field" to every slice and is checked
+// against the mapping (a keyword field is refused before any search).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slices_are_capped_to_primary_shards_and_slice_field_is_checked() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let empty = page("s0", &[], 0);
+    let mapping = |ty: &str| {
+        format!(
+            r#"{{"idx":{{"mappings":{{"ts":{{"full_name":"ts","mapping":{{"ts":{{"type":"{ty}"}}}}}}}}}}}}"#
+        )
+    };
+    for (extra, field_type, want_searches, want_field, want_exit, want_err) in [
+        (
+            vec!["--slices", "4"],
+            "date",
+            1,
+            false,
+            0,
+            Some("running unsliced"),
+        ),
+        (
+            vec!["--slices", "4", "--sliceCap=false"],
+            "date",
+            4,
+            false,
+            0,
+            None,
+        ),
+        (
+            vec!["--slices", "2", "--sliceField", "ts"],
+            "date",
+            2,
+            true,
+            0,
+            None,
+        ),
+        (
+            vec!["--slices", "2", "--sliceField", "ts"],
+            "keyword",
+            0,
+            false,
+            1,
+            Some("keyword field"),
+        ),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::prefix("GET", "/idx/_settings").reply(Reply::ok(
+                r#"{"idx":{"settings":{"index.number_of_shards":"1"}}}"#,
+            )))
+            .route(
+                Route::prefix("GET", "/idx/_mapping/field/ts")
+                    .reply(Reply::ok(mapping(field_type))),
+            )
+            .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(empty.clone())))
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            format!("{}/idx", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        let o = run_async(a, vec![]).await;
+        assert_eq!(
+            o.status.code(),
+            Some(want_exit),
+            "{extra:?}: {}",
+            stderr(&o)
+        );
+        if let Some(w) = want_err {
+            assert!(stderr(&o).contains(w), "{extra:?}: {}", stderr(&o));
+        }
+        let searches: Vec<_> = m
+            .requests()
+            .into_iter()
+            .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
+            .collect();
+        assert_eq!(searches.len(), want_searches, "{extra:?}: {searches:#?}");
+        for r in &searches {
+            let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            let slice = body.get("slice");
+            assert_eq!(slice.is_some(), want_searches > 1, "{extra:?}: {body}");
+            if let Some(sl) = slice {
+                assert_eq!(sl.get("field").is_some(), want_field, "{extra:?}: {body}");
+            }
+        }
+    }
+}
+
+// 1.1-4: a wildcard input whose `_settings` response names no index (`{}`: nothing matched,
+// or not readable as a shard count) leaves --slices as given: no cap, no warning, every
+// search carries its slice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slices_are_unchanged_when_wildcard_settings_match_no_index() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let empty = page("s0", &[], 0);
+    let m = RouterMock::builder()
+        .route(Route::prefix("GET", "/logs-").reply(Reply::ok("{}")))
+        .route(Route::contains("POST", "/_search").reply(Reply::ok(empty.clone())))
+        .route(
+            Route::prefix("DELETE", "/_search/scroll")
+                .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+        )
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("d.json");
+    let o = run_async(
+        vec![
+            "--input".into(),
+            format!("{}/logs-*", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--slices".into(),
+            "4".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert!(!err.contains("primary shard"), "capped anyway: {err}");
+    let reqs = m.requests();
+    assert!(
+        reqs.iter()
+            .any(|r| r.method == "GET" && r.path.contains("/_settings")),
+        "the shard count was never read: {reqs:#?}"
+    );
+    let searches: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
+        .collect();
+    assert_eq!(searches.len(), 4, "{searches:#?}");
+    let mut ids: Vec<u64> = searches
+        .iter()
+        .map(|r| {
+            let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            assert_eq!(body["slice"]["max"], 4, "{body}");
+            body["slice"]["id"].as_u64().unwrap()
+        })
+        .collect();
+    ids.sort();
+    assert_eq!(ids, vec![0, 1, 2, 3]);
+}
+
+// 1.1-4: --sliceCap=auto (default) over input indices with different shard counts (1 + 5):
+// Elasticsearch 7.11-9.4 caps at the total (6 slices), OpenSearch and Elasticsearch 9.5+ at
+// the smallest count (unsliced, the warning names the total), an undetectable version at the
+// smallest count; min / total skip version detection.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let empty = page("s0", &[], 0);
+    let es = |v: &str| {
+        format!(
+            r#"{{"version":{{"number":"{v}","build_flavor":"default"}},"tagline":"You Know, for Search"}}"#
+        )
+    };
+    let os = |v: &str| {
+        format!(
+            r#"{{"version":{{"distribution":"opensearch","number":"{v}"}},"tagline":"The OpenSearch Project: https://opensearch.org/"}}"#
+        )
+    };
+    // (case, GET / reply (None: 403), extra flags, searches, version fetched, warning)
+    type Case<'a> = (&'a str, Option<String>, Vec<&'a str>, usize, bool, &'a str);
+    let cases: Vec<Case> = vec![
+        (
+            "ES 8.19 auto: total",
+            Some(es("8.19.3")),
+            vec![],
+            6,
+            true,
+            "6 primary shards of the 2 input indices in total",
+        ),
+        (
+            "ES 7.10 auto: min",
+            Some(es("7.10.2")),
+            vec![],
+            1,
+            true,
+            "--sliceCap=total",
+        ),
+        (
+            "ES 9.5 auto: min for scroll",
+            Some(es("9.5.0")),
+            vec![],
+            1,
+            true,
+            "running unsliced",
+        ),
+        (
+            "OpenSearch auto: min",
+            Some(os("2.19.0")),
+            vec!["--sliceCap=auto"],
+            1,
+            true,
+            "6 primary shards in total",
+        ),
+        (
+            "true is auto",
+            Some(es("8.19.3")),
+            vec!["--sliceCap=true"],
+            6,
+            true,
+            "in total",
+        ),
+        (
+            "unknown version: min",
+            None,
+            vec![],
+            1,
+            true,
+            "could not detect the cluster version",
+        ),
+        (
+            "total forced on OpenSearch",
+            Some(os("2.19.0")),
+            vec!["--sliceCap=total"],
+            6,
+            false,
+            "in total",
+        ),
+        (
+            "min forced on ES 8",
+            Some(es("8.19.3")),
+            vec!["--sliceCap=min"],
+            1,
+            false,
+            "running unsliced",
+        ),
+    ];
+    for (case, root, extra, want_searches, want_root, want_warn) in cases {
+        let root_reply = match root {
+            Some(b) => Reply::ok(b),
+            None => Reply::json(403, r#"{"error":"forbidden","status":403}"#),
+        };
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(root_reply))
+            .route(Route::prefix("GET", "/logs-").reply(Reply::ok(
+                r#"{"logs-a":{"settings":{"index.number_of_shards":"1"}},"logs-b":{"settings":{"index.number_of_shards":"5"}}}"#,
+            )))
+            .route(Route::contains("POST", "/_search").reply(Reply::ok(empty.clone())))
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            format!("{}/logs-*", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--slices".into(),
+            "8".into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        let o = run_async(a, vec![]).await;
+        let err = stderr(&o);
+        assert!(o.status.success(), "{case}: {err}");
+        assert!(err.contains(want_warn), "{case}: {err}");
+        let reqs = m.requests();
+        assert_eq!(
+            reqs.iter().any(|r| r.method == "GET" && r.path == "/"),
+            want_root,
+            "{case}: {reqs:#?}"
+        );
+        let searches: Vec<_> = reqs
+            .iter()
+            .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
+            .collect();
+        assert_eq!(searches.len(), want_searches, "{case}: {searches:#?}");
+        for r in &searches {
+            let body: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+            if want_searches > 1 {
+                assert_eq!(body["slice"]["max"], want_searches, "{case}: {body}");
+            } else {
+                assert!(body.get("slice").is_none(), "{case}: {body}");
+            }
+        }
+    }
+}
+
+// 1.1-4: a single input index needs no version: --sliceCap=auto makes no GET / request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slice_cap_auto_on_one_index_does_not_detect_the_version() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let empty = page("s0", &[], 0);
+    let m = RouterMock::builder()
+        .route(Route::prefix("GET", "/idx/_settings").reply(Reply::ok(
+            r#"{"idx":{"settings":{"index.number_of_shards":"3"}}}"#,
+        )))
+        .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(empty.clone())))
+        .route(
+            Route::prefix("DELETE", "/_search/scroll")
+                .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+        )
+        .start()
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("d.json");
+    let o = run_async(
+        vec![
+            "--input".into(),
+            format!("{}/idx", m.url()),
+            "--output".into(),
+            out.to_str().unwrap().into(),
+            "--slices".into(),
+            "8".into(),
+        ],
+        vec![],
+    )
+    .await;
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert!(err.contains("using --slices 3"), "{err}");
+    let reqs = m.requests();
+    assert!(
+        !reqs.iter().any(|r| r.method == "GET" && r.path == "/"),
+        "{reqs:#?}"
+    );
+    let searches = reqs
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
+        .count();
+    assert_eq!(searches, 3);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn source_only_writes_raw_sources() {
     let mock = MockEs::serve(scroll_script(&[

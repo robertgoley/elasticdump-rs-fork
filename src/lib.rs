@@ -483,6 +483,135 @@ async fn build_sink(
 
 /// `--searchWithTemplate`: render `--searchBody` (`{"id"|"source", "params"}`)
 /// with `POST /_render/template` and search with the rendered body.
+/// GET a small JSON document from the input cluster (idempotent, retried).
+async fn get_json(
+    client: &crate::http::EsClient,
+    retry: crate::http::RetryPolicy,
+    segments: &[&str],
+    query: &[(&str, &str)],
+    what: &str,
+) -> Result<serde_json::Value> {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let resp = crate::http::send_with_retry(
+        retry,
+        &cancel,
+        crate::http::RetryMode::Idempotent,
+        what,
+        move || {
+            client.send(
+                reqwest::Method::GET,
+                segments,
+                query,
+                false,
+                crate::http::Body::Empty,
+            )
+        },
+    )
+    .await?;
+    Ok(serde_json::from_slice(&resp)?)
+}
+
+/// 1.1-4: the slice count to use. `--sliceField` is checked against the mapping and keeps
+/// `--slices` as given; otherwise a **scroll** dump (unless `--sliceCap=false`) has `--slices`
+/// lowered to the primary-shard count of the input indices, with a warning. `--sliceCap=auto`
+/// (default) picks the smallest or the total count from the cluster version
+/// ([`retrieval::slices::auto_basis`]); the version (`GET /`) is only fetched when the two
+/// differ (several input indices), and an undetectable version uses the smallest. PIT is not
+/// capped: it was measured faster with more slices than shards (README "Tuning"). A metadata
+/// request the user may not be allowed to make only produces a warning.
+async fn plan_slices(
+    cli: &Cli,
+    client: &crate::http::EsClient,
+    retry: crate::http::RetryPolicy,
+    index: Option<&str>,
+    search_type: SearchType,
+) -> Result<usize> {
+    let requested = cli.slices;
+    if requested <= 1 {
+        if cli.slice_field.is_some() {
+            log::warn!("--sliceField has no effect without --slices 2 or more");
+        }
+        return Ok(requested);
+    }
+    let Some(index) = index else {
+        log::debug!("--slices: no input index, so no primary-shard cap or field check");
+        return Ok(requested);
+    };
+    if let Some(field) = cli.slice_field.as_deref() {
+        match get_json(
+            client,
+            retry,
+            &[index, "_mapping", "field", field],
+            &[],
+            "read the --sliceField mapping",
+        )
+        .await
+        {
+            Ok(mapping) => retrieval::slices::check_slice_field(&mapping, field)?,
+            Err(e) => log::warn!(
+                "could not read the mapping of {field} to check --sliceField ({e:#}); using it unchecked"
+            ),
+        }
+        return Ok(requested);
+    }
+    let mode = cli.slice_cap();
+    if mode == retrieval::slices::SliceCap::Off || search_type != SearchType::Scroll {
+        return Ok(requested);
+    }
+    match get_json(
+        client,
+        retry,
+        &[index, "_settings", "index.number_of_shards"],
+        &[("flat_settings", "true")],
+        "read the primary-shard count for --slices",
+    )
+    .await
+    {
+        Ok(settings) => match retrieval::slices::primary_shard_counts(&settings) {
+            Some(counts) => {
+                let info = if retrieval::slices::needs_version(mode, counts) {
+                    match client
+                        .info(retry, &tokio_util::sync::CancellationToken::new())
+                        .await
+                    {
+                        Ok(info) => Some(info.clone()),
+                        Err(e) => {
+                            log::warn!(
+                                "--sliceCap=auto: could not detect the cluster version ({e:#}); capping --slices to the smallest primary-shard count of the input indices"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let basis = retrieval::slices::select_basis(mode, info.as_ref(), false);
+                log::debug!(
+                    "--sliceCap={}: {:?} primary-shard count of {:?}{}",
+                    mode.name(),
+                    basis,
+                    counts,
+                    info.as_ref()
+                        .map(|i| format!(" on {} {}", i.flavor_name(), i.version))
+                        .unwrap_or_default()
+                );
+                let (n, warning) = retrieval::slices::cap_slices_by(requested, counts, basis);
+                if let Some(w) = warning {
+                    log::warn!("{w}");
+                }
+                Ok(n)
+            }
+            None => Ok(requested),
+        },
+        Err(e) => {
+            log::warn!(
+                "could not read the primary-shard count of {index} ({e:#}); using --slices {requested} as given"
+            );
+            Ok(requested)
+        }
+    }
+}
+
 async fn render_search_template(
     client: &crate::http::EsClient,
     retry: crate::http::RetryPolicy,
@@ -631,6 +760,7 @@ async fn es_source_options(
         }
     }
     retrieval::set_strip_hit_sort(doc_sort);
+    let slices = plan_slices(cli, &client, retry, ep.index.as_deref(), search_type).await?;
     Ok(retrieval::EsSourceOptions {
         client,
         index: ep.index.clone(),
@@ -640,7 +770,8 @@ async fn es_source_options(
         pit_sort,
         scroll_ttl: cli.scroll.clone(),
         pit_keep_alive: cli.pit_keep_alive.clone(),
-        slices: cli.slices,
+        slices,
+        slice_field: cli.slice_field.clone(),
         workers: cli.workers,
         buffer_size: cli.buffer_size,
         quiet: cli.quiet(),

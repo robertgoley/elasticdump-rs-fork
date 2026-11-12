@@ -9,6 +9,7 @@ mod scroll;
 mod search_after;
 pub mod search_body;
 mod slice_state;
+pub mod slices;
 mod worker;
 
 use anyhow::Result;
@@ -172,6 +173,8 @@ pub struct EsSourceOptions {
     pub scroll_ttl: String,
     pub pit_keep_alive: String,
     pub slices: usize,
+    /// `--sliceField`: the slice object's `field` (validated against the mapping).
+    pub slice_field: Option<String>,
     pub workers: usize,
     pub buffer_size: usize,
     pub quiet: bool,
@@ -533,13 +536,20 @@ pub async fn dump_data(
     for slice_id in 0..num_slices {
         let mut slice_search_body = search_body.clone();
         if use_sliced_scroll {
-            slice_search_body.as_object_mut().unwrap().insert(
-                &"slice",
-                json!({
-                    "id": slice_id,
-                    "max": num_slices
-                }),
-            );
+            let mut slice = json!({
+                "id": slice_id,
+                "max": num_slices
+            });
+            if let Some(field) = &opts.slice_field {
+                slice
+                    .as_object_mut()
+                    .unwrap()
+                    .insert(&"field", json!(field.as_str()));
+            }
+            slice_search_body
+                .as_object_mut()
+                .unwrap()
+                .insert(&"slice", slice);
             info!("Starting slice {}/{}", slice_id + 1, num_slices);
         }
 

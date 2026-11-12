@@ -80,3 +80,9 @@ file -> engine -> file because it parses and re-serialises them. Most changes ar
 | `-0`, `-0.0` | `0` |
 | `1.0E+2` | `100` |
 | lone surrogate escape `"\ud800"` (value or key) | U+FFFD or the character dropped |
+
+## 1.1 changes with no Node difference
+
+These 1.1 roadmap items change only searchdump internals or searchdump-only extensions; Node elasticdump has no
+equivalent, so there is no compatibility difference to record in the table above.
+* **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.

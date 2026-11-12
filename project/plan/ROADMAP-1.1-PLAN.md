@@ -1,6 +1,6 @@
 # searchdump-rs 1.1: implementation plan (for review)
 
-Status: **steps 1-4 approved and in progress** (see Status below); steps 5-9 still for review. Branch `release/1.1` is a local branch only and has not been pushed.
+Status: **steps 1-9 approved and committed without building** (see Status below); compile/test and point-in-time perf run pending. Branch `release/1.1` is a local branch only and has not been pushed.
 Scope: roadmap items 1.1-1 to 1.1-9 from `FEATURES-TODO.md`, section "Roadmap: 1.1 release (performance and robustness)".
 Line references were rechecked at `0847643` (main, 2026-11-11). The roadmap table quotes them as of `a98be22`.
 
@@ -8,7 +8,7 @@ Rules that still apply: Rust 1.91 minimum (`rust-version = "1.91"`). No secrets 
 
 ## Status
 
-Owner go-ahead for steps 1-4 on 2026-11-11 (t163u). Q1 and Q2 were not answered, so the recommended defaults are used: Q1 interval refresh every 5 s plus a final refresh (`--refreshInterval=0` = Node's per-batch refresh); Q2 option (c), opt-in `--scrollDocSort`.
+Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same way (commit without building, then one batch of per-commit point-in-time perf tests; t166u/t167u). 1.0.0 is stable with no backports (Q5); 1.1 is the next stable. Q3: scroll slices are capped with a warning. Q1 and Q2 were not answered, so the recommended defaults are used: Q1 interval refresh every 5 s plus a final refresh (`--refreshInterval=0` = Node's per-batch refresh); Q2 option (c), opt-in `--scrollDocSort`.
 
 | Step | Item | Status |
 |---|---|---|
@@ -16,7 +16,11 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u). Q1 and Q2 were not answered,
 | 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
 | 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
 | 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed, not yet compiled (suite running); nodecmp + A/B pending |
-| 5-9 | 1.1-4, 1.1-9, 1.1-6, 1.1-8, 1.1-7 | planned, not started |
+| 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
+| 6 | 1.1-9 compression thread | planned |
+| 7 | 1.1-6 encode overlap | planned |
+| 8 | 1.1-8 tokio::process | planned |
+| 9 | 1.1-7 child counts | planned |
 
 "In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).
 

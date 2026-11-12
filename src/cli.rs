@@ -563,9 +563,17 @@ pub struct Cli {
     pub output_insecure: Option<bool>,
 
     // ------------------------------------------------ rs extensions (perf)
-    /// Extension: parallel slices for sliced scroll / PIT (0 = unsliced)
+    /// Extension: parallel slices for sliced scroll / PIT (0 = unsliced); scroll slices are capped to the input indices' primary-shard count (see --sliceCap) unless --sliceCap=false or --sliceField
     #[arg(long, default_value_t = 0)]
     pub slices: usize,
+
+    /// Extension: for scroll, lower --slices to the primary-shard count, with a warning: auto (default; true is an alias) uses the total count on Elasticsearch 7.11-9.4 and the smallest count per index on Elasticsearch 5.0-7.10, 9.5+, OpenSearch and unknown versions; min / total force one; false keeps --slices as given. PIT is never capped
+    #[arg(long = "sliceCap", num_args = 0..=1, default_missing_value = "auto", value_parser = crate::retrieval::slices::parse_slice_cap)]
+    pub slice_cap: Option<crate::retrieval::slices::SliceCap>,
+
+    /// Extension: numeric or date field with doc values to slice on (slice "field"); checked against the mapping, and --slices is then not capped
+    #[arg(long = "sliceField")]
+    pub slice_field: Option<String>,
 
     /// Extension: JSON extraction workers
     #[arg(long, default_value_t = 4, value_parser = parse_non_zero_usize)]
@@ -653,6 +661,10 @@ impl Cli {
     }
     pub fn scroll_doc_sort(&self) -> bool {
         is(self.scroll_doc_sort)
+    }
+    pub fn slice_cap(&self) -> crate::retrieval::slices::SliceCap {
+        self.slice_cap
+            .unwrap_or(crate::retrieval::slices::SliceCap::Auto)
     }
 
     /// Effective retrieval mode: `--searchType` (extension) or Node's
@@ -929,6 +941,40 @@ mod tests {
             let arg = format!("--refreshInterval={bad}");
             assert!(parse(&[arg.as_str()]).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn slice_cap_default_on_and_slice_field() {
+        use crate::retrieval::slices::SliceCap;
+        let c = parse(&[]).unwrap();
+        assert_eq!(c.slice_cap(), SliceCap::Auto, "auto is the default");
+        assert_eq!(c.slice_field, None);
+        for (arg, want) in [
+            ("--sliceCap", SliceCap::Auto),
+            ("--sliceCap=auto", SliceCap::Auto),
+            ("--sliceCap=true", SliceCap::Auto),
+            ("--sliceCap=min", SliceCap::Min),
+            ("--sliceCap=total", SliceCap::Total),
+            ("--sliceCap=TOTAL", SliceCap::Total),
+            ("--sliceCap=false", SliceCap::Off),
+            ("--sliceCap=no", SliceCap::Off),
+        ] {
+            assert_eq!(parse(&[arg]).unwrap().slice_cap(), want, "{arg}");
+        }
+        assert_eq!(
+            parse(&["--sliceCap", "total"]).unwrap().slice_cap(),
+            SliceCap::Total
+        );
+        for bad in ["--sliceCap=max", "--sliceCap=2", "--sliceCap="] {
+            assert!(parse(&[bad]).is_err(), "{bad}");
+        }
+        assert_eq!(
+            parse(&["--sliceField", "ts"])
+                .unwrap()
+                .slice_field
+                .as_deref(),
+            Some("ts")
+        );
     }
 
     #[test]
