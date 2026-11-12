@@ -163,6 +163,24 @@ class SeedTests(unittest.TestCase):
     def test_empty_seed(self):
         self.assertEqual(list(R.seed_batches([], 500, 1 << 20)), [])
 
+    def test_request_timeout_names_the_request(self):
+        import http.server, threading, time
+
+        class Stall(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                time.sleep(1.5)
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Stall)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            with patch.object(R, "HTTP_TIMEOUT_S", 0.3):
+                with self.assertRaisesRegex(TimeoutError, r"POST /idx/_flush timed out after 0\.3s"):
+                    R.Cluster(f"http://127.0.0.1:{srv.server_port}").req("POST", "/idx/_flush")
+        finally:
+            srv.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

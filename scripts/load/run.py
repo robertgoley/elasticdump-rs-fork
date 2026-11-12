@@ -17,7 +17,7 @@ The runner does the following, in order:
 
 Exit codes: 0 = pass, 1 = fail, 2 = refused (tier does not fit the place), 3 = skipped (resource guard; exit 1 with IT_REQUIRED=1).
 """
-import argparse, base64, datetime, fcntl, glob, json, os, re, shutil, ssl, subprocess, sys, threading, time, tomllib
+import argparse, base64, datetime, fcntl, glob, json, os, re, shutil, socket, ssl, subprocess, sys, threading, time, tomllib
 import urllib.error, urllib.parse, urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -145,13 +145,19 @@ class Cluster:
         if self.auth:
             r.add_header("Authorization", self.auth)
         try:
-            with urllib.request.urlopen(r, context=self.ctx, timeout=300) as resp:
+            with urllib.request.urlopen(r, context=self.ctx, timeout=HTTP_TIMEOUT_S) as resp:
                 raw = resp.read()
+        except (TimeoutError, socket.timeout) as e:
+            # Name the request: a bare "timed out" cannot be told apart from a seed, refresh or flush stall.
+            raise TimeoutError(f"{method} {path} timed out after {HTTP_TIMEOUT_S:g}s") from e
         except urllib.error.HTTPError as e:
             if ok404 and e.code == 404:
                 return None
             raise RequestError(method, path, e.code, e.read()) from None
         return json.loads(raw) if raw else None
+
+
+HTTP_TIMEOUT_S = float(os.environ.get("PERF_HTTP_TIMEOUT", "300"))
 
 
 def fit(tier_name, place_name, tiers, scenario, docs_override):
@@ -316,6 +322,7 @@ def seed_batches(lines, max_docs, max_bytes):
 def seed_index(cl, edgen, s, flavour, *, max_docs=5000, max_bytes=8 << 20):
     m = json.loads(subprocess.run([edgen, "mapping", "--profile", s["profile"], "--engine", flavour],
                                   check=True, capture_output=True).stdout)
+    cl.req("DELETE", "/" + s["index"], ok404=True)  # a retried seed starts from a clean index
     cl.req("PUT", "/" + s["index"], m)
     p = subprocess.Popen([edgen, "gen", "--profile", s["profile"], "--seed", str(s["seed"]),
                           "--count", str(s["docs"]), "--format", "bulk", "--index", s["index"]],

@@ -52,3 +52,19 @@ done:
 2. Confirm the result directory in `summary.txt` is the successful retry, not the one-second
    fast-fail (the successful ES 7.17 TLS and ES 8 TLS dirs are the later timestamps).
 3. Then run `scripts/perf/aggregate.py` on those result dirs only.
+
+## elasticsearch-plain (ES 9.1.2) edge seed timeout (2026-11-11)
+- Result dir 20261111T183358-2515936: 35 PASS, 2 FAIL (dump-edge, restore-edge: `dataset edge: timed out`).
+  Not a searchdump bug: no searchdump command ran for the edge dataset (the failure is in the Python
+  seeder, scripts/load/run.py, `urlopen(timeout=300)`; the bare message is a socket timeout). Timing:
+  big finished 18:45:04, `many` started ~18:50, i.e. exactly one 300 s stall on one ES request
+  (bulk/refresh/count/flush of the 1 MB-doc edge seed; unknown which, engine logs are not kept).
+  The engine recovered (the later `many` dataset seeded and ran fine) and the same edge cases passed on
+  ES 7.10/7.17/8/8.19. Node-only NODE_FAIL on multi-dump-p8 is informational (an edverify scroll timeout
+  on the Node output verify, same 300 s class of stall, did not affect rs).
+- Harness change (not live in the running driver; applies to engines started after the next pull of the
+  tree/ on rerun): HTTP timeout names the request and is tunable via PERF_HTTP_TIMEOUT; a seed
+  that times out is retried once after dropping the partial index (recorded as `seed_retries`);
+  seed_index now deletes a stale index first. Test: scripts/load/test_seed.py.
+- Rerun: elasticsearch-plain needs a rerun (edge cases only matter; `--cases`/engine rerun when the driver
+  is idle). Do not rerun while run-all.sh is running. elasticsearch-secure may hit the same stall.

@@ -815,7 +815,15 @@ def execute_engine(a, plan, entry, tools, directory):
         er.start()
         for dataset in dict.fromkeys(c["dataset"] for c in entry["cases"]):
             try:
-                er.seed(dataset)
+                try:
+                    er.seed(dataset)
+                except TimeoutError as e:
+                    # A single stalled engine request (seen once: ES 9.1.2 edge seed, 300 s) must not
+                    # discard the dataset's 12 cases: log it, drop the partial index and seed once more.
+                    er.result.setdefault("seed_retries", []).append(f"{dataset}: {e}")
+                    print(f"warning: seed {dataset} stalled ({e}); retrying once", flush=True)
+                    er.cleanup_dataset()
+                    er.seed(dataset)
                 for case in [c for c in entry["cases"] if c["dataset"] == dataset]:
                     if skip_reason(entry["engine"], case, "rs"):
                         er.result["summary"].append(dict(case=case["id"], status="SKIP: " + skip_reason(entry["engine"], case, "rs")))
