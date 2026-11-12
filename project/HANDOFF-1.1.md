@@ -51,7 +51,7 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
   "Push local changes to main on GitHub, which changes shared state others observe without authorization."
   Do not open PRs or new remote branches. Do not retag without telling Robert.
 - Branched from `0847643` (main as of the 1.1 plan). HEAD at the parent of
-  this handoff commit was `321f31d`.
+  this handoff commit was `ca6a8a6`.
 - Nothing on this branch has been compiled or clippy'd. There is no
   `/workspace/perf-bin-1.1`, `/workspace/perf-pit-1.1`, `/workspace/pit-src`,
   or `/workspace/pit-target` yet. Offline Python perf self-tests and
@@ -68,25 +68,27 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
 |---|---|---|
 | `85856a4` | plan: 1.1 roadmap implementation order | no (docs) |
 | `4cffbf4` | perf(1.1-5): blocking wait4 timer in measure.py | no (harness only; in effect for every PIT step because the harness always comes from HEAD) |
-| `37009fc` | bulk(1.1-2): refresh only the indices written | yes (step 1) |
-| `4adcd53` | bulk(1.1-1): refresh every `--refreshInterval` seconds (default 5) | yes (step 2) |
-| `42b3f94` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
-| `1d21d14` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
-| `beb8c18` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
-| `81efee8` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
-| `08ae175` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
-| `7b19898` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
-| `321f31d` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
+| `02c1ead` | bulk(1.1-2): refresh only the indices written | yes (step 1) |
+| `fee898a` | bulk(1.1-1): refresh every `--refreshInterval` seconds (default 5) | yes (step 2) |
+| `ca2c437` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
+| `e523ce5` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
+| `697470a` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
+| `f793c8d` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
+| `29492a4` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
+| `be3aa2d` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
+| `ca6a8a6` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
 | (this file) | docs: this cold-start handoff | no |
 
 PIT base (step 0) is tag `v1.0.0-beta1` = `94e4afb`. `pit.sh list` is the
-source of truth for hashes; they change after an autosquash.
+source of truth for hashes; they change after an autosquash. Hashes above are
+after the 2026-11-11 autosquash (all fixups folded; the CHANGELOG and README
+hunks that had leaked into fixups now sit in the docs commits).
 
 ### Fixup commits and autosquash (do this before the batch)
 
-The Rust commits were written without `cargo check`. 1.1-6 (`81efee8`) and
-1.1-8 (`08ae175`) are the most likely to need small compile fixes. One
-fixup was already folded into `08ae175` (`bf3cfa0`, then
+The Rust commits were written without `cargo check`. 1.1-6 (`f793c8d`) and
+1.1-8 (`29492a4`) are the most likely to need small compile fixes. One
+fixup was already folded into `29492a4` (`bf3cfa0`, then
 `git rebase --autosquash`). Concurrent workers may add more `fixup!`
 commits on this local branch while the suite runs.
 
