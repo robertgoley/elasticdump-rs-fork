@@ -14,7 +14,7 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u). Q1 and Q2 were not answered,
 |---|---|---|
 | 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measure pending |
 | 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
-| 3 | 1.1-1 refresh cadence | planned |
+| 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
 | 4 | 1.1-3 `_doc` sort (opt-in) | planned |
 | 5-9 | 1.1-4, 1.1-9, 1.1-6, 1.1-8, 1.1-7 | planned, not started |
 

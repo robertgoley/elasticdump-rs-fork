@@ -188,6 +188,7 @@ Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
   `--searchWithTemplate`, `--scrollTime`, `--scrollId`, `--searchAfter`, `--pit`, `--pitKeepAlive`,
   `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`).
 * **Writing:** `--bulkAction index|create|update|delete`, `--handleVersion`, `--versionType`, `--noRefresh`,
+  `--refreshInterval` (seconds; default 5, `0` = after every batch as in Node; see below),
   `--ignore-errors`, `--ignore-es-write-errors` (default: continue past failed items), `--parseExtraFields`.
 * **Files:** `--fsCompress`, `--compressionType gzip|zstd`, `--compressionLevel`, `--fileSize`, `--maxRows`.
   `--compressionType` wins over `--fsCompress` when both are given. `--offset` cannot be combined with `--slices`
@@ -275,6 +276,14 @@ for every place the tool changes what is loaded, and for the tested versions, se
   wins in Node and the later line wins here (file order). Verified on 10,000 random documents by
   `scripts/node/bulk-diff.py` (L-506): every other byte difference is one of these.
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
+* **Refresh cadence** (1.1, `--refreshInterval`): while writing, the target indices are refreshed at most every
+  5 seconds (the clock starts when the first batch is written), plus **once at the end of every run**, also with
+  `--concurrency 1`. Node refreshes after every bulk batch, which makes the cluster build a new segment per batch
+  and dominates restore time at the default batch size. `--refreshInterval=0` restores Node's per-batch refresh;
+  `--refreshInterval=N` (decimals allowed, up to 86400) sets another interval; `--noRefresh` sends no refresh at
+  all and wins over `--refreshInterval`. After the run the same documents are searchable as with Node; only a
+  reader watching the index *during* a restore sees new documents up to the interval later (the engine's own
+  `index.refresh_interval`, 1 s by default, still applies as well).
 * **Refresh targets only the indices written** (1.1): a restore with no output index (each document keeps its
   `_index`) refreshes exactly the indices it wrote, after `--prefix`/`--suffix`/rename, as
   `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true` (long lists split under ~3 KB per URL). Node

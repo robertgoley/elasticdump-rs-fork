@@ -82,6 +82,59 @@ impl BulkAction {
     }
 }
 
+/// When the writer refreshes the indices it wrote (1.1-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshPolicy {
+    /// `--noRefresh`: never.
+    Off,
+    /// `--refreshInterval=0`: after every successful batch, as Node elasticdump does.
+    EveryBatch,
+    /// Default: at most once per interval while writing, plus once at the end.
+    Interval(Duration),
+}
+
+/// Default `--refreshInterval` (seconds).
+pub const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+
+impl Default for RefreshPolicy {
+    fn default() -> Self {
+        RefreshPolicy::Interval(DEFAULT_REFRESH_INTERVAL)
+    }
+}
+
+impl RefreshPolicy {
+    /// From `--noRefresh` (wins) and `--refreshInterval` (`0` = every batch).
+    pub fn from_flags(no_refresh: bool, interval: Option<Duration>) -> Self {
+        match (no_refresh, interval) {
+            (true, _) => RefreshPolicy::Off,
+            (false, Some(d)) if d.is_zero() => RefreshPolicy::EveryBatch,
+            (false, Some(d)) => RefreshPolicy::Interval(d),
+            (false, None) => RefreshPolicy::default(),
+        }
+    }
+
+    pub fn is_off(self) -> bool {
+        self == RefreshPolicy::Off
+    }
+
+    /// Whether a refresh is due after a batch finished at `now`. `last` is the time of the last
+    /// refresh, or of the first finished batch (the interval clock starts there, so a run that
+    /// finishes within one interval refreshes only once, at the end).
+    fn due(self, last: &mut Option<tokio::time::Instant>, now: tokio::time::Instant) -> bool {
+        match self {
+            RefreshPolicy::Off => false,
+            RefreshPolicy::EveryBatch => true,
+            RefreshPolicy::Interval(d) => match *last {
+                None => {
+                    *last = Some(now);
+                    false
+                }
+                Some(t) => now.saturating_duration_since(t) >= d,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BulkOptions {
     pub info: ClusterInfo,
@@ -98,7 +151,7 @@ pub struct BulkOptions {
     pub version_type: Option<String>,
     /// Meta fields copied into the action line (bare names).
     pub meta_fields: Vec<String>,
-    pub refresh: bool,
+    pub refresh: RefreshPolicy,
     pub ignore_es_write_errors: bool,
     pub ignore_errors: bool,
     pub max_bulk_bytes: usize,
@@ -139,8 +192,12 @@ pub struct BulkSink {
     concurrency: usize,
     throttle: Option<Duration>,
     inflight: JoinSet<Result<WriteReport>>,
-    /// At most one `_refresh` in flight (others are skipped).
-    refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    /// At most one `_refresh` in flight (others are skipped). Holds the time of the last
+    /// refresh (or of the first finished batch) for [`RefreshPolicy::Interval`].
+    refresh_lock: Arc<tokio::sync::Mutex<Option<tokio::time::Instant>>>,
+    /// A batch was written since the last refresh started; [`BulkSink::drain`] refreshes once
+    /// more when set (1.1-1: the final refresh, also with `--concurrency 1`).
+    refresh_dirty: Arc<AtomicBool>,
     /// Every target index name the run sent documents to (after prefix/suffix/rename), shared
     /// by all workers. With no output index, `_refresh` targets exactly these (1.1-2) instead of
     /// the whole cluster.
@@ -426,7 +483,8 @@ impl BulkSink {
             concurrency: 1,
             throttle: None,
             inflight: JoinSet::new(),
-            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refresh_dirty: Arc::new(AtomicBool::new(false)),
             written_indices: Arc::default(),
             batch_indices: HashSet::new(),
             next_doc: 1,
@@ -567,6 +625,7 @@ impl BulkSink {
             throttle: None,
             inflight: JoinSet::new(),
             refresh_lock: Arc::clone(&self.refresh_lock),
+            refresh_dirty: Arc::clone(&self.refresh_dirty),
             written_indices: Arc::clone(&self.written_indices),
             batch_indices: HashSet::new(),
             next_doc: 1,
@@ -622,19 +681,22 @@ impl BulkSink {
         Ok(())
     }
 
-    /// Wait for every in-flight batch; the first error wins.
+    /// Wait for every in-flight batch; the first error wins. Then the final refresh: whatever
+    /// was written since the last refresh (an interval not yet elapsed, or a per-batch refresh
+    /// skipped while another ran) is refreshed once, unless `--noRefresh`.
     pub async fn drain(&mut self) -> Result<()> {
-        let concurrent = self.concurrency > 1;
         while let Some(joined) = self.inflight.join_next().await {
             if let Err(e) = self.merge(joined) {
                 self.inflight.abort_all();
                 return Err(e);
             }
         }
-        if concurrent && self.opts.refresh {
-            // A per-batch refresh may have been skipped while another ran.
-            let _g = self.refresh_lock.lock().await;
-            self.refresh().await;
+        if !self.opts.refresh.is_off() && self.refresh_dirty.load(Ordering::SeqCst) {
+            let lock = Arc::clone(&self.refresh_lock);
+            let mut last = lock.lock().await;
+            if self.refresh_dirty.load(Ordering::SeqCst) {
+                self.refresh_now(&mut last).await;
+            }
         }
         self.check_target_index().await
     }
@@ -892,11 +954,18 @@ impl BulkSink {
             start = end;
         }
         self.note_written_indices();
-        if self.opts.refresh && !docs.is_empty() {
-            // Skip when another worker's refresh is already running.
+        if !self.opts.refresh.is_off() && !docs.is_empty() {
+            self.refresh_dirty.store(true, Ordering::SeqCst);
+            // Skip when another worker's refresh is already running (the final refresh in
+            // drain() covers this batch then).
             let lock = Arc::clone(&self.refresh_lock);
-            if let Ok(_g) = lock.try_lock() {
-                self.refresh().await;
+            if let Ok(mut last) = lock.try_lock()
+                && self
+                    .opts
+                    .refresh
+                    .due(&mut last, tokio::time::Instant::now())
+            {
+                self.refresh_now(&mut last).await;
             }
         }
         Ok(())
@@ -1146,6 +1215,15 @@ impl BulkSink {
         }
     }
 
+    /// Refresh now (the caller holds `refresh_lock`) and restart the interval clock. The dirty
+    /// flag is cleared *before* the request, so a batch finishing while it runs sets it again
+    /// and is refreshed by a later call.
+    async fn refresh_now(&self, last: &mut Option<tokio::time::Instant>) {
+        self.refresh_dirty.store(false, Ordering::SeqCst);
+        self.refresh().await;
+        *last = Some(tokio::time::Instant::now());
+    }
+
     async fn refresh(&self) {
         let targets = self.refresh_targets();
         // With an output index the request is unchanged from 1.0 (no extra parameters).
@@ -1264,7 +1342,7 @@ mod tests {
                 "timestamp".into(),
                 "ttl".into(),
             ],
-            refresh: true,
+            refresh: RefreshPolicy::default(),
             ignore_es_write_errors: true,
             ignore_errors: false,
             max_bulk_bytes: 100 << 20,
@@ -1506,6 +1584,106 @@ mod tests {
         assert_eq!(s.auto_id_docs(&docs, &[1]), 0);
         let s = sink(os(), |o| o.action = BulkAction::Delete);
         assert_eq!(s.auto_id_docs(&docs, &[0, 2]), 0);
+    }
+
+    /// Refreshes for batches finishing at `finish_ms` (concurrency 1), counted the way
+    /// process_batch() and drain() apply the policy: `due` after each batch, plus the final
+    /// refresh when anything was written since the last one.
+    fn refreshes(policy: RefreshPolicy, finish_ms: &[u64]) -> usize {
+        let base = tokio::time::Instant::now();
+        let (mut last, mut dirty, mut n) = (None, false, 0);
+        for &t in finish_ms {
+            if policy.is_off() {
+                continue;
+            }
+            dirty = true;
+            let now = base + Duration::from_millis(t);
+            if policy.due(&mut last, now) {
+                dirty = false;
+                last = Some(now);
+                n += 1;
+            }
+        }
+        n + usize::from(dirty)
+    }
+
+    // 1.1-1: refresh cadence per policy, final refresh always (unless off).
+    #[test]
+    fn refresh_policy_cadence() {
+        let five = RefreshPolicy::default();
+        assert_eq!(five, RefreshPolicy::Interval(Duration::from_secs(5)));
+        let ten_quick: Vec<u64> = (1..=10).map(|i| i * 100).collect();
+        // a run shorter than the interval: one refresh, at the end
+        assert_eq!(refreshes(five, &ten_quick), 1);
+        assert_eq!(refreshes(RefreshPolicy::EveryBatch, &ten_quick), 10);
+        assert_eq!(refreshes(RefreshPolicy::Off, &ten_quick), 0);
+        assert_eq!(
+            refreshes(five, &[]),
+            0,
+            "nothing written, nothing refreshed"
+        );
+        assert_eq!(refreshes(RefreshPolicy::EveryBatch, &[]), 0);
+        // one batch per second for 20 s: the clock starts at the first batch (t=1), refreshes
+        // at t=6, 11, 16, then the final one for t=17..20
+        let slow: Vec<u64> = (1..=20).map(|i| i * 1000).collect();
+        assert_eq!(refreshes(five, &slow), 4);
+        // a last batch that triggers the interval refresh leaves nothing for the final one
+        assert_eq!(refreshes(five, &[1000, 6000]), 1);
+        assert_eq!(
+            refreshes(
+                RefreshPolicy::Interval(Duration::from_millis(250)),
+                &ten_quick
+            ),
+            3,
+            "t=100 starts the clock; refreshes at 400, 700 and 1000, none left for the end"
+        );
+    }
+
+    #[test]
+    fn refresh_policy_from_flags() {
+        let d = Some(Duration::from_secs(2));
+        assert_eq!(RefreshPolicy::from_flags(true, d), RefreshPolicy::Off);
+        assert_eq!(RefreshPolicy::from_flags(true, None), RefreshPolicy::Off);
+        assert_eq!(
+            RefreshPolicy::from_flags(false, Some(Duration::ZERO)),
+            RefreshPolicy::EveryBatch
+        );
+        assert_eq!(
+            RefreshPolicy::from_flags(false, d),
+            RefreshPolicy::Interval(Duration::from_secs(2))
+        );
+        assert_eq!(
+            RefreshPolicy::from_flags(false, None),
+            RefreshPolicy::Interval(DEFAULT_REFRESH_INTERVAL)
+        );
+    }
+
+    // 1.1-1 with the real writer state and a paused clock: workers share the dirty flag, the
+    // lock and the interval clock (no request is sent).
+    #[tokio::test(start_paused = true)]
+    async fn refresh_state_is_shared_and_the_clock_starts_at_the_first_batch() {
+        let s = sink(os(), |o| o.index = Some("dst".into()));
+        let w = s.worker();
+        assert!(!s.refresh_dirty.load(Ordering::SeqCst));
+        w.refresh_dirty.store(true, Ordering::SeqCst);
+        assert!(s.refresh_dirty.load(Ordering::SeqCst), "dirty flag shared");
+        {
+            let mut last = s.refresh_lock.lock().await;
+            assert!(!s.opts.refresh.due(&mut last, tokio::time::Instant::now()));
+            assert!(last.is_some(), "first batch starts the clock");
+            assert!(
+                w.refresh_lock.try_lock().is_err(),
+                "lock shared: others skip"
+            );
+        }
+        tokio::time::advance(Duration::from_millis(4999)).await;
+        {
+            let mut last = w.refresh_lock.lock().await;
+            assert!(!w.opts.refresh.due(&mut last, tokio::time::Instant::now()));
+        }
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let mut last = w.refresh_lock.lock().await;
+        assert!(w.opts.refresh.due(&mut last, tokio::time::Instant::now()));
     }
 
     // 1.1-2: with no output index, refresh only the (prefixed/suffixed) indices written.
@@ -1898,7 +2076,7 @@ mod prop_bulk {
                 handle_version: c.handle_version,
                 version_type: c.version_type.clone(),
                 meta_fields: vec!["routing".into(), "parent".into()],
-                refresh: true,
+                refresh: RefreshPolicy::default(),
                 ignore_es_write_errors: true,
                 ignore_errors: false,
                 max_bulk_bytes: 100 << 20,

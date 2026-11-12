@@ -456,7 +456,7 @@ async fn build_sink(
                 handle_version: cli.handle_version(),
                 version_type: cli.version_type.clone(),
                 meta_fields,
-                refresh: !cli.no_refresh(),
+                refresh: cli.refresh_policy(),
                 ignore_es_write_errors: cli.ignore_es_write_errors(),
                 ignore_errors: cli.ignore_errors(),
                 max_bulk_bytes: max_bulk_bytes.max(1) as usize,

@@ -250,6 +250,15 @@ reference. Metadata restore references are checked by the post-restore metadata 
 | `multi-restore-p4` | many | 16-index directory load, `--parallel=4` | Rust + Node |
 | `multi-dump-p8` | many | 16-index directory dump, `--parallel=8` | Rust + Node |
 | `multi-restore-p8` | many | 16-index directory load, `--parallel=8` | Rust + Node |
+| `restore-norefresh` | logs | file → fresh index; none, `--noRefresh` (**opt-in**, `PERF_AB_CASES=1`) | Rust + Node |
+| `copy-norefresh` | logs | HTTP index → fresh index; none, `--noRefresh` (**opt-in**, `PERF_AB_CASES=1`) | Rust + Node |
+
+The two `*-norefresh` cases (roadmap 1.1-1) are the upper bound for the refresh-cadence A/B:
+`restore-none` and `copy` use each tool's default refresh (Node: after every batch; searchdump
+1.1: every 5 s plus once at the end). They are left out of the default manifest because the
+manifest is part of the baseline identity; `PERF_AB_CASES=1` appends them, so run them with
+their own `PERF_HOST_ID` (for example `grokbox-1.1-1.1-1`), never against the v1.0.0-beta1
+baseline files.
 
 Multi cases time each whole parent's run and all its children. Both get
 `--includeType=data --interval=0 --parallel=P --limit=2000 --concurrency=1`.

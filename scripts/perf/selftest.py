@@ -138,6 +138,19 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(m['docs'], 2)
             self.assertGreater(m['output_bytes'], 0)
 
+    def test_ab_cases_are_opt_in_and_leave_the_manifest_alone(self):
+        # 1.1-1: the default manifest (part of the baseline identity) is unchanged.
+        base, ab = S.cases(), S.cases(ab=True)
+        self.assertEqual(ab[:len(base)], base)
+        extra = {c['id']: c for c in ab[len(base):]}
+        self.assertEqual(set(extra), {'restore-norefresh', 'copy-norefresh'})
+        self.assertEqual(extra['restore-norefresh']['kind'], 'restore')
+        self.assertEqual(extra['copy-norefresh']['kind'], 'copy')
+        for c in extra.values():
+            self.assertEqual(c['flags'], ['--noRefresh'])
+            self.assertTrue(c['node'])
+        self.assertNotIn('restore-norefresh', [c['id'] for c in base])
+
     def test_measure_timer_resolution(self):
         # 1.1-5: wall time comes from a blocking wait4, not a 0.1 s poll. The old loop
         # reported >= 0.3 s for a 0.23 s command; allow scheduling slack but stay below that.

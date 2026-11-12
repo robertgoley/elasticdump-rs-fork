@@ -78,6 +78,22 @@ pub fn parse_bool(value: &str) -> Result<bool, String> {
     }
 }
 
+/// `--refreshInterval`: non-negative seconds (decimals allowed, an optional trailing `s`), at
+/// most one day.
+pub fn parse_refresh_interval(value: &str) -> Result<std::time::Duration, String> {
+    let v = value.trim();
+    let num = v.strip_suffix('s').unwrap_or(v);
+    let secs: f64 = num
+        .parse()
+        .map_err(|_| format!("'{value}' is not a number of seconds"))?;
+    if !secs.is_finite() || !(0.0..=86_400.0).contains(&secs) {
+        return Err(format!(
+            "'{value}' must be between 0 and 86400 seconds (0 = refresh after every batch)"
+        ));
+    }
+    Ok(std::time::Duration::from_secs_f64(secs))
+}
+
 fn parse_non_zero_usize(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -234,9 +250,13 @@ pub struct Cli {
     #[arg(long = "versionType")]
     pub version_type: Option<String>,
 
-    /// Do not refresh the index after each bulk request
+    /// Do not refresh the written indices at all (wins over --refreshInterval)
     #[arg(long = "noRefresh", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub no_refresh: Option<bool>,
+
+    /// Extension: refresh the written indices at most every N seconds while writing, plus once at the end (default 5; decimals allowed; 0 = after every bulk batch, as Node elasticdump)
+    #[arg(long = "refreshInterval", value_name = "SECONDS", value_parser = parse_refresh_interval)]
+    pub refresh_interval: Option<std::time::Duration>,
 
     /// Keep going after a failed write batch
     #[arg(long = "ignore-errors", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
@@ -595,6 +615,10 @@ impl Cli {
     pub fn no_refresh(&self) -> bool {
         is(self.no_refresh)
     }
+    /// `--noRefresh` / `--refreshInterval` as the writer's policy (1.1-1).
+    pub fn refresh_policy(&self) -> crate::pipeline::RefreshPolicy {
+        crate::pipeline::RefreshPolicy::from_flags(self.no_refresh(), self.refresh_interval)
+    }
     pub fn ignore_errors(&self) -> bool {
         is(self.ignore_errors)
     }
@@ -861,6 +885,43 @@ mod tests {
         assert!(!c.ignore_errors());
         assert_eq!(c.r#type, DumpType::Data);
         assert_eq!(c.effective_search(), EffectiveSearch::Scroll);
+    }
+
+    // 1.1-1: --refreshInterval (seconds, 0 = every batch) and --noRefresh precedence.
+    #[test]
+    fn refresh_interval_flag_and_policy() {
+        use crate::pipeline::RefreshPolicy;
+        use std::time::Duration;
+        assert_eq!(
+            parse(&[]).unwrap().refresh_policy(),
+            RefreshPolicy::Interval(Duration::from_secs(5))
+        );
+        assert_eq!(
+            parse(&["--refreshInterval", "0"]).unwrap().refresh_policy(),
+            RefreshPolicy::EveryBatch
+        );
+        assert_eq!(
+            parse(&["--refreshInterval=2.5"]).unwrap().refresh_policy(),
+            RefreshPolicy::Interval(Duration::from_millis(2500))
+        );
+        assert_eq!(
+            parse(&["--refreshInterval=30s"]).unwrap().refresh_policy(),
+            RefreshPolicy::Interval(Duration::from_secs(30))
+        );
+        assert_eq!(
+            parse(&["--refreshInterval=0", "--noRefresh"])
+                .unwrap()
+                .refresh_policy(),
+            RefreshPolicy::Off
+        );
+        assert_eq!(
+            parse(&["--noRefresh"]).unwrap().refresh_policy(),
+            RefreshPolicy::Off
+        );
+        for bad in ["-1", "abc", "NaN", "inf", "86401", "5m"] {
+            let arg = format!("--refreshInterval={bad}");
+            assert!(parse(&[arg.as_str()]).is_err(), "{bad}");
+        }
     }
 
     #[test]

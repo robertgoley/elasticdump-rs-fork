@@ -18,6 +18,21 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   meaningful ratios. Results carry `"timer": "blocking-wait4"`; beta1 numbers measured with the
   old harness are re-measured before any 1.1 A/B comparison. Binaries are unchanged.
 
+- **Refresh cadence (1.1-1), new flag `--refreshInterval=<seconds>` (default `5`).** The writer
+  used to refresh the target after every bulk batch, as Node elasticdump does; at L0 a single
+  restore spent most of its wall time waiting for those refreshes. It now refreshes the indices
+  it wrote at most every 5 s while writing (the clock starts at the first finished batch) and
+  always once at the end of the run, including the `--concurrency 1` path, which before relied on
+  the last batch's refresh. `--refreshInterval=0` restores the per-batch refresh (Node-identical
+  request pattern); `--noRefresh` still sends no refresh and wins over `--refreshInterval`.
+  Node compatibility: Node refreshes after every batch (`_data.js` `reindex()` after each
+  write); this is a deliberate difference. After the run the same documents are visible; only
+  readers watching *during* a restore see them up to the interval later. The goldens
+  `data-restore` and `bulk-gzip` now run with `--refreshInterval=0` to keep their recorded
+  per-batch refresh. NODE-DIFFERENCES.md #26. Perf suite: opt-in A/B cases `restore-norefresh`
+  and `copy-norefresh` (`PERF_AB_CASES=1`; the default case manifest and so the baseline
+  identity are unchanged).
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

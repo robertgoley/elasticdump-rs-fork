@@ -1249,10 +1249,13 @@ async fn bulk_item_429_retry_413_and_item_count_mismatch() {
     );
 }
 
-// L-413 (TST-API-022): one `_refresh` per written batch (concurrency 1), none with
-// `--noRefresh`; a failing refresh is a warning, not a failure.
+// L-413 (TST-API-022), changed by 1.1-1: by default the written index is refreshed at most every
+// 5 s plus once at the end (here: once, the run is short); `--refreshInterval=0` restores Node's
+// one `_refresh` per written batch; none with `--noRefresh` (also when combined); a failing
+// refresh is a warning, not a failure. With `--concurrency` the final refresh still happens
+// exactly once by default.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
+async fn refresh_cadence_no_refresh_and_refresh_failure_is_a_warning() {
     use support::router_mock::{Reply, Route, RouterMock};
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("in.json");
@@ -1267,9 +1270,15 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
     )
     .unwrap();
     for (extra, refresh_status, want_refreshes) in [
-        (None, 200, 3),
-        (Some("--noRefresh"), 200, 0),
-        (None, 500, 3),
+        (&[][..], 200, 1..=1),
+        (&["--refreshInterval=0"][..], 200, 3..=3),
+        (&["--noRefresh"][..], 200, 0..=0),
+        (&["--refreshInterval=0", "--noRefresh"][..], 200, 0..=0),
+        (&[][..], 500, 1..=1),
+        (&["--refreshInterval=0"][..], 500, 3..=3),
+        (&["--concurrency=3"][..], 200, 1..=1),
+        // a per-batch refresh is skipped while another runs; the final one covers it
+        (&["--concurrency=3", "--refreshInterval=0"][..], 200, 1..=4),
     ] {
         let m = RouterMock::builder()
             .route(Route::exact("GET", "/").reply(Reply::ok(
@@ -1294,7 +1303,7 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
             "--retryAttempts".into(),
             "0".into(),
         ];
-        a.extend(extra.map(String::from));
+        a.extend(extra.iter().map(|s| s.to_string()));
         let o = run_async(a, vec![]).await;
         assert!(
             o.status.success(),
@@ -1307,10 +1316,10 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
             .iter()
             .filter(|r| r.path.ends_with("/_refresh"))
             .count();
-        assert_eq!(
-            (bulks, refreshes),
-            (3, want_refreshes),
-            "{extra:?}/{refresh_status}"
+        assert_eq!(bulks, 3, "{extra:?}/{refresh_status}");
+        assert!(
+            want_refreshes.contains(&refreshes),
+            "{extra:?}/{refresh_status}: {refreshes} refreshes, want {want_refreshes:?}"
         );
         if refresh_status != 200 {
             assert!(
@@ -1319,7 +1328,69 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
                 stderr(&o)
             );
         }
+        if refreshes > 0 {
+            // the last request of the run is a refresh: nothing written stays unrefreshed
+            assert!(
+                reqs.last().unwrap().path.ends_with("/_refresh"),
+                "{extra:?}: {reqs:#?}"
+            );
+        }
     }
+}
+
+// 1.1-1: with a short --refreshInterval and slow bulk responses, the written index is refreshed
+// during the run (not after every batch) and once at the end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_interval_refreshes_during_long_runs() {
+    use support::router_mock::{Fault, Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let lines: String = (0..12)
+        .map(|i| hit(&i.to_string(), r#"{"n":1}"#) + "\n")
+        .collect();
+    std::fs::write(&input, lines).unwrap();
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+        )))
+        .route(
+            Route::contains("POST", "/_bulk").reply(
+                Reply::ok(r#"{"took":1,"errors":false,"items":[{"index":{"status":201}}]}"#)
+                    .with_fault(Fault::Delay(std::time::Duration::from_millis(100))),
+            ),
+        )
+        .route(Route::contains("POST", "/_refresh").reply(Reply::ok(
+            r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+        )))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m.url()),
+            "--limit".into(),
+            "1".into(),
+            "--refreshInterval".into(),
+            "1".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let reqs = m.requests();
+    let refreshes = reqs
+        .iter()
+        .filter(|r| r.path.ends_with("/_refresh"))
+        .count();
+    // 12 batches of >= 100 ms: the clock starts after the first, at least one interval refresh
+    // after >= 1 s, then the final one. Far fewer than one per batch.
+    assert!(
+        (2..=4).contains(&refreshes),
+        "{refreshes} refreshes: {reqs:#?}"
+    );
+    assert!(reqs.last().unwrap().path.ends_with("/_refresh"));
 }
 
 // 1.1-2: a restore with no output index refreshes exactly the indices it wrote (after
