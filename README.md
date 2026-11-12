@@ -530,6 +530,10 @@ searchdump-multi --direction=load --input=/data/logs --output=https://dst:9200 -
 - Per-run logs go to `--logDir` (default a temp dir; one log per data part); a failure prints the last lines.
   `--dryRun` lists what would run. Exit status: 0 all done, 1 any item failed or nothing matched, 2 usage error,
   130 interrupted.
+- Ctrl-C (SIGINT to `searchdump-multi`; since 1.1): no new step starts, and every running child `searchdump` gets
+  SIGTERM (a restore then finishes its in-flight bulk requests and prints where to resume in its log), then SIGKILL
+  if it is still running 5 seconds later. Each stopped child is named with its log file, and its index is recorded
+  as failed. Before 1.1 running children were left to finish, unless the terminal also sent them the SIGINT.
 - Not in this tool (Node `multielasticdump`): `--customMatcher` and `--transform` (JavaScript), `--delete`.
   Cluster-wide items are not filtered by `--match`.
 - Node compatibility (`--nodeCompat`, dump only): writes the layout Node's `multielasticdump` 6.x loads with its

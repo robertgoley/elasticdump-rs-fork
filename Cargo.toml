@@ -38,6 +38,8 @@ tokio = { version = "1", features = [
     "sync",
     "time",
     "signal",
+    # 1.1-8: searchdump-multi awaits its child processes (no new crate: tokio's own feature)
+    "process",
 ] }
 # Thin HTTP client: full control over endpoints (OpenSearch vs Elasticsearch
 # PIT APIs), per-direction headers/params, gzip request bodies and TLS.

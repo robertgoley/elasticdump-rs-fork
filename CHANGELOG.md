@@ -76,6 +76,15 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   are now shared by all workers, so they are printed once per run also with `--concurrency N > 1`
   (they were printed once per batch there). The memory estimate counts 2 extra batches.
 
+- **searchdump-multi runs its children with `tokio::process` (1.1-8).** Child `searchdump`
+  processes are awaited asynchronously (`kill_on_drop`), so `--parallel N` no longer holds N
+  runtime threads in `block_in_place`. Ctrl-C now stops running children: SIGTERM first (through
+  `kill(1)`, the binary forbids unsafe code), SIGKILL after 5 s, and each stopped child is named
+  with its log (`interrupted: stopped searchdump --type=data for INDEX (...)`); before, running
+  children were left to finish. Exit status 130 as before. Adds tokio's `process` feature (no new
+  crate). Tests with a fake child script: SIGTERM and SIGKILL paths, a failed child's log tail,
+  16 sleeping children on a 2-thread runtime.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

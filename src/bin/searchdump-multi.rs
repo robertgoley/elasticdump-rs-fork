@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -40,6 +40,7 @@ use searchdump_rs::http::retry::error_chain;
 use searchdump_rs::http::tls::TlsOptions;
 use searchdump_rs::http::{Body, ClientOptions, EsClient};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 pub const MANIFEST: &str = "multielasticdump.json";
@@ -1328,17 +1329,25 @@ impl Cluster {
 
 // ----------------------------------------------------------------------------- child runs
 
+/// 1.1-8: how long a child gets after SIGTERM (on Ctrl-C) before it is killed.
+pub const CHILD_GRACE: Duration = Duration::from_secs(5);
+
 pub struct Runner {
     pub bin: PathBuf,
     pub log_dir: PathBuf,
     pub common: Vec<String>,
     pub data_flags: Vec<String>,
+    /// Set on Ctrl-C: no new step starts.
     pub cancelled: Arc<AtomicBool>,
+    /// 1.1-8: cancelled on Ctrl-C together with `cancelled`; running children are stopped
+    /// (SIGTERM, then SIGKILL after `grace`).
+    pub cancel: CancellationToken,
+    pub grace: Duration,
 }
 
 impl Runner {
     /// Run searchdump once; output goes to LOGDIR/INDEX.KIND.log.
-    pub fn run(
+    pub async fn run(
         &self,
         index: &str,
         kind: &str,
@@ -1346,11 +1355,15 @@ impl Runner {
         output: &str,
         extra: &[String],
     ) -> Result<()> {
-        self.run_as(index, kind, kind, input, output, extra)
+        self.run_as(index, kind, kind, input, output, extra).await
     }
 
     /// Like `run`, logging to LOGDIR/INDEX.LABEL.log (one log per data part).
-    pub fn run_as(
+    ///
+    /// 1.1-8: the child is a `tokio::process` child, awaited without holding a runtime thread.
+    /// On cancel it gets SIGTERM, then SIGKILL after `grace`; a child still running when its
+    /// future is dropped is killed (`kill_on_drop`).
+    pub async fn run_as(
         &self,
         index: &str,
         kind: &str,
@@ -1359,25 +1372,52 @@ impl Runner {
         output: &str,
         extra: &[String],
     ) -> Result<()> {
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.cancelled.load(Ordering::SeqCst) || self.cancel.is_cancelled() {
             bail!("interrupted");
         }
         let log_path = self.log_dir.join(format!("{index}.{label}.log"));
         let log = fs::File::create(&log_path)
             .with_context(|| format!("create {}", log_path.display()))?;
-        let mut cmd = Command::new(&self.bin);
-        cmd.arg(format!("--input={input}"))
-            .arg(format!("--output={output}"))
-            .arg(format!("--type={kind}"))
-            .arg("--overwrite")
-            .args(&self.common)
-            .args(extra)
-            .stdin(Stdio::null())
-            .stdout(log.try_clone()?)
-            .stderr(log);
-        let status = cmd
-            .status()
-            .with_context(|| format!("could not start {}", self.bin.display()))?;
+        let mut child = {
+            let mut cmd = tokio::process::Command::new(&self.bin);
+            cmd.arg(format!("--input={input}"))
+                .arg(format!("--output={output}"))
+                .arg(format!("--type={kind}"))
+                .arg("--overwrite")
+                .args(&self.common)
+                .args(extra)
+                .stdin(Stdio::null())
+                .stdout(log.try_clone()?)
+                .stderr(log)
+                .kill_on_drop(true);
+            // 1.1-8: its own process group, so a terminal Ctrl-C reaches only this process.
+            // The child then gets exactly one signal (our SIGTERM below); a SIGINT from the
+            // terminal followed by our SIGTERM would be its second signal, a force-quit that
+            // skips finishing in-flight requests and cleaning up staged output.
+            #[cfg(unix)]
+            cmd.process_group(0);
+            cmd.spawn()
+                .with_context(|| format!("could not start {}", self.bin.display()))?
+        };
+        let waited = tokio::select! {
+            s = child.wait() => Some(s),
+            _ = self.cancel.cancelled() => None,
+        };
+        let status = match waited {
+            Some(s) => s.with_context(|| format!("wait for {}", self.bin.display()))?,
+            None => {
+                let how = stop_child(&mut child, self.grace).await;
+                eprintln!(
+                    "interrupted: stopped searchdump --type={kind} for {index} ({how}); log: {}",
+                    log_path.display()
+                );
+                bail!(
+                    "interrupted: searchdump --type={kind} was stopped ({how}); last lines of {}:\n{}",
+                    log_path.display(),
+                    tail(&log_path, 15)
+                );
+            }
+        };
         if !status.success() {
             bail!(
                 "searchdump --type={kind} failed ({status}); last lines of {}:\n{}",
@@ -1387,6 +1427,46 @@ impl Runner {
         }
         Ok(())
     }
+}
+
+/// 1.1-8: stop a running child: SIGTERM (searchdump then finishes its in-flight requests and
+/// exits), SIGKILL when it is still running after `grace`. Says what happened.
+async fn stop_child(child: &mut tokio::process::Child, grace: Duration) -> String {
+    if let Ok(Some(status)) = child.try_wait() {
+        return format!("it had already exited, {status}");
+    }
+    if let Some(pid) = child.id() {
+        send_term(pid).await;
+    }
+    match tokio::time::timeout(grace, child.wait()).await {
+        Ok(Ok(status)) => format!("SIGTERM, {status}"),
+        Ok(Err(e)) => format!("SIGTERM, then waiting failed: {e}"),
+        Err(_) => {
+            let _ = child.start_kill();
+            match child.wait().await {
+                Ok(status) => format!("SIGKILL after {grace:?} without exiting, {status}"),
+                Err(e) => format!("SIGKILL after {grace:?}, then waiting failed: {e}"),
+            }
+        }
+    }
+}
+
+/// SIGTERM to `pid` through `kill(1)`: this binary forbids unsafe code, so no `libc::kill`.
+/// Elsewhere there is no SIGTERM; the child is killed once the grace period ends.
+async fn send_term(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = tokio::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 fn tail(path: &Path, n: usize) -> String {
@@ -1587,7 +1667,7 @@ async fn dump_one(
                 source.clone()
             };
             let runner = &ctx.runner;
-            tokio::task::block_in_place(|| runner.run(index, kind, &input, &o, &extra))?;
+            runner.run(index, kind, &input, &o, &extra).await?;
             if !matches!(*kind, "data" | "analyzer" | "template") && !nonempty(&out) {
                 bail!("{kind} export is empty");
             }
@@ -1678,15 +1758,16 @@ async fn dump_cluster(
     for kind in &ctx.types.cluster {
         let name = format!("{CLUSTER_DIR}/{kind}");
         let file = dir.join(format!("{kind}.json"));
-        let res = fs::create_dir_all(&dir)
-            .with_context(|| format!("create {}", dir.display()))
-            .and_then(|_| {
-                let o = file.to_string_lossy().into_owned();
-                tokio::task::block_in_place(|| {
+        let res =
+            match fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display())) {
+                Ok(()) => {
+                    let o = file.to_string_lossy().into_owned();
                     ctx.runner
                         .run(CLUSTER_DIR, kind, &cluster.child_base, &o, &[])
-                })
-            });
+                        .await
+                }
+                Err(e) => Err(e),
+            };
         let entry = ClusterEntry {
             file: format!("{kind}.json"),
             status: if res.is_ok() { "done" } else { "failed" }.into(),
@@ -1735,10 +1816,10 @@ async fn load_cluster(ctx: &Ctx, cluster: &Cluster) -> Vec<(String, Outcome)> {
         }
         let input = file.to_string_lossy().into_owned();
         let extra = cluster_flags(&ctx.args, kind, true);
-        let r = tokio::task::block_in_place(|| {
-            ctx.runner
-                .run(CLUSTER_DIR, kind, &input, &cluster.child_base, &extra)
-        });
+        let r = ctx
+            .runner
+            .run(CLUSTER_DIR, kind, &input, &cluster.child_base, &extra)
+            .await;
         out.push((
             name,
             match r {
@@ -1783,9 +1864,9 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             }
             let input = p.to_string_lossy().into_owned();
             let runner = &ctx.runner;
-            tokio::task::block_in_place(|| {
-                runner.run(&f.index, "template", &input, &cluster.child_base, &extra)
-            })?;
+            runner
+                .run(&f.index, "template", &input, &cluster.child_base, &extra)
+                .await?;
         }
         for kind in kinds {
             if kind == "data" {
@@ -1818,16 +1899,16 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                     };
                     let input = part.to_string_lossy().into_owned();
                     let runner = &ctx.runner;
-                    tokio::task::block_in_place(|| {
-                        runner.run_as(&f.index, "data", &label, &input, &url, &extra)
-                    })
-                    .with_context(|| {
-                        if f.data.len() > 1 {
-                            format!("part {n} ({})", part.display())
-                        } else {
-                            String::new()
-                        }
-                    })?;
+                    runner
+                        .run_as(&f.index, "data", &label, &input, &url, &extra)
+                        .await
+                        .with_context(|| {
+                            if f.data.len() > 1 {
+                                format!("part {n} ({})", part.display())
+                            } else {
+                                String::new()
+                            }
+                        })?;
                 }
                 records = Some(total);
                 continue;
@@ -1860,8 +1941,7 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             }
             let input = p.to_string_lossy().into_owned();
             let runner = &ctx.runner;
-            let r =
-                tokio::task::block_in_place(|| runner.run(&f.index, kind, &input, &url, &extra));
+            let r = runner.run(&f.index, kind, &input, &url, &extra).await;
             match r {
                 Ok(()) => settings_applied |= kind == "settings",
                 Err(e) if kind == "mapping" => {
@@ -2177,12 +2257,18 @@ async fn run_local(args: Args) -> Result<i32> {
         &args.extra,
     );
     let cancelled = Arc::new(AtomicBool::new(false));
+    let cancel = CancellationToken::new();
     {
         let c = cancelled.clone();
+        let token = cancel.clone();
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
-                eprintln!("interrupted: finishing running steps, starting no new ones");
+                eprintln!(
+                    "interrupted: stopping running steps (SIGTERM, SIGKILL after {}s), starting no new ones",
+                    CHILD_GRACE.as_secs()
+                );
                 c.store(true, Ordering::SeqCst);
+                token.cancel();
             }
         });
     }
@@ -2192,6 +2278,8 @@ async fn run_local(args: Args) -> Result<i32> {
         common,
         data_flags,
         cancelled: cancelled.clone(),
+        cancel: cancel.clone(),
+        grace: CHILD_GRACE,
     };
     let pacer = Pacer::new(Duration::from_millis(args.interval));
     let meta = meta_dir(&args);
@@ -3166,5 +3254,144 @@ mod tests {
             PathBuf::from(format!("{}.meta", r.display()))
         );
         fs::remove_dir_all(format!("{}.meta", r.display())).unwrap();
+    }
+
+    /// 1.1-8: a Runner whose "searchdump" is a shell script.
+    #[cfg(unix)]
+    fn script_runner(dir: &Path, body: &str, grace: Duration) -> Runner {
+        use std::os::unix::fs::PermissionsExt;
+        // a new file each time: never rewrite a script a child may still be executing
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let bin = dir.join(format!("fake-searchdump-{n}.sh"));
+        fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        Runner {
+            bin,
+            log_dir: dir.to_path_buf(),
+            common: vec![],
+            data_flags: vec![],
+            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel: CancellationToken::new(),
+            grace,
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_stops_a_running_child_with_sigterm_then_sigkill() {
+        let d = tempfile::tempdir().unwrap();
+        // exits on SIGTERM
+        let r = Arc::new(script_runner(
+            d.path(),
+            "exec sleep 30",
+            Duration::from_secs(5),
+        ));
+        let started = Instant::now();
+        let task = {
+            let r = r.clone();
+            tokio::spawn(async move { r.run("idx", "data", "in", "out", &[]).await })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        r.cancel.cancel();
+        let err = tokio::time::timeout(Duration::from_secs(4), task)
+            .await
+            .expect("stopped within the grace period")
+            .unwrap()
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("interrupted") && msg.contains("SIGTERM"),
+            "{msg}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            started.elapsed()
+        );
+        // ignores SIGTERM: killed once the (short) grace period ends
+        let r = Arc::new(script_runner(
+            d.path(),
+            "trap '' TERM\nexec sleep 30",
+            Duration::from_millis(300),
+        ));
+        let task = {
+            let r = r.clone();
+            tokio::spawn(async move { r.run("idx", "data", "in", "out", &[]).await })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        r.cancel.cancel();
+        let err = tokio::time::timeout(Duration::from_secs(4), task)
+            .await
+            .expect("killed after the grace period")
+            .unwrap()
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("SIGKILL"), "{err:#}");
+        // a cancelled runner starts nothing new
+        let err = r.run("idx", "data", "in", "out", &[]).await.unwrap_err();
+        assert_eq!(format!("{err:#}"), "interrupted");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_child_reports_its_log_tail() {
+        let d = tempfile::tempdir().unwrap();
+        let r = script_runner(
+            d.path(),
+            "echo \"args: $*\"\necho boom-line >&2\nexit 3",
+            CHILD_GRACE,
+        );
+        let err = r
+            .run("idx", "mapping", "http://in/idx", "/tmp/out.json", &[])
+            .await
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("searchdump --type=mapping failed"), "{msg}");
+        assert!(msg.contains("boom-line"), "{msg}");
+        assert!(
+            msg.contains("--type=mapping") && msg.contains("--overwrite"),
+            "{msg}"
+        );
+        assert!(d.path().join("idx.mapping.log").is_file());
+        r.run("idx", "data", "in", "out", &[]).await.unwrap_err();
+        // success
+        let ok = script_runner(d.path(), "exit 0", CHILD_GRACE);
+        ok.run("idx", "data", "in", "out", &[]).await.unwrap();
+    }
+
+    /// 1.1-8: 16 sleeping children on a 2-thread runtime do not starve other tasks (with
+    /// `block_in_place` every child held a runtime thread).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn many_children_do_not_starve_the_runtime() {
+        let d = tempfile::tempdir().unwrap();
+        let r = Arc::new(script_runner(d.path(), "exec sleep 1", CHILD_GRACE));
+        let ticks = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let ticker = {
+            let ticks = ticks.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    ticks.fetch_add(1, Ordering::Relaxed);
+                }
+            })
+        };
+        let mut set = tokio::task::JoinSet::new();
+        for i in 0..16 {
+            let r = r.clone();
+            set.spawn(async move { r.run(&format!("i{i}"), "data", "in", "out", &[]).await });
+        }
+        let started = Instant::now();
+        while let Some(j) = set.join_next().await {
+            j.unwrap().unwrap();
+        }
+        let took = started.elapsed();
+        ticker.abort();
+        assert!(
+            took < Duration::from_secs(5),
+            "children ran one after another: {took:?}"
+        );
+        let n = ticks.load(Ordering::Relaxed);
+        assert!(n >= 10, "the ticker ran {n} times in {took:?}");
     }
 }

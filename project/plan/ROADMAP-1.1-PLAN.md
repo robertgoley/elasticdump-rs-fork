@@ -19,7 +19,7 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same w
 | 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
 | 6 | 1.1-9 compression thread | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
 | 7 | 1.1-6 encode overlap | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 8 | 1.1-8 tokio::process | planned |
+| 8 | 1.1-8 tokio::process | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
 | 9 | 1.1-7 child counts | planned |
 
 "In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).

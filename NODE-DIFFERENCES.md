@@ -88,3 +88,4 @@ equivalent, so there is no compatibility difference to record in the table above
 * **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.
 * **1.1-9 compression thread**: internal; the gzip bytes are identical, and zstd is a searchdump extension.
 * **1.1-6 encode/send overlap**: same requests in the same order as Node at `--concurrency 1`; only the client-side timing changes.
+* **1.1-8 searchdump-multi Ctrl-C**: Node `multielasticdump` forks children too; how they are stopped on Ctrl-C is not part of the dump format or CLI (README "Bulk dump and load").
