@@ -2,7 +2,14 @@
 
 **Current handoff:** [HANDOFF-20261112.md](HANDOFF-20261112.md) — finish the beta1 aggregate, the ES 9 edge reruns, and the 1.1 point-in-time batch (2026-11-12).
 
-The 1.1 batch details live only on this box, not on GitHub: `/workspace/rel-1.1/project/HANDOFF-1.1.md` (local branch `release/1.1`; never push it). [HANDOFF-20261112.md](HANDOFF-20261112.md) points at that file and is the resume point for another Grok Bot.
+The 1.1 batch details are on GitHub at
+https://github.com/robertgoley/searchdump-rs/tree/release/1.1
+(`origin/release/1.1`, HEAD `a93829a`, **UNCOMPILED / UNTESTED**). Fetch
+with `git fetch origin release/1.1` and follow `project/HANDOFF-1.1.md` on
+that branch. On this box the worktree is `/workspace/rel-1.1`. Push 1.1
+work only to that branch; do not merge to `main` without Robert.
+[HANDOFF-20261112.md](HANDOFF-20261112.md) is the resume point for another
+Grok Bot.
 
 ## Historical handoffs
 
