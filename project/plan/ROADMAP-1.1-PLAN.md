@@ -15,10 +15,19 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u). Q1 and Q2 were not answered,
 | 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measure pending |
 | 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
 | 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
-| 4 | 1.1-3 `_doc` sort (opt-in) | planned |
+| 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed, not yet compiled (suite running); nodecmp + A/B pending |
 | 5-9 | 1.1-4, 1.1-9, 1.1-6, 1.1-8, 1.1-7 | planned, not started |
 
 "In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).
+
+Still to verify for steps 1-4 once the beta1 suite has finished (no `run-all.sh`, all 16 `steps/*.done`):
+
+1. Build and test, niced, in `/workspace/rel-1.1` with `CARGO_TARGET_DIR=/workspace/rel-1.1/target`: `cargo build --release`, `cargo test` (unit, `cli_contract`, `golden_replay`), `cargo clippy --all-targets`. Fix compile or test errors in the item's own commit (fixup) before measuring.
+2. `scripts/perf/selftest.py` (full offline run).
+3. beta1@timer2: re-measure `/workspace/perf-bin-beta1` with the new harness on `es710-plain`, `es819-plain`, `os3-plain` (`PERF_HOST_ID=grokbox-beta1-timer2`, `PERF_AB_CASES=1`, `--reps 3`).
+4. B run: the release build of `release/1.1` on the same trio (`PERF_HOST_ID=grokbox-1.1-refresh`, `PERF_AB_CASES=1`). Compare `restore-*`, `copy`, `restore-split-*`, `restore-norefresh`, `copy-norefresh`, `multi-restore-p*` (refresh) and `dump-*` (unchanged without `--scrollDocSort`).
+5. 1.1-3: a `--scrollDocSort` A/B on `dump-none`/`dump-big` (manual or a temporary case) and `scripts/load/nodecmp.py` on `dump-none` to confirm that `_score: null` and the absent `sort` are the only differences with the flag, and none without it.
+6. Golden cases with the new default: re-record with `scripts/golden/record.sh <profile> --check` on at least one engine to confirm `data-restore`/`bulk-gzip` (`--refreshInterval=0`) still match live traffic.
 
 ## 0. Gate: the beta1 baseline comes first
 

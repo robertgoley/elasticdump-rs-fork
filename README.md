@@ -186,7 +186,8 @@ Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
   `--overwrite`, `--prefix`/`--suffix`, `--quiet`, `--debug`, `--format human`.
 * **Retrieval:** `--limit` (default 100), `--offset`, `--size`, `--searchBody` (JSON or `@file`),
   `--searchWithTemplate`, `--scrollTime`, `--scrollId`, `--searchAfter`, `--pit`, `--pitKeepAlive`,
-  `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`).
+  `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`), `--scrollDocSort` (opt-in,
+  default off; see below).
 * **Writing:** `--bulkAction index|create|update|delete`, `--handleVersion`, `--versionType`, `--noRefresh`,
   `--refreshInterval` (seconds; default 5, `0` = after every batch as in Node; see below),
   `--ignore-errors`, `--ignore-es-write-errors` (default: continue past failed items), `--parseExtraFields`.
@@ -259,6 +260,15 @@ for every place the tool changes what is loaded, and for the tested versions, se
 * **Retries also cover HTTP 429**, and bulk items rejected with 429/503 are retried individually.
 * **PIT is engine-aware**: Elasticsearch 7.10+ uses `POST /{index}/_pit` and the `_shard_doc` tiebreaker;
   OpenSearch uses `/_search/point_in_time` and `_doc` + `_id` (a `_doc`-only sort was verified to lose documents).
+* **`--scrollDocSort`** (1.1, opt-in, default off): adds `"sort":["_doc"]`, Elasticsearch's recommended and cheapest
+  scroll order, to a scroll dump whose search body has no `sort` and a `match_all`/`match_none` query (or none). It is
+  skipped, with an info log, for PIT and `--searchAfter` (they page by their own sort), `--scrollId`,
+  `--searchWithTemplate`, a user `sort`, any other query (relevance scores would be lost) and
+  `track_scores`/`min_score`/`rescore`. The cluster then returns a `sort` member and `"_score": null` on every hit;
+  the `sort` member is removed before writing, `"_score": null` is kept (Node's lines show `"_score": 1`). Restores
+  ignore both. Node sets `sort: ['_doc']` on its *request options* (`_data.js:115`), not the body, so it never
+  actually sends a sort; that is why this stays opt-in: without the flag the request and the dump lines are
+  unchanged.
 * **Scroll + `--offset`** skips client-side; Node sends `from=`, which ES 7+/OpenSearch reject.
 * **`--scrollId` ids are never printed** (Node's `--debug` shows them, which its resume recipe relies on); resume
   a stopped file dump by rerunning it with `--overwrite`, or pass the id of a scroll you opened yourself (L-650).

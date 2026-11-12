@@ -33,6 +33,15 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   and `copy-norefresh` (`PERF_AB_CASES=1`; the default case manifest and so the baseline
   identity are unchanged).
 
+- **`_doc` sort for scroll dumps (1.1-3), new opt-in flag `--scrollDocSort` (default off).**
+  Adds `"sort":["_doc"]` (the cheapest scroll order) to a scroll body with no `sort` and a
+  `match_all`/`match_none` query; skipped with an info log for PIT, `--searchAfter`, `--scrollId`,
+  `--searchWithTemplate`, a user sort, scoring queries and `track_scores`/`min_score`/`rescore`.
+  The injected `sort` member is stripped from written hits; `"_score": null` remains. Node
+  compatibility: Node sets `sort: ['_doc']` on its request options object, not the body
+  (`_data.js:115`), so it never actually sends the sort and writes `"_score": 1`; that is why the
+  flag is opt-in and, without it, requests and dump lines are unchanged. NODE-DIFFERENCES.md #27.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

@@ -201,6 +201,10 @@ pub struct Cli {
     #[arg(long = "scrollId")]
     pub scroll_id: Option<String>,
 
+    /// Extension: sort scroll dumps by _doc, the cheapest scroll order, when the search body has no sort and a match_all/match_none query (off by default; hits then show "_score": null instead of Node's 1.0, the added sort values are removed)
+    #[arg(long = "scrollDocSort", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
+    pub scroll_doc_sort: Option<bool>,
+
     /// Accepted for compatibility (requests are always POST)
     #[arg(long = "scroll-with-post", num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub scroll_with_post: Option<bool>,
@@ -647,6 +651,9 @@ impl Cli {
     pub fn search_with_template(&self) -> bool {
         is(self.search_with_template)
     }
+    pub fn scroll_doc_sort(&self) -> bool {
+        is(self.scroll_doc_sort)
+    }
 
     /// Effective retrieval mode: `--searchType` (extension) or Node's
     /// `--searchAfter [--pit]`.
@@ -922,6 +929,13 @@ mod tests {
             let arg = format!("--refreshInterval={bad}");
             assert!(parse(&[arg.as_str()]).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn scroll_doc_sort_is_opt_in() {
+        assert!(!parse(&[]).unwrap().scroll_doc_sort());
+        assert!(parse(&["--scrollDocSort"]).unwrap().scroll_doc_sort());
+        assert!(!parse(&["--scrollDocSort=false"]).unwrap().scroll_doc_sort());
     }
 
     #[test]

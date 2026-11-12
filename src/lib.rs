@@ -608,6 +608,29 @@ async fn es_source_options(
             "--searchAfter without --pit is not snapshot-consistent; concurrent writes may be missed or duplicated"
         );
     }
+    // 1.1-3: opt-in `_doc` sort for scroll dumps (Node never sends one; see NODE-DIFFERENCES).
+    let mut search_body = search_body;
+    let mut doc_sort = false;
+    if cli.scroll_doc_sort() {
+        let blocker = if search_type != SearchType::Scroll {
+            Some("it applies to scroll only (PIT and --searchAfter page by their own sort)")
+        } else if cli.scroll_id.is_some() {
+            Some("--scrollId continues a scroll that is already open")
+        } else if cli.search_with_template() {
+            Some("a --searchWithTemplate body is sent as rendered")
+        } else {
+            retrieval::search_body::doc_sort_blocker(&search_body)
+        };
+        match blocker {
+            None => {
+                retrieval::search_body::add_scroll_doc_sort(&mut search_body);
+                doc_sort = true;
+                log::debug!("--scrollDocSort: scroll sorted by _doc");
+            }
+            Some(why) => log::info!("--scrollDocSort not applied: {why}"),
+        }
+    }
+    retrieval::set_strip_hit_sort(doc_sort);
     Ok(retrieval::EsSourceOptions {
         client,
         index: ep.index.clone(),

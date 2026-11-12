@@ -341,6 +341,53 @@ async fn headers_and_params_reach_every_request() {
     assert_eq!(stdout(&o), format!("{}\n", hit("1", "{\"a\":1}")));
 }
 
+// 1.1-3: --scrollDocSort (opt-in) adds "sort":["_doc"] to a match_all scroll body and drops the
+// resulting `sort` member from the written hits; off by default (Node never sends a sort), and
+// skipped for a scoring query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scroll_doc_sort_is_opt_in_and_strips_the_hit_sort() {
+    let sorted_hit =
+        r#"{"_index":"idx","_id":"1","_score":null,"_source":{"a":1},"sort":[0]}"#.to_string();
+    let plain = r#"{"_index":"idx","_id":"1","_score":null,"_source":{"a":1}}"#;
+    for (extra, want_sort_in_body, want_line) in [
+        (vec![], false, sorted_hit.as_str()),
+        (vec!["--scrollDocSort"], true, plain),
+        (
+            vec![
+                "--scrollDocSort",
+                "--searchBody",
+                r#"{"query":{"match":{"a":1}}}"#,
+            ],
+            false,
+            sorted_hit.as_str(),
+        ),
+    ] {
+        let mock = MockEs::serve(scroll_script(std::slice::from_ref(&sorted_hit))).await;
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            mock.input_url("idx"),
+            "--output".into(),
+            "$".into(),
+            "--quiet".into(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        let o = run_async(a, vec![]).await;
+        assert!(o.status.success(), "{extra:?}: {}", stderr(&o));
+        let reqs = mock.recorded();
+        assert!(reqs[0].path.ends_with("/_search"), "{reqs:#?}");
+        let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+        assert_eq!(
+            body.get("sort") == Some(&serde_json::json!(["_doc"])),
+            want_sort_in_body,
+            "{extra:?}: {body}"
+        );
+        if !want_sort_in_body {
+            assert!(body.get("sort").is_none(), "{extra:?}: {body}");
+        }
+        assert_eq!(stdout(&o), format!("{want_line}\n"), "{extra:?}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn source_only_writes_raw_sources() {
     let mock = MockEs::serve(scroll_script(&[
