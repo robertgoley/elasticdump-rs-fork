@@ -1,6 +1,6 @@
 # searchdump-rs 1.1: implementation plan (for review)
 
-Status: **steps 1-9 approved and committed without building** (see Status below); compile/test and point-in-time perf run pending. Branch `release/1.1` is a local branch only and has not been pushed.
+Status: **steps 1-9 approved and committed without building** (see Status below); compile/test and point-in-time perf run pending. Branch `release/1.1` is on GitHub as `origin/release/1.1` (UNCOMPILED / UNTESTED). Do not merge to `main` without Robert.
 Scope: roadmap items 1.1-1 to 1.1-9 from `FEATURES-TODO.md`, section "Roadmap: 1.1 release (performance and robustness)".
 Line references were rechecked at `0847643` (main, 2026-11-11). The roadmap table quotes them as of `a98be22`.
 
@@ -39,14 +39,14 @@ commits are skipped, and the 1.1-5 timer is in effect for every step because the
 | # | Step | Commit | `PERF_HOST_ID` | Expect against the previous step |
 |---|---|---|---|---|
 | 0 | beta1 | `94e4afb` | `grokbox-beta1-timer2` | reference (also measures Node) |
-| 1 | 1.1-2 | `02c1ead` | `grokbox-1.1-02c1ead` | no change in the suite (its cases name an output index; refresh targets only matter without one) |
-| 2 | 1.1-1 | `fee898a` | `grokbox-1.1-fee898a` | large win on `restore-*`, `restore-split-*`, `copy`, `multi-restore-p*`; `restore-norefresh`/`copy-norefresh` unchanged |
-| 3 | 1.1-3 | `ca2c437` | `grokbox-1.1-ca2c437` | no change (opt-in flag): a noise check |
-| 4 | 1.1-4 | `e523ce5` | `grokbox-1.1-e523ce5` | `dump-scroll-s2/s4/s8` drop to about `dump-scroll-s1` (1-shard index, now unsliced); `dump-pit-s*` unchanged |
-| 5 | 1.1-9 | `697470a` | `grokbox-1.1-697470a` | small win on `dump-gzip`, `dump-zstd`, `dump-split-gzip`, `dump-split-zstd` (wall; CPU moves to a thread) |
-| 6 | 1.1-6 | `f793c8d` | `grokbox-1.1-f793c8d` | 10-20 % on `restore-none/gzip/zstd`, `copy` (`--concurrency 1`); nothing else |
-| 7 | 1.1-8 | `29492a4` | `grokbox-1.1-29492a4` | `multi-*-p1/p4/p8`: no regression, p8 may scale better |
-| 8 | 1.1-7 | `be3aa2d` | `grokbox-1.1-be3aa2d` | `multi-dump-p*` a little faster (no read-back); same records in the manifest |
+| 1 | 1.1-2 | `04e0af0` | `grokbox-1.1-04e0af0` | no change in the suite (its cases name an output index; refresh targets only matter without one) |
+| 2 | 1.1-1 | `d280836` | `grokbox-1.1-d280836` | large win on `restore-*`, `restore-split-*`, `copy`, `multi-restore-p*`; `restore-norefresh`/`copy-norefresh` unchanged |
+| 3 | 1.1-3 | `87e7b38` | `grokbox-1.1-87e7b38` | no change (opt-in flag): a noise check |
+| 4 | 1.1-4 | `3d3c092` | `grokbox-1.1-3d3c092` | `dump-scroll-s2/s4/s8` drop to about `dump-scroll-s1` (1-shard index, now unsliced); `dump-pit-s*` unchanged |
+| 5 | 1.1-9 | `dc3a076` | `grokbox-1.1-dc3a076` | small win on `dump-gzip`, `dump-zstd`, `dump-split-gzip`, `dump-split-zstd` (wall; CPU moves to a thread) |
+| 6 | 1.1-6 | `27b65f4` | `grokbox-1.1-27b65f4` | 10-20 % on `restore-none/gzip/zstd`, `copy` (`--concurrency 1`); nothing else |
+| 7 | 1.1-8 | `6fcc953` | `grokbox-1.1-6fcc953` | `multi-*-p1/p4/p8`: no regression, p8 may scale better |
+| 8 | 1.1-7 | `2e3b931` | `grokbox-1.1-2e3b931` | `multi-dump-p*` a little faster (no read-back); same records in the manifest |
 
 Hashes change if fixups are folded in; `pit.sh list` always prints the current ones.
 
@@ -128,7 +128,7 @@ How the order follows from the criteria:
   * `searchdump-multi.rs` items run one after another: 1.1-8, then 1.1-7.
   * `file_sink.rs` (1.1-9) overlaps with nothing.
 
-Each item is one commit on `release/1.1` (or two: tests, then the change), with a one-paragraph perf note in its message. No item is pushed until Robert asks.
+Each item is one commit on `release/1.1` (or two: tests, then the change), with a one-paragraph perf note in its message. Robert asked (t174u) that the branch be pushed as `origin/release/1.1`. Do not merge to `main` without Robert.
 
 ## 2. Item details
 

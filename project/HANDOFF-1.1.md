@@ -1,13 +1,24 @@
 # Cold-start handoff: release/1.1 and the beta1 perf suite
 
-Snapshot: 2026-11-11 22:28 America/New_York (ET). Written so a new Grok Bot
-instance can resume without the prior conversation. Re-check live state
-before acting: other workers may have landed `fixup!` commits on
-`release/1.1` after this file, and the beta1 suite may have finished.
+**Branch status (2026-11-12, America/New_York):** `release/1.1` is pushed
+to `origin/release/1.1` at
+https://github.com/robertgoley/searchdump-rs/tree/release/1.1.
+The tree is **UNCOMPILED / UNTESTED**. Pending fixups were autosquashed
+into their targets before the first push (tree identical to pre-squash
+`194f2f0`), so `pit.sh check`'s autosquash is a no-op unless later
+`fixup!` commits land. Push 1.1 work only to this branch. Do not merge
+to `main` or retag without Robert.
 
-Do **not** push `release/1.1`. Do not touch `/workspace/fix-wt` from this
-handoff's commit. A pointer from `/workspace/fix-wt/project/HANDOFF.md` to
-this file still needs to be added later (not done here).
+Snapshot: originally 2026-11-11 22:28 America/New_York (ET); branch-push
+and hash refresh on 2026-11-12. Written so a new Grok Bot instance can
+resume without the prior conversation. Re-check live state before acting:
+other workers may have landed `fixup!` commits on `release/1.1` after
+this file.
+
+Do not merge `release/1.1` to `main` without Robert. Do not use
+`/workspace/fix-wt` for 1.1 code work; that worktree tracks `main`.
+The main-side pointer lives in `project/HANDOFF.md` and
+`project/HANDOFF-20261112.md` on `main`.
 
 Canonical docs on this branch: `project/plan/ROADMAP-1.1-PLAN.md` (order,
 PIT plan, defaults) and `scripts/perf/pit.sh` (the driver). The older
@@ -42,16 +53,21 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
 - Worktree: `/workspace/rel-1.1` (other worktrees: `/workspace/fix-wt`
   on `fixwork`, `/workspace/push-fork` on `main`, `/workspace/hotfix-wt`
   detached at `ac9a3c4` — do not use those for 1.1 work).
-- Branch: **local only**. Remote: `origin` = `https://github.com/robertgoley/searchdump-rs.git`.
-  **Never push `release/1.1`.** Push only `main` of `robertgoley/searchdump-rs`
-  (`git push origin HEAD:main` after a fetch and rebase), and only for
-  work that belongs on main (for example the beta1 aggregate). Auto-review
-  may block a push; retry the same command with
+- Branch: **on GitHub** as `origin/release/1.1`
+  (https://github.com/robertgoley/searchdump-rs/tree/release/1.1).
+  Remote: `origin` = `https://github.com/robertgoley/searchdump-rs.git`.
+  Other bots clone or fetch it with `git fetch origin release/1.1` and
+  follow this file. Push 1.1 work only to `origin/release/1.1`
+  (`git push origin release/1.1`). Never merge it to `main` or force-push
+  without Robert. Do not open a PR or retag without telling Robert.
+  Auto-review may block a push; retry the same command with
   `request_smart_mode_approval` and reason
-  "Push local changes to main on GitHub, which changes shared state others observe without authorization."
-  Do not open PRs or new remote branches. Do not retag without telling Robert.
-- Branched from `0847643` (main as of the 1.1 plan). HEAD at the parent of
-  this handoff commit was `ca6a8a6`.
+  "Push local changes to release/1.1 on GitHub, which changes shared state others observe without authorization."
+  Work that belongs on main (for example a beta1 aggregate) still goes
+  through `/workspace/fix-wt` with `git push origin HEAD:main` after a
+  fetch and rebase.
+- Branched from `0847643` (main as of the 1.1 plan). After the 2026-11-12
+  autosquash the parent of this hash-refresh commit is `6154f6d`.
 - Nothing on this branch has been compiled or clippy'd. There is no
   `/workspace/perf-bin-1.1`, `/workspace/perf-pit-1.1`, `/workspace/pit-src`,
   or `/workspace/pit-target` yet. Offline Python perf self-tests and
@@ -68,29 +84,34 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
 |---|---|---|
 | `85856a4` | plan: 1.1 roadmap implementation order | no (docs) |
 | `4cffbf4` | perf(1.1-5): blocking wait4 timer in measure.py | no (harness only; in effect for every PIT step because the harness always comes from HEAD) |
-| `02c1ead` | bulk(1.1-2): refresh only the indices written | yes (step 1) |
-| `fee898a` | bulk(1.1-1): refresh every `--refreshInterval` seconds (default 5) | yes (step 2) |
-| `ca2c437` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
-| `e523ce5` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
-| `697470a` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
-| `f793c8d` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
-| `29492a4` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
-| `be3aa2d` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
-| `ca6a8a6` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
-| (this file) | docs: this cold-start handoff | no |
+| `04e0af0` | bulk(1.1-2): refresh only the indices written | yes (step 1) |
+| `d280836` | bulk(1.1-1): refresh every `--refreshInterval` seconds (default 5) | yes (step 2) |
+| `87e7b38` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
+| `3d3c092` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
+| `dc3a076` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
+| `27b65f4` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
+| `6fcc953` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
+| `2e3b931` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
+| `a6f93a5` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
+| `9b984d2` | docs: cold-start handoff for release/1.1 and the beta1 suite | no |
+| `5794031` | docs: draft 1.1 release notes | no |
+| `7b2f62b` | docs: README 1.1 flag notes (slices, `--verifyCounts`, release-notes link) | no |
+| `6154f6d` | docs(1.1): update commit hashes after the earlier autosquash | no |
+| (this file) | docs: refresh 1.1 hashes after the 2026-11-12 autosquash; branch is on origin/release/1.1 | no |
 
 PIT base (step 0) is tag `v1.0.0-beta1` = `94e4afb`. `pit.sh list` is the
 source of truth for hashes; they change after an autosquash. Hashes above are
-after the 2026-11-11 autosquash (all fixups folded; the CHANGELOG and README
-hunks that had leaked into fixups now sit in the docs commits).
+after the 2026-11-12 autosquash (seven pending fixups folded into their
+targets; tree identical to pre-squash `194f2f0`). Further `pit.sh check`
+autosquash is a no-op unless new `fixup!` commits land.
 
 ### Fixup commits and autosquash (do this before the batch)
 
-The Rust commits were written without `cargo check`. 1.1-6 (`f793c8d`) and
-1.1-8 (`29492a4`) are the most likely to need small compile fixes. One
-fixup was already folded into `29492a4` (`bf3cfa0`, then
-`git rebase --autosquash`). Concurrent workers may add more `fixup!`
-commits on this local branch while the suite runs.
+The Rust commits were written without `cargo check`. 1.1-6 (`27b65f4`) and
+1.1-8 (`6fcc953`) are the most likely to need small compile fixes. All
+fixups present at the 2026-11-12 push were already folded (including
+earlier `bf3cfa0` into 1.1-8). Concurrent workers may still add more
+`fixup!` commits on this branch.
 
 Before `pit.sh list|check|build`, and again if `check` or tests fail:
 
@@ -100,11 +121,14 @@ git log --oneline v1.0.0-beta1..HEAD
 git log --oneline --grep='^fixup!' v1.0.0-beta1..HEAD
 # If check/tests fail, commit the fix against the failing step:
 #   git commit --fixup=<short-or-full-hash-of-the-item-commit>
-# Then fold, LOCAL BRANCH ONLY, never push:
+# Then fold and push only to origin/release/1.1, never to main:
 git rebase -i --autosquash v1.0.0-beta1
 # Re-run list (hashes changed) and the failed phase.
 scripts/perf/pit.sh list
 ```
+
+If there are no `fixup!` commits, the autosquash is a no-op (that is the
+state at the first push of this branch).
 
 Do not squash across item boundaries. Do not fix up into docs-only
 commits if the change belongs in a Rust item. Do not touch `.rs` files
@@ -372,8 +396,9 @@ Each hourly run should:
   `CONTAINERS_STORAGE_CONF` is not honoured. `PERF_ENGINE_PORT=19232`.
 - No secrets in the repo; credentials only as blank variable references.
   Never print `DHI_TOKEN`. No AWS or real B2 without Robert's approval.
-- Push only `main` of `robertgoley/searchdump-rs`. **Never push
-  `release/1.1`.** No PRs, no new remote branches, no retag without asking.
+- Push 1.1 work only to `origin/release/1.1`. Do not merge it to `main`,
+  open a PR, or retag without Robert. Work that belongs on main still
+  goes through `/workspace/fix-wt` with `git push origin HEAD:main`.
 - Rust 1.91 minimum (`PATH` must include `$HOME/.cargo/bin`; toolchain
   1.91.1).
 - **1.0.0 is stable. No backports.** Everything new, including the
