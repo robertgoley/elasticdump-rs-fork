@@ -87,3 +87,4 @@ These 1.1 roadmap items change only searchdump internals or searchdump-only exte
 equivalent, so there is no compatibility difference to record in the table above.
 * **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.
 * **1.1-9 compression thread**: internal; the gzip bytes are identical, and zstd is a searchdump extension.
+* **1.1-6 encode/send overlap**: same requests in the same order as Node at `--concurrency 1`; only the client-side timing changes.

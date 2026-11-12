@@ -295,6 +295,10 @@ for every place the tool changes what is loaded, and for the tested versions, se
   all and wins over `--refreshInterval`. After the run the same documents are searchable as with Node; only a
   reader watching the index *during* a restore sees new documents up to the interval later (the engine's own
   `index.refresh_interval`, 1 s by default, still applies as well).
+* **Encode/send overlap at `--concurrency 1`** (1.1): while one bulk request is in flight, the next batch is read
+  and encoded, and sent once the first is done. Requests never overlap, so the cluster sees the same requests in the
+  same order as Node; a failed batch stops the run before the next one is sent, and a run that stops with an error
+  still finishes the one batch in flight first. `SEARCHDUMP_BULK_PIPELINE=0` turns the overlap off.
 * **Refresh targets only the indices written** (1.1): a restore with no output index (each document keeps its
   `_index`) refreshes exactly the indices it wrote, after `--prefix`/`--suffix`/rename, as
   `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true` (long lists split under ~3 KB per URL). Node
@@ -901,8 +905,8 @@ Each direction resolves its basic-auth username and password on its own (L-645).
 ## Memory
 
 Since 1.1 the start-of-run estimate also counts pipeline copies of a batch: +3 batches for a compressed file
-output (the compression thread's queue, 1.1-9) and +1 for a bulk restore at `--concurrency 1` (the batch encoded
-while the previous one is in flight, 1.1-6).
+output (the compression thread's queue, 1.1-9) and +2 for a bulk restore at `--concurrency 1` (the batch in
+flight, its lines and encoded body, next to the one being encoded, 1.1-6).
 
 Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~3 + ~15 MB` (**changed in L-802, from
 × 1.5 + 10 MB, pending lead review**: the old estimate was exceeded by up to 127% by concurrent restores and sliced

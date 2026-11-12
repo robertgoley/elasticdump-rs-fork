@@ -65,6 +65,17 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   thread. The memory estimate counts 3 extra batches for compressed output. No flag. zstd
   multithreading (`zstdmt`) is not used.
 
+- **Bulk encode/send overlap at `--concurrency 1` (1.1-6).** A batch is now validated and encoded
+  while the previous one is in flight, then sent once that send has finished (written, retried
+  or reported). Sends never overlap, so the requests and their order are unchanged; an error in
+  batch N means batch N+1 is never sent; an encoding stop in N+1 is reported after N finished, with
+  N counted. A run that ends with an error (e.g. a failing search) finishes the one batch in flight
+  before exiting, as the sequential writer did. `SEARCHDUMP_BULK_PIPELINE=0` turns it off (A/B
+  switch, not a CLI flag). `process_batch` is split into `encode_batch` (CPU) and `send_batch`
+  (network), shared with `--concurrency N > 1`. The version-conflict (409) and data-stream hints
+  are now shared by all workers, so they are printed once per run also with `--concurrency N > 1`
+  (they were printed once per batch there). The memory estimate counts 2 extra batches.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

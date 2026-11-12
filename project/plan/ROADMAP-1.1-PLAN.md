@@ -18,7 +18,7 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same w
 | 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed, not yet compiled (suite running); nodecmp + A/B pending |
 | 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
 | 6 | 1.1-9 compression thread | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 7 | 1.1-6 encode overlap | planned |
+| 7 | 1.1-6 encode overlap | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
 | 8 | 1.1-8 tokio::process | planned |
 | 9 | 1.1-7 child counts | planned |
 

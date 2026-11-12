@@ -216,9 +216,42 @@ pub struct BulkSink {
     /// The single target index was missing (404) when its uuid was to be noted, after
     /// [`UUID_CAPTURE_AFTER`] of writes: it was deleted mid-run (TST-BRK-SRV-008).
     target_gone_mid_run: bool,
-    /// The 409 explanation is printed once per run (TST-BRK-SRV-011).
-    conflict_hint_shown: bool,
-    data_stream_hint_shown: bool,
+    /// The 409 explanation is printed once per run (TST-BRK-SRV-011). Shared by the workers
+    /// (1.1-6: every pipelined batch is sent by a worker).
+    conflict_hint_shown: Arc<AtomicBool>,
+    data_stream_hint_shown: Arc<AtomicBool>,
+}
+
+/// 1.1-6: one batch, validated and encoded, ready to send. Owns its input lines so the send
+/// can run on a worker task while the next batch is encoded.
+struct EncodedBatch {
+    lines: Bytes,
+    encoded: Vec<u8>,
+    /// Per encodable document: its line in `lines`, its action (+ source) lines in `encoded`.
+    docs: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
+    /// Target index names of this batch (see `BulkSink::batch_indices`).
+    indices: HashSet<String>,
+}
+
+/// 1.1-6: a document that stops the run (refused rename merge, [`FatalDoc`]); the message is
+/// completed once the batches before it are written, so it can say how many were.
+struct StopAt {
+    no: u64,
+    err: anyhow::Error,
+}
+
+/// 1.1-6: `SEARCHDUMP_BULK_PIPELINE=0` (or `false`/`off`/`no`) turns the encode/send overlap at
+/// `--concurrency 1` off, for A/B runs; anything else (or unset) leaves it on.
+fn pipeline_from_env(v: Option<&str>) -> bool {
+    !matches!(
+        v.map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
+
+fn pipeline_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| pipeline_from_env(std::env::var("SEARCHDUMP_BULK_PIPELINE").ok().as_deref()))
 }
 
 fn get<'a>(line: &'a [u8], path: &[&str]) -> Option<LazyValue<'a>> {
@@ -492,8 +525,8 @@ impl BulkSink {
             target_uuid: None,
             uuid_checked: false,
             target_gone_mid_run: false,
-            conflict_hint_shown: false,
-            data_stream_hint_shown: false,
+            conflict_hint_shown: Arc::new(AtomicBool::new(false)),
+            data_stream_hint_shown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -611,7 +644,18 @@ impl BulkSink {
     pub fn with_concurrency(mut self, concurrency: usize, throttle: Option<Duration>) -> Self {
         self.concurrency = concurrency.max(1);
         self.throttle = throttle.filter(|d| !d.is_zero());
+        if self.pipelined() {
+            // 1.1-6: the batch in flight (its lines and encoded body) next to the one encoded
+            crate::memplan::add_batches(2);
+        }
         self
+    }
+
+    /// 1.1-6: encode/send overlap applies at `--concurrency 1` without `--throttleInterval`.
+    /// With a throttle the pause must follow the finished send (as before 1.1-6); overlapping
+    /// it with the next send would shorten the gap the user asked for.
+    fn pipelined(&self) -> bool {
+        self.concurrency <= 1 && self.throttle.is_none() && pipeline_enabled()
     }
 
     fn worker(&self) -> BulkSink {
@@ -633,8 +677,8 @@ impl BulkSink {
             target_uuid: None,
             uuid_checked: false,
             target_gone_mid_run: false,
-            conflict_hint_shown: false,
-            data_stream_hint_shown: false,
+            conflict_hint_shown: Arc::clone(&self.conflict_hint_shown),
+            data_stream_hint_shown: Arc::clone(&self.data_stream_hint_shown),
         }
     }
 
@@ -658,8 +702,26 @@ impl BulkSink {
         self.note_target_uuid().await;
         let first = self.next_doc;
         self.next_doc += buf.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count() as u64;
-        if self.concurrency <= 1 {
-            self.process_batch(buf, first).await?;
+        if self.pipelined() {
+            // 1.1-6: encode this batch while the previous one is still being sent, then send
+            // it once that send is done. Sends never overlap, so the cluster sees the same
+            // requests in the same order as without the overlap.
+            let encoded = self.encode_batch(Bytes::copy_from_slice(buf), first);
+            // Batch N is finished (written, retried or reported) before N+1 is sent; an error
+            // from N means N+1 is never sent. An encoding error of N+1 is reported after N.
+            self.join_inflight().await?;
+            let batch = match encoded? {
+                Ok(b) => b,
+                Err(stop) => return Err(self.stop_error(stop)),
+            };
+            let mut worker = self.worker();
+            self.inflight.spawn(async move {
+                worker.send_batch(batch).await?;
+                Ok(worker.report)
+            });
+        } else if self.concurrency <= 1 {
+            self.process_batch(Bytes::copy_from_slice(buf), first)
+                .await?;
         } else {
             while self.inflight.len() >= self.concurrency {
                 let joined = self.inflight.join_next().await.expect("non-empty");
@@ -671,7 +733,7 @@ impl BulkSink {
             let mut worker = self.worker();
             let data = Bytes::copy_from_slice(buf);
             self.inflight.spawn(async move {
-                worker.process_batch(&data, first).await?;
+                worker.process_batch(data, first).await?;
                 Ok(worker.report)
             });
         }
@@ -688,21 +750,74 @@ impl BulkSink {
         while let Some(joined) = self.inflight.join_next().await {
             if let Err(e) = self.merge(joined) {
                 self.inflight.abort_all();
+                self.best_effort_final_refresh().await;
                 return Err(e);
             }
         }
-        if !self.opts.refresh.is_off() && self.refresh_dirty.load(Ordering::SeqCst) {
-            let lock = Arc::clone(&self.refresh_lock);
-            let mut last = lock.lock().await;
-            if self.refresh_dirty.load(Ordering::SeqCst) {
-                self.refresh_now(&mut last).await;
-            }
-        }
+        self.final_refresh().await;
         self.check_target_index().await
+    }
+
+    /// One refresh of whatever was written since the last one (nothing when `--noRefresh` or
+    /// nothing is pending).
+    async fn final_refresh(&self) {
+        if self.opts.refresh.is_off() || !self.refresh_dirty.load(Ordering::SeqCst) {
+            return;
+        }
+        let lock = Arc::clone(&self.refresh_lock);
+        let mut last = lock.lock().await;
+        if self.refresh_dirty.load(Ordering::SeqCst) {
+            self.refresh_now(&mut last).await;
+        }
+    }
+
+    /// The run is ending with an error or an interrupt: with an interval policy the batches
+    /// written since the last refresh would otherwise stay unsearchable until the index's own
+    /// refresh (never, with `index.refresh_interval: -1`), where 1.0 had refreshed after every
+    /// batch. Bounded so a dead cluster cannot hold up the exit.
+    async fn best_effort_final_refresh(&self) {
+        if tokio::time::timeout(FINAL_REFRESH_TIMEOUT, self.final_refresh())
+            .await
+            .is_err()
+        {
+            log::warn!(
+                "final refresh did not finish within {}s while stopping; documents written since the last refresh become searchable at the index's next refresh",
+                FINAL_REFRESH_TIMEOUT.as_secs()
+            );
+        }
     }
 
     pub fn abort(&mut self) {
         self.inflight.abort_all();
+    }
+
+    /// The run is ending with an error. With `--concurrency 1` the one pipelined batch in flight
+    /// (1.1-6) is finished first, as the sequential writer did before 1.1-6 (each batch was
+    /// complete before the next was read); errors from it are logged, the run's error wins.
+    /// With `--concurrency N > 1` the in-flight batches are aborted as before.
+    pub async fn settle(&mut self) {
+        if self.concurrency > 1 {
+            self.abort();
+        } else {
+            while let Some(joined) = self.inflight.join_next().await {
+                if let Err(e) = self.merge(joined) {
+                    log::debug!("bulk batch in flight when the run stopped: {e:#}");
+                }
+            }
+        }
+        self.best_effort_final_refresh().await;
+    }
+
+    /// Wait for every in-flight batch (at most one with `--concurrency 1`), merging reports;
+    /// the first error aborts the rest and is returned.
+    async fn join_inflight(&mut self) -> Result<()> {
+        while let Some(joined) = self.inflight.join_next().await {
+            if let Err(e) = self.merge(joined) {
+                self.inflight.abort_all();
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     fn index_for(&self, top: &Top) -> Result<String> {
@@ -889,35 +1004,84 @@ impl BulkSink {
 
     /// Write one batch of document lines; returns once every item was
     /// written, retried or reported.
-    async fn process_batch(&mut self, buf: &[u8], first_doc: u64) -> Result<()> {
-        // Validate and encode every line first: a line that is not one JSON
-        // object (INJ-F1) or whose action fields are unusable (bad `_index`,
-        // non-string `_id`, non-integer `version`: INJ-F2/F3) is rejected on
-        // its own, so it can never fail the whole bulk request.
-        let mut encoded = Vec::with_capacity(buf.len() + buf.len() / 4);
-        let mut docs: Vec<(&[u8], std::ops::Range<usize>)> = Vec::new();
-        for (no, line) in (first_doc..).zip(buf.split(|b| *b == b'\n').filter(|l| !l.is_empty())) {
+    async fn process_batch(&mut self, lines: Bytes, first_doc: u64) -> Result<()> {
+        let batch = match self.encode_batch(lines, first_doc)? {
+            Ok(b) => b,
+            Err(stop) => return Err(self.stop_error(stop)),
+        };
+        self.send_batch(batch).await
+    }
+
+    /// The error for a document that stops the run, counting what was written before it.
+    fn stop_error(&self, stop: StopAt) -> anyhow::Error {
+        let StopAt { no, err } = stop;
+        anyhow!(
+            "{err:#}. Stopped at document {no} of the input before sending its batch; {} document(s) of earlier batches were already written",
+            self.report.written
+        )
+    }
+
+    /// 1.1-6, CPU part of a batch: validate and encode every line. A line that is not one JSON
+    /// object (INJ-F1) or whose action fields are unusable (bad `_index`, non-string `_id`,
+    /// non-integer `version`: INJ-F2/F3) is rejected on its own, so it can never fail the
+    /// whole bulk request. The outer error is a rejection that stops the run; the inner one a
+    /// document that stops it ([`StopAt`]).
+    fn encode_batch(
+        &mut self,
+        lines: Bytes,
+        first_doc: u64,
+    ) -> Result<std::result::Result<EncodedBatch, StopAt>> {
+        let mut encoded = Vec::with_capacity(lines.len() + lines.len() / 4);
+        let mut docs: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = Vec::new();
+        let mut no = first_doc;
+        let mut pos = 0usize;
+        while pos < lines.len() {
+            let end = memchr::memchr(b'\n', &lines[pos..]).map_or(lines.len(), |i| pos + i);
+            let range = pos..end;
+            pos = end + 1;
+            if range.is_empty() {
+                continue;
+            }
+            let line = &lines[range.clone()];
+            let this = no;
+            no += 1;
             if let Err(reason) = check_doc_line(line) {
-                self.reject_line(line, &reason, no)?;
+                self.reject_line(line, &reason, this)?;
                 continue;
             }
             let at = encoded.len();
             match self.encode_doc(line, &mut encoded) {
-                Ok(()) => docs.push((line, at..encoded.len())),
+                Ok(()) => docs.push((range, at..encoded.len())),
                 Err(e) => {
                     encoded.truncate(at);
                     if e.downcast_ref::<crate::rename::MergeRefused>().is_some()
                         || e.downcast_ref::<FatalDoc>().is_some()
                     {
-                        return Err(anyhow!(
-                            "{e:#}. Stopped at document {no} of the input before sending its batch; {} document(s) of earlier batches were already written",
-                            self.report.written
-                        ));
+                        self.batch_indices.clear();
+                        return Ok(Err(StopAt { no: this, err: e }));
                     }
-                    self.reject_line(line, &format!("{e:#}"), no)?;
+                    self.reject_line(line, &format!("{e:#}"), this)?;
                 }
             }
         }
+        Ok(Ok(EncodedBatch {
+            lines,
+            encoded,
+            docs,
+            indices: std::mem::take(&mut self.batch_indices),
+        }))
+    }
+
+    /// 1.1-6, network part of a batch: send it in `--maxBulkBytes` chunks; returns once every
+    /// item was written, retried or reported.
+    async fn send_batch(&mut self, batch: EncodedBatch) -> Result<()> {
+        let EncodedBatch {
+            lines,
+            encoded,
+            docs,
+            indices,
+        } = batch;
+        self.batch_indices.extend(indices);
         let mut start = 0;
         while start < docs.len() {
             // Split oversized batches at --maxBulkBytes.
@@ -939,7 +1103,10 @@ impl BulkSink {
                     break;
                 }
             }
-            let chunk: Vec<&[u8]> = docs[start..end].iter().map(|(l, _)| *l).collect();
+            let chunk: Vec<&[u8]> = docs[start..end]
+                .iter()
+                .map(|(l, _)| &lines[l.clone()])
+                .collect();
             match self.write_chunk(&chunk, body).await {
                 Ok(()) => {}
                 Err(e) if self.opts.ignore_errors && !crate::http::is_cancelled(&e) => {
@@ -949,7 +1116,15 @@ impl BulkSink {
                     );
                     self.report.failed += chunk.len() as u64;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // Earlier chunks of this batch may have been written: keep them in the
+                    // final refresh (drain/settle) of the failing run.
+                    self.note_written_indices();
+                    if !self.opts.refresh.is_off() && start > 0 {
+                        self.refresh_dirty.store(true, Ordering::SeqCst);
+                    }
+                    return Err(e);
+                }
             }
             start = end;
         }
@@ -1150,21 +1325,20 @@ impl BulkSink {
                 rejected.push((doc_idx, item.as_raw_str().to_string()));
             } else {
                 if status == 400
-                    && !self.data_stream_hint_shown
+                    && !self.data_stream_hint_shown.load(Ordering::Relaxed)
                     && self.opts.action == BulkAction::Index
                     && item
                         .as_raw_str()
                         .contains("op_type of create are allowed in data streams")
                 {
                     // L-656: name the fix once, not per document
-                    self.data_stream_hint_shown = true;
+                    self.data_stream_hint_shown.store(true, Ordering::Relaxed);
                     log::warn!(
                         "the target is a data stream, which accepts only `create`: every document written with --bulkAction index fails; re-run with --bulkAction create"
                     );
                 }
-                if status == 409 && !self.conflict_hint_shown {
+                if status == 409 && !self.conflict_hint_shown.swap(true, Ordering::Relaxed) {
                     // TST-BRK-SRV-011: name the concurrent change once, not per document
-                    self.conflict_hint_shown = true;
                     log::warn!(
                         "version conflict (409): a document was created or changed by another writer (a concurrent restore, or an earlier run) between reads; it is counted as failed{}",
                         if self.opts.action == BulkAction::Create {
@@ -1251,6 +1425,9 @@ impl BulkSink {
 /// `http.max_initial_line_length` default of Elasticsearch and OpenSearch, leaving room for
 /// a base path, percent-encoding and the query string).
 const REFRESH_URL_BUDGET: usize = 3000;
+
+/// Upper bound on the final refresh of a run that is stopping on an error or an interrupt.
+const FINAL_REFRESH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Join `names` with commas into groups of at most `budget` bytes each. A single name longer
 /// than the budget gets a group of its own (index names are at most 255 bytes, so this only
@@ -1570,6 +1747,50 @@ mod tests {
         // without a re-send a 409 is a real conflict
         s.handle_response(conflict, &docs, &[0, 1], false).unwrap();
         assert_eq!((s.report.written, s.report.failed), (3, 1));
+    }
+
+    #[test]
+    fn bulk_pipeline_switch_defaults_on() {
+        assert!(pipeline_from_env(None));
+        assert!(pipeline_from_env(Some("1")));
+        assert!(pipeline_from_env(Some("")));
+        for off in ["0", "false", "OFF", " no "] {
+            assert!(!pipeline_from_env(Some(off)), "{off}");
+        }
+    }
+
+    /// 1.1-6: the CPU half of a batch numbers documents like the old single pass (blank lines
+    /// skipped), keeps each document's line, and carries the batch's target indices.
+    #[test]
+    fn encode_batch_keeps_lines_numbers_and_indices() {
+        let mut s = sink(os(), |o| o.ignore_errors = true);
+        let lines = Bytes::from_static(
+            b"{\"_index\":\"a\",\"_id\":\"1\",\"_source\":{}}\n\nnot json\n{\"_index\":\"b\",\"_id\":\"2\",\"_source\":{}}\n",
+        );
+        let b = match s.encode_batch(lines, 7).unwrap() {
+            Ok(b) => b,
+            Err(_) => panic!("no document stops the run"),
+        };
+        assert_eq!(b.docs.len(), 2);
+        assert_eq!(
+            &b.lines[b.docs[0].0.clone()],
+            br#"{"_index":"a","_id":"1","_source":{}}"#
+        );
+        assert_eq!(
+            &b.lines[b.docs[1].0.clone()],
+            br#"{"_index":"b","_id":"2","_source":{}}"#
+        );
+        let enc0 = String::from_utf8(b.encoded[b.docs[0].1.clone()].to_vec()).unwrap();
+        assert!(
+            enc0.starts_with(r#"{"index":{"_index":"a","_id":"1""#),
+            "{enc0}"
+        );
+        let mut idx: Vec<&str> = b.indices.iter().map(String::as_str).collect();
+        idx.sort();
+        assert_eq!(idx, ["a", "b"]);
+        assert!(s.batch_indices.is_empty(), "moved into the batch");
+        // "not json" was document 8 (the blank line is not counted) and was rejected
+        assert_eq!((s.report.failed, s.report.rejected), (1, 1));
     }
 
     #[test]

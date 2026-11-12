@@ -1723,6 +1723,204 @@ async fn refresh_cadence_no_refresh_and_refresh_failure_is_a_warning() {
     }
 }
 
+// 1.1-6: at --concurrency 1 the next batch is encoded while the previous one is sent. The
+// requests, their order and the counts are the same with the overlap on (default) and off
+// (SEARCHDUMP_BULK_PIPELINE=0); a failed batch stops the run before the next one is sent, and
+// --ignore-errors skips exactly the failed batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_pipeline_keeps_order_and_stops_at_the_failed_batch() {
+    use support::router_mock::{Fault, Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let lines: String = (0..6)
+        .map(|i| hit(&i.to_string(), r#"{"n":1}"#) + "\n")
+        .collect();
+    std::fs::write(&input, lines).unwrap();
+    let ok2 =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    let ids = |body: &str| -> Vec<String> {
+        body.lines()
+            .filter(|l| l.starts_with(r#"{"index":"#))
+            .filter_map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).ok()?;
+                Some(v["index"]["_id"].as_str()?.to_string())
+            })
+            .collect()
+    };
+    // (fail batch 2?, extra args, want exit 0?, want bulk requests, want ids sent)
+    for (fail, extra, want_ok, want_bulks, want_ids) in [
+        (false, &[][..], true, 3, vec!["0", "1", "2", "3", "4", "5"]),
+        (true, &[][..], false, 2, vec!["0", "1", "2", "3"]),
+        (
+            true,
+            &["--ignore-errors"][..],
+            true,
+            3,
+            vec!["0", "1", "2", "3", "4", "5"],
+        ),
+    ] {
+        let mut outcomes = Vec::new();
+        for pipeline in ["1", "0"] {
+            let tag = format!("fail={fail} {extra:?} SEARCHDUMP_BULK_PIPELINE={pipeline}");
+            let mut b = RouterMock::builder().route(Route::exact("GET", "/").reply(Reply::ok(
+                r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+            )));
+            if fail {
+                b = b.route(
+                    Route::contains("POST", "/_bulk")
+                        .body_contains(r#""_id":"2""#)
+                        .reply(Reply::json(
+                            400,
+                            r#"{"error":{"type":"boom"},"status":400}"#,
+                        )),
+                );
+            }
+            let m = b
+                .route(Route::contains("POST", "/_bulk").reply(
+                    Reply::ok(ok2).with_fault(Fault::Delay(std::time::Duration::from_millis(30))),
+                ))
+                .route(Route::contains("POST", "/_refresh").reply(Reply::ok(
+                    r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+                )))
+                .start()
+                .await;
+            let mut a: Vec<String> = vec![
+                "--input".into(),
+                input.to_str().unwrap().into(),
+                "--output".into(),
+                format!("{}/dst", m.url()),
+                "--limit".into(),
+                "2".into(),
+                "--retryAttempts".into(),
+                "0".into(),
+            ];
+            a.extend(extra.iter().map(|s| s.to_string()));
+            let o = run_async(
+                a,
+                vec![("SEARCHDUMP_BULK_PIPELINE".into(), pipeline.into())],
+            )
+            .await;
+            let err = stderr(&o);
+            assert_eq!(o.status.success(), want_ok, "{tag}: {err}");
+            let bodies: Vec<String> = m
+                .requests()
+                .iter()
+                .filter(|r| r.path.ends_with("/_bulk"))
+                .map(|r| r.body_str())
+                .collect();
+            assert_eq!(bodies.len(), want_bulks, "{tag}: {err}");
+            let sent: Vec<String> = bodies.iter().flat_map(|b| ids(b)).collect();
+            assert_eq!(sent, want_ids, "{tag}");
+            if fail && extra.is_empty() {
+                assert!(!sent.contains(&"4".to_string()), "{tag}: batch 3 was sent");
+            }
+            if !extra.is_empty() {
+                assert!(
+                    err.contains("skipping 2 documents") && err.contains("Total Writes: 4"),
+                    "{tag}: {err}"
+                );
+            }
+            let counts: Vec<String> = err
+                .lines()
+                .filter(|l| l.contains("Total Writes:") || l.contains("Failed Writes:"))
+                .map(|l| l.trim().to_string())
+                .collect();
+            outcomes.push((o.status.code(), bodies, counts));
+        }
+        assert_eq!(
+            outcomes[0], outcomes[1],
+            "fail={fail} {extra:?}: pipeline on and off differ"
+        );
+    }
+}
+
+// 1.1-1/1.1-6: a restore that stops on a bulk error still refreshes what it wrote, once, after
+// the last bulk request (Sink::abort -> settle, or drain when the last pipelined batch fails;
+// with a long --refreshInterval no refresh is due during the run). --noRefresh sends none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_restore_still_sends_the_final_refresh() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let lines: String = (0..6)
+        .map(|i| hit(&i.to_string(), r#"{"n":1}"#) + "\n")
+        .collect();
+    std::fs::write(&input, lines).unwrap();
+    let ok2 =
+        r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}}]}"#;
+    // (failing id, concurrency, pipeline, --noRefresh?, want refreshes)
+    for (fail_id, concurrency, pipeline, no_refresh, want_refreshes) in [
+        ("2", "1", "1", false, 1),
+        ("2", "1", "0", false, 1),
+        ("4", "1", "1", false, 1),
+        ("2", "1", "1", true, 0),
+    ] {
+        let tag = format!(
+            "fail id {fail_id} --concurrency {concurrency} SEARCHDUMP_BULK_PIPELINE={pipeline} noRefresh={no_refresh}"
+        );
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(
+                r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+            )))
+            .route(
+                Route::contains("POST", "/_bulk")
+                    .body_contains(&format!(r#""_id":"{fail_id}""#))
+                    .reply(Reply::json(
+                        400,
+                        r#"{"error":{"type":"boom"},"status":400}"#,
+                    )),
+            )
+            .route(Route::contains("POST", "/_bulk").reply(Reply::ok(ok2)))
+            .route(Route::contains("POST", "/_refresh").reply(Reply::ok(
+                r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+            )))
+            .start()
+            .await;
+        let mut a: Vec<String> = vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            format!("{}/dst", m.url()),
+            "--limit".into(),
+            "2".into(),
+            "--retryAttempts".into(),
+            "0".into(),
+            "--concurrency".into(),
+            concurrency.into(),
+        ];
+        if no_refresh {
+            a.push("--noRefresh".into());
+        } else {
+            a.extend(["--refreshInterval".to_string(), "3600".to_string()]);
+        }
+        let o = run_async(
+            a,
+            vec![("SEARCHDUMP_BULK_PIPELINE".into(), pipeline.into())],
+        )
+        .await;
+        let err = stderr(&o);
+        assert!(!o.status.success(), "{tag}: {err}");
+        let reqs = m.requests();
+        let refreshes: Vec<usize> = reqs
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.path == "/dst/_refresh")
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(refreshes.len(), want_refreshes, "{tag}: {reqs:#?}");
+        if let Some(&at) = refreshes.last() {
+            let last_bulk = reqs
+                .iter()
+                .rposition(|r| r.path.ends_with("/_bulk"))
+                .expect("a bulk request");
+            assert!(
+                at > last_bulk,
+                "{tag}: the refresh came before the last bulk: {reqs:#?}"
+            );
+        }
+    }
+}
+
 // 1.1-1: with a short --refreshInterval and slow bulk responses, the written index is refreshed
 // during the run (not after every batch) and once at the end.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
