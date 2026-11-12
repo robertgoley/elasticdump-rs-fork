@@ -85,7 +85,9 @@ file -> engine -> file because it parses and re-serialises them. Most changes ar
 
 These 1.1 roadmap items change only searchdump internals or searchdump-only extensions; Node elasticdump has no
 equivalent, so there is no compatibility difference to record in the table above.
+
 * **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.
 * **1.1-9 compression thread**: internal; the gzip bytes are identical, and zstd is a searchdump extension.
 * **1.1-6 encode/send overlap**: same requests in the same order as Node at `--concurrency 1`; only the client-side timing changes.
 * **1.1-8 searchdump-multi Ctrl-C**: Node `multielasticdump` forks children too; how they are stopped on Ctrl-C is not part of the dump format or CLI (README "Bulk dump and load").
+* **1.1-7 child counts**: searchdump-multi reads Node's `Total Writes: N` line too; `--statsFile` is a hidden searchdump flag that is never passed to a Node binary.

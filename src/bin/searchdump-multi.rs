@@ -329,6 +329,10 @@ pub struct Args {
     /// searchdump binary (default: next to this binary, then $SEARCHDUMP_BIN, then PATH)
     #[arg(long = "elasticdumpBin")]
     pub elasticdump_bin: Option<PathBuf>,
+    /// Count the records of every data file by reading it back (and check the count the
+    /// searchdump run reported), instead of using that count
+    #[arg(long = "verifyCounts")]
+    pub verify_counts: bool,
     /// Where each child run's output is logged (default: a new temp directory)
     #[arg(long = "logDir")]
     pub log_dir: Option<PathBuf>,
@@ -1329,6 +1333,128 @@ impl Cluster {
 
 // ----------------------------------------------------------------------------- child runs
 
+/// 1.1-7: where a child's record count came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountSource {
+    /// The JSON the child wrote through `--statsFile`.
+    StatsFile,
+    /// Its `Total Writes: N` log line (searchdump and Node elasticdump print it).
+    LogLine,
+}
+
+/// 1.1-7: what a finished child reported. `written` is `None` when it reported nothing usable
+/// (the caller then counts the data file itself).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChildStats {
+    pub written: Option<u64>,
+    pub failed: u64,
+    pub source: Option<CountSource>,
+}
+
+impl ChildStats {
+    /// Documents the child read from its input: written plus failed (a load compares this with
+    /// the target's `_count`, so documents the child skipped still show as a mismatch).
+    pub fn docs_read(&self) -> Option<u64> {
+        self.written.map(|w| w + self.failed)
+    }
+}
+
+/// `--statsFile` JSON of a finished run (see searchdump's `write_stats_file`).
+pub fn parse_stats_file(text: &str) -> Option<ChildStats> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    if v.get("complete").and_then(|c| c.as_bool()) != Some(true) {
+        return None;
+    }
+    Some(ChildStats {
+        written: Some(v.get("written")?.as_u64()?),
+        failed: v.get("failed").and_then(|f| f.as_u64()).unwrap_or(0),
+        source: Some(CountSource::StatsFile),
+    })
+}
+
+/// The last `Total Writes: N` (and `Failed Writes: N`) of a child's log. searchdump prints
+/// `Total Writes: N`; Node elasticdump prints `<date> | Total Writes: N`.
+pub fn parse_total_writes(log: &str) -> Option<ChildStats> {
+    fn number_after(line: &str, key: &str) -> Option<u64> {
+        let rest = &line[line.rfind(key)? + key.len()..];
+        let digits: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse().ok()
+    }
+    let mut written = None;
+    let mut failed = 0;
+    for line in log.lines() {
+        if let Some(n) = number_after(line, "Total Writes:") {
+            written = Some(n);
+            failed = 0;
+        } else if let Some(n) = number_after(line, "Failed Writes:") {
+            failed = n;
+        }
+    }
+    Some(ChildStats {
+        written: Some(written?),
+        failed,
+        source: Some(CountSource::LogLine),
+    })
+}
+
+/// The last `max` bytes of a file, as text (a child's log can be long; the counts are at its end).
+fn read_tail(path: &Path, max: u64) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(max))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// 1.1-7: the counts of a child that exited 0: its `--statsFile`, else its log line, else none.
+pub fn child_stats(stats_file: Option<&Path>, log: &Path) -> ChildStats {
+    if let Some(p) = stats_file
+        && let Ok(text) = fs::read_to_string(p)
+        && let Some(s) = parse_stats_file(&text)
+    {
+        return s;
+    }
+    read_tail(log, 64 * 1024)
+        .and_then(|t| parse_total_writes(&t))
+        .unwrap_or_default()
+}
+
+/// 1.1-7: whether `bin` is searchdump (which takes `--statsFile`), not Node elasticdump (which
+/// would get an option it does not know). The `elasticdump`/`elasticdump-rs` compatibility
+/// names are symlinks to searchdump, so the name is checked after resolving links.
+pub fn takes_stats_file(bin: &Path) -> bool {
+    let real = fs::canonicalize(bin).unwrap_or_else(|_| bin.to_path_buf());
+    real.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("searchdump"))
+}
+
+/// 1.1-7: whether this `bin` build accepts `--statsFile` (searchdump 1.1+). A searchdump 1.0.x
+/// given with `--elasticdump-bin` has the name but not the option, and would fail every data
+/// run on it. clap rejects an unknown option before it acts on `--help`, so this exits 0 only
+/// when the option is known. Run once at startup.
+fn accepts_stats_file(bin: &Path) -> bool {
+    std::process::Command::new(bin)
+        .arg("--statsFile=/dev/null")
+        .arg("--help")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// 1.1-7: `SEARCHDUMP_MULTI_DEBUG=1` prints where each record count came from.
+fn debug_counts() -> bool {
+    std::env::var_os("SEARCHDUMP_MULTI_DEBUG").is_some_and(|v| v != "0" && !v.is_empty())
+}
+
 /// 1.1-8: how long a child gets after SIGTERM (on Ctrl-C) before it is killed.
 pub const CHILD_GRACE: Duration = Duration::from_secs(5);
 
@@ -1343,6 +1469,8 @@ pub struct Runner {
     /// (SIGTERM, then SIGKILL after `grace`).
     pub cancel: CancellationToken,
     pub grace: Duration,
+    /// 1.1-7: data runs get `--statsFile` (the binary is searchdump, see [`takes_stats_file`]).
+    pub stats: bool,
 }
 
 impl Runner {
@@ -1354,7 +1482,7 @@ impl Runner {
         input: &str,
         output: &str,
         extra: &[String],
-    ) -> Result<()> {
+    ) -> Result<ChildStats> {
         self.run_as(index, kind, kind, input, output, extra).await
     }
 
@@ -1363,6 +1491,8 @@ impl Runner {
     /// 1.1-8: the child is a `tokio::process` child, awaited without holding a runtime thread.
     /// On cancel it gets SIGTERM, then SIGKILL after `grace`; a child still running when its
     /// future is dropped is killed (`kill_on_drop`).
+    ///
+    /// 1.1-7: returns the counts the child reported ([`child_stats`]).
     pub async fn run_as(
         &self,
         index: &str,
@@ -1371,13 +1501,19 @@ impl Runner {
         input: &str,
         output: &str,
         extra: &[String],
-    ) -> Result<()> {
+    ) -> Result<ChildStats> {
         if self.cancelled.load(Ordering::SeqCst) || self.cancel.is_cancelled() {
             bail!("interrupted");
         }
         let log_path = self.log_dir.join(format!("{index}.{label}.log"));
         let log = fs::File::create(&log_path)
             .with_context(|| format!("create {}", log_path.display()))?;
+        let stats_path = (self.stats && kind == "data")
+            .then(|| self.log_dir.join(format!("{index}.{label}.stats.json")));
+        if let Some(p) = &stats_path {
+            // never read the counts of an earlier run
+            let _ = fs::remove_file(p);
+        }
         let mut child = {
             let mut cmd = tokio::process::Command::new(&self.bin);
             cmd.arg(format!("--input={input}"))
@@ -1386,6 +1522,11 @@ impl Runner {
                 .arg("--overwrite")
                 .args(&self.common)
                 .args(extra)
+                .args(
+                    stats_path
+                        .iter()
+                        .map(|p| format!("--statsFile={}", p.display())),
+                )
                 .stdin(Stdio::null())
                 .stdout(log.try_clone()?)
                 .stderr(log)
@@ -1425,7 +1566,7 @@ impl Runner {
                 tail(&log_path, 15)
             );
         }
-        Ok(())
+        Ok(child_stats(stats_path.as_deref(), &log_path))
     }
 }
 
@@ -1620,6 +1761,8 @@ async fn dump_one(
         ..Default::default()
     };
     let res: Result<String> = async {
+        // 1.1-7: what the data run reported (its record count, unless --verifyCounts)
+        let mut data_stats: Option<ChildStats> = None;
         fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let source = cluster.index_url(index);
         entry.source_count = cluster.count(index, false).await.ok();
@@ -1667,7 +1810,10 @@ async fn dump_one(
                 source.clone()
             };
             let runner = &ctx.runner;
-            runner.run(index, kind, &input, &o, &extra).await?;
+            let stats = runner.run(index, kind, &input, &o, &extra).await?;
+            if *kind == "data" {
+                data_stats = Some(stats);
+            }
             if !matches!(*kind, "data" | "analyzer" | "template") && !nonempty(&out) {
                 bail!("{kind} export is empty");
             }
@@ -1680,10 +1826,34 @@ async fn dump_one(
                 let f = dir.join(item_file_for(node, index, "data", comp));
                 if f.exists() { vec![f] } else { vec![] }
             };
-            let mut records = 0;
-            for f in &files {
-                records += count_records(f)?;
-            }
+            let reported = data_stats.and_then(|s| s.written.zip(s.source));
+            let records = match reported {
+                // nothing written (no data file) needs no reading either
+                _ if files.is_empty() => 0,
+                Some((n, source)) if !ctx.args.verify_counts => {
+                    if debug_counts() {
+                        eprintln!("debug: {index}: {n} records ({source:?})");
+                    }
+                    n
+                }
+                _ => {
+                    let mut scanned = 0;
+                    for f in &files {
+                        scanned += count_records(f)?;
+                    }
+                    if let Some((n, source)) = reported
+                        && n != scanned
+                    {
+                        bail!(
+                            "the data files hold {scanned} records but the searchdump run reported {n} ({source:?})"
+                        );
+                    }
+                    if debug_counts() {
+                        eprintln!("debug: {index}: {scanned} records (read back)");
+                    }
+                    scanned
+                }
+            };
             if split {
                 entry.data_parts = files.iter().map(|f| file_name(f)).collect();
             } else {
@@ -1776,7 +1946,7 @@ async fn dump_cluster(
         out.push((
             name,
             match res {
-                Ok(()) => Outcome::Done(file.display().to_string()),
+                Ok(_) => Outcome::Done(file.display().to_string()),
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             },
         ));
@@ -1823,7 +1993,7 @@ async fn load_cluster(ctx: &Ctx, cluster: &Cluster) -> Vec<(String, Outcome)> {
         out.push((
             name,
             match r {
-                Ok(()) => Outcome::Done(format!("from {}", file.display())),
+                Ok(_) => Outcome::Done(format!("from {}", file.display())),
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             },
         ));
@@ -1885,7 +2055,6 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                 let mut total = 0;
                 for (n, part) in f.data.iter().enumerate() {
                     let c = parse_data_file(&file_name(part)).map_or(Compression::None, |d| d.1);
-                    total += count_records(part)?;
                     let mut extra = strings(c.flags());
                     extra.extend(ctx.runner.data_flags.iter().cloned());
                     if f.datastream && !extra.iter().any(|a| a.starts_with("--bulkAction")) {
@@ -1899,7 +2068,7 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                     };
                     let input = part.to_string_lossy().into_owned();
                     let runner = &ctx.runner;
-                    runner
+                    let stats = runner
                         .run_as(&f.index, "data", &label, &input, &url, &extra)
                         .await
                         .with_context(|| {
@@ -1909,6 +2078,22 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
                                 String::new()
                             }
                         })?;
+                    // 1.1-7: the documents the run read (written + failed), else read the part
+                    total += match stats.docs_read() {
+                        Some(read) if !ctx.args.verify_counts => read,
+                        reported => {
+                            let scanned = count_records(part)?;
+                            if let Some(read) = reported
+                                && read != scanned
+                            {
+                                bail!(
+                                    "{} holds {scanned} records but the searchdump run read {read}",
+                                    part.display()
+                                );
+                            }
+                            scanned
+                        }
+                    };
                 }
                 records = Some(total);
                 continue;
@@ -1943,7 +2128,7 @@ async fn load_one(ctx: &Ctx, cluster: &Cluster, f: &Found) -> Outcome {
             let runner = &ctx.runner;
             let r = runner.run(&f.index, kind, &input, &url, &extra).await;
             match r {
-                Ok(()) => settings_applied |= kind == "settings",
+                Ok(_) => settings_applied |= kind == "settings",
                 Err(e) if kind == "mapping" => {
                     eprintln!(
                         "note: {target}: mapping via searchdump failed, applying it directly"
@@ -2272,14 +2457,17 @@ async fn run_local(args: Args) -> Result<i32> {
             }
         });
     }
+    let bin = find_bin(args.elasticdump_bin.as_deref());
+    let stats = takes_stats_file(&bin) && accepts_stats_file(&bin);
     let runner = Runner {
-        bin: find_bin(args.elasticdump_bin.as_deref()),
+        bin,
         log_dir: log_dir.clone(),
         common,
         data_flags,
         cancelled: cancelled.clone(),
         cancel: cancel.clone(),
         grace: CHILD_GRACE,
+        stats,
     };
     let pacer = Pacer::new(Duration::from_millis(args.interval));
     let meta = meta_dir(&args);
@@ -3274,6 +3462,7 @@ mod tests {
             cancelled: Arc::new(AtomicBool::new(false)),
             cancel: CancellationToken::new(),
             grace,
+            stats: false,
         }
     }
 
@@ -3393,5 +3582,104 @@ mod tests {
         );
         let n = ticks.load(Ordering::Relaxed);
         assert!(n >= 10, "the ticker ran {n} times in {took:?}");
+    }
+
+    /// 1.1-7: counts from `--statsFile` (searchdump's format), the log line (searchdump and Node
+    /// formats), and nothing (the caller then reads the data file).
+    #[test]
+    fn child_counts_from_stats_file_or_log_line() {
+        let s = parse_stats_file(
+            r#"{"version":1,"complete":true,"written":12345,"failed":2,"overwritten":0,"rejected":1}"#,
+        )
+        .unwrap();
+        assert_eq!(s.written, Some(12345));
+        assert_eq!(s.docs_read(), Some(12347));
+        assert_eq!(s.source, Some(CountSource::StatsFile));
+        assert!(parse_stats_file(r#"{"complete":false,"written":1}"#).is_none());
+        assert!(parse_stats_file(r#"{"written":1}"#).is_none());
+        assert!(parse_stats_file("not json").is_none());
+
+        let rust = "[2026-11-11T10:00:00Z INFO] Starting dump\nTotal Writes: 4200\nOverwritten: 3 (documents that replaced one with the same _id; included in Total Writes)\nFailed Writes: 5\ndump complete\n";
+        let s = parse_total_writes(rust).unwrap();
+        assert_eq!((s.written, s.failed), (Some(4200), 5));
+        assert_eq!(s.source, Some(CountSource::LogLine));
+        let node = "Wed, 11 Nov 2026 15:00:00 GMT | starting dump\nWed, 11 Nov 2026 15:00:01 GMT | got 100 objects from source elasticsearch (offset: 0)\nWed, 11 Nov 2026 15:00:02 GMT | Total Writes: 100\nWed, 11 Nov 2026 15:00:02 GMT | dump complete\n";
+        let s = parse_total_writes(node).unwrap();
+        assert_eq!((s.written, s.failed), (Some(100), 0));
+        // the last one counts (a log that holds an earlier summary)
+        assert_eq!(
+            parse_total_writes("Total Writes: 1\nTotal Writes: 2\n")
+                .unwrap()
+                .written,
+            Some(2)
+        );
+        assert!(parse_total_writes("dump complete\n").is_none());
+        assert!(parse_total_writes("Total Writes: n/a\n").is_none());
+
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("i.data.log");
+        let stats = d.path().join("i.data.stats.json");
+        fs::write(&log, "Total Writes: 9\n").unwrap();
+        // no stats file: the log line
+        assert_eq!(child_stats(Some(&stats), &log).written, Some(9));
+        fs::write(&stats, r#"{"complete":true,"written":10,"failed":0}"#).unwrap();
+        let s = child_stats(Some(&stats), &log);
+        assert_eq!(
+            (s.written, s.source),
+            (Some(10), Some(CountSource::StatsFile))
+        );
+        // neither: nothing reported, the caller scans
+        fs::write(&log, "something else\n").unwrap();
+        assert_eq!(child_stats(None, &log), ChildStats::default());
+        assert_eq!(
+            child_stats(None, &d.path().join("missing.log")),
+            ChildStats::default()
+        );
+    }
+
+    #[test]
+    fn stats_file_only_for_searchdump() {
+        assert!(takes_stats_file(Path::new("searchdump")));
+        assert!(takes_stats_file(Path::new("/opt/x/searchdump")));
+        assert!(!takes_stats_file(Path::new(
+            "/usr/lib/node_modules/.bin/elasticdump"
+        )));
+        #[cfg(unix)]
+        {
+            let d = tempfile::tempdir().unwrap();
+            let real = d.path().join("searchdump");
+            fs::write(&real, "").unwrap();
+            let link = d.path().join("elasticdump");
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(
+                takes_stats_file(&link),
+                "compatibility symlink to searchdump"
+            );
+        }
+    }
+
+    /// 1.1-7: the runner passes --statsFile to data runs of searchdump and returns its counts;
+    /// other runs (and a binary that is not searchdump) fall back to the log line.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runner_returns_child_counts() {
+        let d = tempfile::tempdir().unwrap();
+        let script = r#"for a in "$@"; do
+  case "$a" in
+    --statsFile=*) printf '{"complete":true,"written":7,"failed":1}' > "${a#--statsFile=}" ;;
+  esac
+done
+echo "Total Writes: 5""#;
+        let mut r = script_runner(d.path(), script, CHILD_GRACE);
+        r.stats = true;
+        let s = r.run("idx", "data", "in", "out", &[]).await.unwrap();
+        assert_eq!((s.written, s.failed), (Some(7), 1));
+        assert_eq!(s.source, Some(CountSource::StatsFile));
+        // not a data run: no --statsFile, the log line
+        let s = r.run("idx", "mapping", "in", "out", &[]).await.unwrap();
+        assert_eq!((s.written, s.source), (Some(5), Some(CountSource::LogLine)));
+        r.stats = false;
+        let s = r.run("idx", "data", "in", "out", &[]).await.unwrap();
+        assert_eq!((s.written, s.source), (Some(5), Some(CountSource::LogLine)));
     }
 }

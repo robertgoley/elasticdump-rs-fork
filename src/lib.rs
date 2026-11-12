@@ -1206,6 +1206,29 @@ async fn until_interrupted<T>(
     }
 }
 
+/// 1.1-7: `--statsFile` (hidden, for searchdump-multi): the counts of a run that finished, as
+/// one JSON object. Written under a temporary name and renamed, so a reader never sees half a
+/// file. searchdump-multi uses `written` instead of re-reading (and decompressing) the data file.
+fn write_stats_file(path: &std::path::Path, report: &pipeline::WriteReport) -> Result<()> {
+    let body = serde_json::json!({
+        "version": 1,
+        "complete": true,
+        "written": report.written,
+        "failed": report.failed,
+        "overwritten": report.overwritten,
+        "rejected": report.rejected,
+    });
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "stats".into());
+    let tmp = path.with_file_name(format!(".{name}.tmp-{}", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_vec(&body)?)
+        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))?;
+    Ok(())
+}
+
 /// Smallest accepted `--fileSize` (TST-BRK-RES-006).
 const MIN_FILE_SIZE: u64 = 256;
 
@@ -1322,6 +1345,11 @@ pub async fn run() -> Result<()> {
         }
     };
 
+    if let Some(path) = &cli.stats_file
+        && let Err(e) = write_stats_file(path, &report)
+    {
+        log::warn!("could not write --statsFile {}: {e:#}", path.display());
+    }
     if !cli.quiet() {
         let mut err = std::io::stderr().lock();
         let _ = writeln!(err, "Total Writes: {}", report.written);
@@ -1354,6 +1382,36 @@ pub async fn run() -> Result<()> {
         return Err(anyhow::Error::new(WriteFailures(report.failed)));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod stats_file_tests {
+    #[test]
+    fn stats_file_round_trip() {
+        let d = std::env::temp_dir().join(format!("edrs-stats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("idx.data.stats.json");
+        let report = crate::pipeline::WriteReport {
+            written: 12345,
+            failed: 2,
+            rejected: 1,
+            overwritten: 3,
+        };
+        super::write_stats_file(&p, &report).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(v["written"], 12345);
+        assert_eq!(v["failed"], 2);
+        assert_eq!(v["rejected"], 1);
+        assert_eq!(v["overwritten"], 3);
+        assert_eq!(v["complete"], true);
+        // replaced, not appended; no temporary file left behind
+        super::write_stats_file(&p, &crate::pipeline::WriteReport::default()).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!(v["written"], 0);
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 }
 
 #[cfg(test)]

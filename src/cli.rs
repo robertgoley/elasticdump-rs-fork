@@ -156,6 +156,11 @@ pub struct Cli {
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub quiet: Option<bool>,
 
+    /// 1.1-7 (for searchdump-multi): when the run succeeds, write its counts to this file as
+    /// JSON (`{"written":N,"failed":N,"overwritten":N,"rejected":N,"complete":true}`)
+    #[arg(long = "statsFile", hide = true)]
+    pub stats_file: Option<std::path::PathBuf>,
+
     /// Verbose logging, including every HTTP request line
     #[arg(long, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool)]
     pub debug: Option<bool>,

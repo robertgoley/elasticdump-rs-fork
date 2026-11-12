@@ -85,6 +85,18 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   crate). Tests with a fake child script: SIGTERM and SIGKILL paths, a failed child's log tail,
   16 sleeping children on a 2-thread runtime.
 
+- **searchdump-multi uses the record counts its children report (1.1-7).** A data run of
+  searchdump gets a hidden `--statsFile=<logDir>/INDEX.LABEL.stats.json` and writes
+  `{"written","failed","overwritten","rejected","complete":true}` when it succeeds (temp file +
+  rename). The dump summary and manifest `records` use that count; without it the child's last
+  `Total Writes: N` log line (searchdump and Node elasticdump formats); without both the data
+  files are read back as before (`count_records`). A load adds up each part's written + failed
+  instead of reading every part before loading it. New `--verifyCounts` always reads the files
+  back and fails the index when the reported count differs. `--statsFile` is passed only when the
+  child binary resolves to `searchdump*` (the `elasticdump`/`elasticdump-rs` compatibility
+  symlinks included; a Node `--elasticdumpBin` gets no unknown flag). `SEARCHDUMP_MULTI_DEBUG=1`
+  prints the count source. Summary and manifest formats are unchanged.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

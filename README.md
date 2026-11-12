@@ -511,7 +511,12 @@ searchdump-multi --direction=load --input=/data/logs --output=https://dst:9200 -
   settings + mapping, and one failed index never stops the others here). Node ignores analyzer and alias unless
   told otherwise, so pass `--ignoreAlias=false` to a Node load of our alias files.
 - Dump checks: the record count of each data file (or the parts together) against the source `_count` (an empty
-  file for a non-empty index fails it). `multielasticdump.json` records each index's directory, types, data file or
+  file for a non-empty index fails it). Since 1.1 the count is the one the data run reports (a hidden
+  `--statsFile` JSON that searchdump writes when it finishes, else its `Total Writes: N` log line, which Node
+  elasticdump prints too), so a large compressed dump is no longer read back and decompressed; when neither is there
+  the files are read as before. `--verifyCounts` always reads them back and fails the index if the reported count
+  differs. A load sums what each part's run read (written + failed) the same way and compares it with the target's
+  `_count`. `multielasticdump.json` records each index's directory, types, data file or
   parts, records and status, and each cluster-wide file; `--resume` skips indices already done.
 - Load (as `oslogs.py restore`): an index or data stream that already exists fails (or is skipped with
   `--skipExisting`, which also creates cluster-wide items only where missing); settings first, with `--lifecycle drop`
