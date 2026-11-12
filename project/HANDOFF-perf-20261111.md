@@ -82,3 +82,6 @@ done:
   `scripts/perf/suite.py --engines elasticsearch-secure --cases dump-zstd,restore-zstd --reps 3`
   (check `--dry-run` for exact IDs/profile name). elasticsearch-plain still needs its edge rerun
   (`--engines elasticsearch-plain --cases dump-edge,restore-edge`), documented above.
+
+## State 2026-11-11 23:10 ET
+All 16 engines done (steps/*.done). Weekly usage hit 94.2%, so STOP created. Remaining after reset (Nov 12 22:57 ET): aggregate command above, commit report, then 1.1 batch verification per ROADMAP-1.1-PLAN.md.
