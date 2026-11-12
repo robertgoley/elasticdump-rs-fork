@@ -1,13 +1,50 @@
 # Cold-start handoff: release/1.1 and the beta1 perf suite
 
-**Branch status (2026-11-12, America/New_York):** `release/1.1` is pushed
-to `origin/release/1.1` at
-https://github.com/robertgoley/searchdump-rs/tree/release/1.1.
-The tree is **UNCOMPILED / UNTESTED**. Pending fixups were autosquashed
-into their targets before the first push (tree identical to pre-squash
-`194f2f0`), so `pit.sh check`'s autosquash is a no-op unless later
-`fixup!` commits land. Push 1.1 work only to this branch. Do not merge
-to `main` or retag without Robert.
+**Branch status (2026-11-12 01:30 America/New_York):** phases 1 and 2 of
+the point-in-time batch are **done and green** on the local `release/1.1`
+(head = the commit that adds this note). That history differs from
+`origin/release/1.1` (`a93829a`) because two compile/lint fixes were folded
+in with autosquash, so it is pushed to **`origin/wip/1.1-fixups`** instead
+of force-pushing `release/1.1`. Robert decides whether `release/1.1` is
+moved to it (force push) before phase 3. Folded fixups:
+
+- `retrieval(1.1-3)` (`87e7b38` -> `87d1781`): `src/retrieval/search_body.rs`
+  missed `use sonic_rs::JsonContainerTrait;` (E0599 `as_object`). This was
+  the only `cargo check` failure.
+- `retrieval(1.1-4)` (`3d3c092` -> `aee5dfb`): clippy `type_complexity` in
+  `tests/cli_contract.rs` (slice-cap case table); a local `type Case` alias.
+
+Every later hash changed; this file and `ROADMAP-1.1-PLAN.md` carry the new
+ones. Results (Rust 1.91.1, all at the new head unless noted):
+
+| Gate | Result |
+|---|---|
+| `pit.sh check` (cargo check --all-targets --locked at every step, beta1 + 8 items) | 9/9 compile, 0 warnings |
+| `cargo fmt --check` | clean |
+| `cargo clippy --all-targets --locked -D warnings`; CI form `--workspace --lib --bins --tests --features searchdump-rs/load`; `--workspace --all-targets --features searchdump-rs/load` | clean (after the 1.1-4 fixup) |
+| `cargo test --locked --workspace` | 529 passed, 0 failed |
+| `cargo nextest run --workspace` (default = unit + contract + chaos) | 522 passed |
+| `scripts/perf` selftest | 24 OK |
+| deny, vet, machete, flake-policy, native-code, check-pins, matrix-md, hygiene, lint-workflows (actionlint+zizmor), secret-scan, third-party notices, check-clean-tree | all OK |
+| `scripts/it/run.sh opensearch-plain` / `opensearch-secure` / `es710-plain` | 90+31 / 90 / 90+31 passed, 0 failed |
+
+The es710-plain run fails `cross::file_dump_from_the_other_engine_restores_here`
+only when it runs after opensearch-plain in the same `IT_CROSS_DIR`: the
+OpenSearch ISM export is restored onto the ES 7.10 OSS build and gets the
+OSS "ILM is an X-Pack feature" refusal instead of the "ISM -> ILM" one the
+test expects. Neither `tests/it` cross code nor `src/meta` changed in 1.1, so
+this is a pre-existing test gap (CI runs each profile in its own job). With
+a fresh cross dir, es710-plain passes 90/90.
+
+Box note: the shared podman store (`~/.local/share/containers/storage`) has
+missing overlay layers after the box restore (opensearch 2.19.7 and ES 7.10
+images fail to mount). The IT runs used an isolated store via the wrapper
+`/workspace/rel11-it/bin/podman` (`--root ~/.local/share/rel11-podman`).
+`/workspace/perf-b1`, `/workspace/fix-wt` and `/workspace/node-ed` are also
+gone after the restore, so phase 4's `PIT_ENV=/workspace/perf-b1/env.sh` and
+the beta1 isolated store must be recreated before `pit.sh run`.
+
+Phases 3-5 (`pit.sh build`, `run`, `aggregate`) have **not** been started.
 
 Snapshot: originally 2026-11-11 22:28 America/New_York (ET); branch-push
 and hash refresh on 2026-11-12. Written so a new Grok Bot instance can
@@ -67,11 +104,10 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
   through `/workspace/fix-wt` with `git push origin HEAD:main` after a
   fetch and rebase.
 - Branched from `0847643` (main as of the 1.1 plan). After the 2026-11-12
-  autosquash the parent of this hash-refresh commit is `6154f6d`.
-- Nothing on this branch has been compiled or clippy'd. There is no
-  `/workspace/perf-bin-1.1`, `/workspace/perf-pit-1.1`, `/workspace/pit-src`,
-  or `/workspace/pit-target` yet. Offline Python perf self-tests and
-  formatting checks passed earlier; that is not a cargo check.
+  autosquash the parent of this hash-refresh commit is `2cb6716`.
+- Phases 1-2 passed on 2026-11-12 (see the top). `/workspace/perf-pit-1.1`
+  (check markers, logs) and `/workspace/pit-target` exist from phase 1;
+  there is no `/workspace/perf-bin-1.1` yet (phase 3 not started).
 - Owner decisions already applied: 1.0.0 is stable with no backports
   (t165u); commit the nine items without building, then one point-in-time
   batch (t166u/t167u); `--refreshInterval` default 5 s plus a final refresh
@@ -86,17 +122,17 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
 | `4cffbf4` | perf(1.1-5): blocking wait4 timer in measure.py | no (harness only; in effect for every PIT step because the harness always comes from HEAD) |
 | `04e0af0` | bulk(1.1-2): refresh only the indices written | yes (step 1) |
 | `d280836` | bulk(1.1-1): refresh every `--refreshInterval` seconds (default 5) | yes (step 2) |
-| `87e7b38` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
-| `3d3c092` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
-| `dc3a076` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
-| `27b65f4` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
-| `6fcc953` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
-| `2e3b931` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
-| `a6f93a5` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
-| `9b984d2` | docs: cold-start handoff for release/1.1 and the beta1 suite | no |
-| `5794031` | docs: draft 1.1 release notes | no |
-| `7b2f62b` | docs: README 1.1 flag notes (slices, `--verifyCounts`, release-notes link) | no |
-| `6154f6d` | docs(1.1): update commit hashes after the earlier autosquash | no |
+| `87d1781` | retrieval(1.1-3): opt-in `--scrollDocSort` | yes (step 3) |
+| `aee5dfb` | retrieval(1.1-4): cap scroll `--slices` to the shard count, `--sliceCap`, `--sliceField` | yes (step 4) |
+| `7ebd7d0` | pipeline(1.1-9): gzip/zstd on a per-part compression thread | yes (step 5) |
+| `99d5cb8` | bulk(1.1-6): encode the next bulk batch while one is in flight | yes (step 6) |
+| `0e00d92` | multi(1.1-8): tokio::process children, Ctrl-C stops running children | yes (step 7) |
+| `7910c9a` | multi(1.1-7): child-reported record counts, `--verifyCounts` | yes (step 8) |
+| `6055414` | perf(1.1): point-in-time plan, resumable `pit.sh` | no (scripts/docs) |
+| `64a8cfa` | docs: cold-start handoff for release/1.1 and the beta1 suite | no |
+| `5e2a14c` | docs: draft 1.1 release notes | no |
+| `206e1ab` | docs: README 1.1 flag notes (slices, `--verifyCounts`, release-notes link) | no |
+| `2cb6716` | docs(1.1): update commit hashes after the earlier autosquash | no |
 | (this file) | docs: refresh 1.1 hashes after the 2026-11-12 autosquash; branch is on origin/release/1.1 | no |
 
 PIT base (step 0) is tag `v1.0.0-beta1` = `94e4afb`. `pit.sh list` is the
@@ -107,8 +143,8 @@ autosquash is a no-op unless new `fixup!` commits land.
 
 ### Fixup commits and autosquash (do this before the batch)
 
-The Rust commits were written without `cargo check`. 1.1-6 (`27b65f4`) and
-1.1-8 (`6fcc953`) are the most likely to need small compile fixes. All
+The Rust commits were written without `cargo check`. 1.1-6 (`99d5cb8`) and
+1.1-8 (`0e00d92`) are the most likely to need small compile fixes. All
 fixups present at the 2026-11-12 push were already folded (including
 earlier `bf3cfa0` into 1.1-8). Concurrent workers may still add more
 `fixup!` commits on this branch.

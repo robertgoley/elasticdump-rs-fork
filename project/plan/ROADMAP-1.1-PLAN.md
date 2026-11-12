@@ -13,16 +13,16 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same w
 | Step | Item | Status |
 |---|---|---|
 | 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measure pending |
-| 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
-| 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed, not yet compiled (suite running); A/B pending |
-| 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed, not yet compiled (suite running); nodecmp + A/B pending |
-| 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 6 | 1.1-9 compression thread | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 7 | 1.1-6 encode overlap | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 8 | 1.1-8 tokio::process | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
-| 9 | 1.1-7 child counts | in progress (release/1.1): committed, not yet compiled; point-in-time perf pending |
+| 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); A/B pending |
+| 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); A/B pending |
+| 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); nodecmp + A/B pending |
+| 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
+| 6 | 1.1-9 compression thread | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
+| 7 | 1.1-6 encode overlap | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
+| 8 | 1.1-8 tokio::process | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
+| 9 | 1.1-7 child counts | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
 
-"In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).
+"In progress" means committed on `release/1.1` but not yet A/B measured. Compile (`pit.sh check`) and HEAD tests/clippy/selftest passed on 2026-11-12 after two folded fixups (see `project/HANDOFF-1.1.md`).
 
 ## Point-in-time test plan (all nine steps, one batch)
 
@@ -41,12 +41,12 @@ commits are skipped, and the 1.1-5 timer is in effect for every step because the
 | 0 | beta1 | `94e4afb` | `grokbox-beta1-timer2` | reference (also measures Node) |
 | 1 | 1.1-2 | `04e0af0` | `grokbox-1.1-04e0af0` | no change in the suite (its cases name an output index; refresh targets only matter without one) |
 | 2 | 1.1-1 | `d280836` | `grokbox-1.1-d280836` | large win on `restore-*`, `restore-split-*`, `copy`, `multi-restore-p*`; `restore-norefresh`/`copy-norefresh` unchanged |
-| 3 | 1.1-3 | `87e7b38` | `grokbox-1.1-87e7b38` | no change (opt-in flag): a noise check |
-| 4 | 1.1-4 | `3d3c092` | `grokbox-1.1-3d3c092` | `dump-scroll-s2/s4/s8` drop to about `dump-scroll-s1` (1-shard index, now unsliced); `dump-pit-s*` unchanged |
-| 5 | 1.1-9 | `dc3a076` | `grokbox-1.1-dc3a076` | small win on `dump-gzip`, `dump-zstd`, `dump-split-gzip`, `dump-split-zstd` (wall; CPU moves to a thread) |
-| 6 | 1.1-6 | `27b65f4` | `grokbox-1.1-27b65f4` | 10-20 % on `restore-none/gzip/zstd`, `copy` (`--concurrency 1`); nothing else |
-| 7 | 1.1-8 | `6fcc953` | `grokbox-1.1-6fcc953` | `multi-*-p1/p4/p8`: no regression, p8 may scale better |
-| 8 | 1.1-7 | `2e3b931` | `grokbox-1.1-2e3b931` | `multi-dump-p*` a little faster (no read-back); same records in the manifest |
+| 3 | 1.1-3 | `87d1781` | `grokbox-1.1-87d1781` | no change (opt-in flag): a noise check |
+| 4 | 1.1-4 | `aee5dfb` | `grokbox-1.1-aee5dfb` | `dump-scroll-s2/s4/s8` drop to about `dump-scroll-s1` (1-shard index, now unsliced); `dump-pit-s*` unchanged |
+| 5 | 1.1-9 | `7ebd7d0` | `grokbox-1.1-7ebd7d0` | small win on `dump-gzip`, `dump-zstd`, `dump-split-gzip`, `dump-split-zstd` (wall; CPU moves to a thread) |
+| 6 | 1.1-6 | `99d5cb8` | `grokbox-1.1-99d5cb8` | 10-20 % on `restore-none/gzip/zstd`, `copy` (`--concurrency 1`); nothing else |
+| 7 | 1.1-8 | `0e00d92` | `grokbox-1.1-0e00d92` | `multi-*-p1/p4/p8`: no regression, p8 may scale better |
+| 8 | 1.1-7 | `7910c9a` | `grokbox-1.1-7910c9a` | `multi-dump-p*` a little faster (no read-back); same records in the manifest |
 
 Hashes change if fixups are folded in; `pit.sh list` always prints the current ones.
 
