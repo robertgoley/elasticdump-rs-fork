@@ -373,5 +373,33 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(json.loads(p.stdout)['engine_order'], ['os2-plain'])
 
 
+    def test_pit_table_step_by_step(self):
+        """pit_table.py: one column per step, change vs the previous step, noise-aware bold."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            steps = [('0', 'beta1', 'aaaa', 'a' * 40, 'h-beta1-timer2', 'base'),
+                     ('1', '1.1-2', 'bbbb', 'b' * 40, 'h-1.1-bbbb', 'bulk(1.1-2): x'),
+                     ('2', '1.1-1', 'cccc', 'c' * 40, 'h-1.1-cccc', 'bulk(1.1-1): y')]
+            (t / 'steps.tsv').write_text(''.join('\t'.join(r) + '\n' for r in steps))
+            walls = {'aaaa': (1.0, 2.0), 'bbbb': (0.99, 1.0), 'cccc': (0.98, 0.5)}
+            for short, (dump, restore) in walls.items():
+                res = t / f'res-{short}'
+                res.mkdir()
+                cases = [dict(case='dump-none', rs=dict(wall_s=dump, wall_cv_pct=1.0)),
+                         dict(case='restore-none', rs=dict(wall_s=restore, wall_cv_pct=1.0),
+                              node=dict(wall_s=4.0) if short == 'aaaa' else None)]
+                (res / 'combined.json').write_text(json.dumps(dict(engines=[dict(
+                    engine='os3-plain', engine_version='3.0.0', failures=[], summary=cases)])))
+                (t / 'runs' / short).mkdir(parents=True)
+                (t / 'runs' / short / 'os3-plain.done').write_text(f'rc=0 dir={res} harness=hhh\n')
+            p = subprocess.run([sys.executable, str(S.HERE / 'pit_table.py'), '--state', str(t),
+                                '--engines', 'os3-plain es710-plain'], capture_output=True, text=True, check=True)
+        out = p.stdout
+        self.assertIn('| restore-none | 4.000 | 2.000 | 1.000 (**-50%**) | 0.500 (**-50%**) | **-75%** |', out)
+        self.assertIn('| dump-none | — | 1.000 | 0.990 (-1%) | 0.980 (-1%) | -2% |', out)
+        self.assertIn('No finished runs yet.', out)  # es710-plain
+        self.assertIn('| 1.1-1 | `cccc` | os3-plain | 0.495 | 1 | 0 | 2 |', out)
+
 if __name__ == '__main__':
     unittest.main()

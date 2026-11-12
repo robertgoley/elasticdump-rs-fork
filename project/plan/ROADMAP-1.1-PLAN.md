@@ -24,14 +24,67 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same w
 
 "In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).
 
-Still to verify for steps 1-4 once the beta1 suite has finished (no `run-all.sh`, all 16 `steps/*.done`):
+## Point-in-time test plan (all nine steps, one batch)
 
-1. Build and test, niced, in `/workspace/rel-1.1` with `CARGO_TARGET_DIR=/workspace/rel-1.1/target`: `cargo build --release`, `cargo test` (unit, `cli_contract`, `golden_replay`), `cargo clippy --all-targets`. Fix compile or test errors in the item's own commit (fixup) before measuring.
-2. `scripts/perf/selftest.py` (full offline run).
-3. beta1@timer2: re-measure `/workspace/perf-bin-beta1` with the new harness on `es710-plain`, `es819-plain`, `os3-plain` (`PERF_HOST_ID=grokbox-beta1-timer2`, `PERF_AB_CASES=1`, `--reps 3`).
-4. B run: the release build of `release/1.1` on the same trio (`PERF_HOST_ID=grokbox-1.1-refresh`, `PERF_AB_CASES=1`). Compare `restore-*`, `copy`, `restore-split-*`, `restore-norefresh`, `copy-norefresh`, `multi-restore-p*` (refresh) and `dump-*` (unchanged without `--scrollDocSort`).
-5. 1.1-3: a `--scrollDocSort` A/B on `dump-none`/`dump-big` (manual or a temporary case) and `scripts/load/nodecmp.py` on `dump-none` to confirm that `_score: null` and the absent `sort` are the only differences with the flag, and none without it.
-6. Golden cases with the new default: re-record with `scripts/golden/record.sh <profile> --check` on at least one engine to confirm `data-restore`/`bulk-gzip` (`--refreshInterval=0`) still match live traffic.
+Owner decision (t166u/t167u): the 1.1 steps were committed without building; they are compiled, tested and measured
+together afterwards, one build per commit, so each step's effect can be read off against the one before it.
+Start only when the beta1 suite has finished (`pgrep -f run-all.sh` empty, all 16 `steps/*.done`). Everything runs
+niced from `/workspace/rel-1.1` at the head of `release/1.1`; nothing touches `fix-wt`, `perf-b1` or
+`perf-bin-beta1`.
+
+Steps (`scripts/perf/pit.sh list`): v1.0.0-beta1 and every later commit that changes Rust code (`src`, `tools`,
+`Cargo.toml`, `Cargo.lock`). Since beta1 only the 1.1 commits do; `4cffbf4` (1.1-5, harness only) and the plan/docs
+commits are skipped, and the 1.1-5 timer is in effect for every step because the harness always comes from the head.
+
+| # | Step | Commit | `PERF_HOST_ID` | Expect against the previous step |
+|---|---|---|---|---|
+| 0 | beta1 | `94e4afb` | `grokbox-beta1-timer2` | reference (also measures Node) |
+| 1 | 1.1-2 | `37009fc` | `grokbox-1.1-37009fc` | no change in the suite (its cases name an output index; refresh targets only matter without one) |
+| 2 | 1.1-1 | `4adcd53` | `grokbox-1.1-4adcd53` | large win on `restore-*`, `restore-split-*`, `copy`, `multi-restore-p*`; `restore-norefresh`/`copy-norefresh` unchanged |
+| 3 | 1.1-3 | `42b3f94` | `grokbox-1.1-42b3f94` | no change (opt-in flag): a noise check |
+| 4 | 1.1-4 | `1d21d14` | `grokbox-1.1-1d21d14` | `dump-scroll-s2/s4/s8` drop to about `dump-scroll-s1` (1-shard index, now unsliced); `dump-pit-s*` unchanged |
+| 5 | 1.1-9 | `beb8c18` | `grokbox-1.1-beb8c18` | small win on `dump-gzip`, `dump-zstd`, `dump-split-gzip`, `dump-split-zstd` (wall; CPU moves to a thread) |
+| 6 | 1.1-6 | `81efee8` | `grokbox-1.1-81efee8` | 10-20 % on `restore-none/gzip/zstd`, `copy` (`--concurrency 1`); nothing else |
+| 7 | 1.1-8 | `08ae175` | `grokbox-1.1-08ae175` | `multi-*-p1/p4/p8`: no regression, p8 may scale better |
+| 8 | 1.1-7 | `7b19898` | `grokbox-1.1-7b19898` | `multi-dump-p*` a little faster (no read-back); same records in the manifest |
+
+Hashes change if fixups are folded in; `pit.sh list` always prints the current ones.
+
+Phases (each resumable; markers under `PIT_STATE`, default `/workspace/perf-pit-1.1`):
+
+1. Compile every step: `scripts/perf/pit.sh check` (`cargo check --all-targets --locked` per commit in a temporary
+   worktree, shared `CARGO_TARGET_DIR=/workspace/pit-target`). A step that does not compile gets a
+   `git commit --fixup=<hash>` on the head, then `git rebase -i --autosquash v1.0.0-beta1` (local branch, never
+   pushed) so that every commit builds; rerun `check`. About 25 min (first step ~8 min, then 1-2 min each).
+2. Tests at the head, niced, `CARGO_TARGET_DIR=/workspace/rel-1.1/target`: `cargo test` (unit, `cli_contract`,
+   `golden_replay`, `chaos_brk`), `cargo clippy --all-targets -- -D warnings`, `python3 -m unittest selftest` in
+   `scripts/perf`. Fixes again as fixups folded into their item's commit. About 30-40 min.
+3. Release binaries: `scripts/perf/pit.sh build` -> `/workspace/perf-bin-1.1/<shorthash>/` (searchdump,
+   searchdump-multi, edgen, edverify, plus `.complete` with the commit and sha256s). Release profile (LTO), as
+   shipped: about 10 min per step at `-j2`, ~1.5 h for nine. (`PIT_PROFILE=it` halves it but is not the shipped
+   profile; then build all nine with it.)
+4. Measure: `PIT_ENV=<copy of the beta1 driver's env file> PIT_REAP_CONMON=... PIT_REAP_PASTA=... scripts/perf/pit.sh run`.
+   Engines `es710-plain es819-plain os3-plain`, `--tier L0 --place box --reps 3`, `PERF_AB_CASES=1`, a baseline
+   directory with no files (`results/perf/pit-baselines`, so no identity checks against older baselines). Engine
+   by engine, all nine steps back to back, so neighbouring steps share box conditions. Node is measured only at
+   step 0 (`PIT_NODE=base`). Time per engine run from the beta1 suite: ~17-18 min with Node, ~12-13 min without
+   (Node is ~90 s of the ~160 s per rep). Total: 3 x 18 min + 24 x 12.5 min = about 6 h.
+5. Report: `scripts/perf/pit.sh aggregate` -> `PIT_STATE/pit-report.md`: per engine, one row per case and one column
+   per step (searchdump wall median and the change against the previous step, bold beyond max(5 %, 2 x CV)), Node at
+   step 0 for reference, and a per-step summary (geometric-mean ratio against beta1; cases faster/slower beyond noise).
+
+End to end about 8.5 h of box time (phases 1-3 about 2.5 h, phase 4 about 6 h). Cheaper variants: `PIT_REPS=2`
+(about -1.5 h), or two engines (about -2 h).
+
+Item checks that the suite does not cover, after phase 2:
+
+* 1.1-3: a `--scrollDocSort` A/B on `dump-none`/`dump-big` (manual) and `scripts/load/nodecmp.py` on `dump-none`:
+  `_score: null` and no `sort` are the only differences with the flag, none without it.
+* Golden cases with the new refresh default: `scripts/golden/record.sh <profile> --check` on one engine
+  (`data-restore`/`bulk-gzip` pass `--refreshInterval=0`).
+* 1.1-4: the live IT tests that slice on purpose pass `--sliceCap=false`; run `tests/it` api/data/smoke on one engine.
+* 1.1-8: a manual Ctrl-C of `searchdump-multi --parallel 4` mid-restore: children named as stopped, exit 130.
+* 1.1-7: `searchdump-multi` dump with `--verifyCounts` on the many-index dataset: no count mismatch.
 
 ## 0. Gate: the beta1 baseline comes first
 

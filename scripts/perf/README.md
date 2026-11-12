@@ -260,6 +260,24 @@ manifest is part of the baseline identity; `PERF_AB_CASES=1` appends them, so ru
 their own `PERF_HOST_ID` (for example `grokbox-1.1-1.1-1`), never against the v1.0.0-beta1
 baseline files.
 
+Since 1.1-4 a scroll dump lowers `--slices` to the primary-shard count of its input (with a
+warning). The `logs` index has one shard, so `dump-scroll-s2/s4/s8` run unsliced with a 1.1
+build and measure about what `dump-scroll-s1` does; a beta1 build still slices them. The cases
+keep their names and flags so the manifest (and the identity) stays the same; the PIT report
+shows the step at 1.1-4. `dump-pit-s*` are not capped.
+
+### Point-in-time runs (`pit.sh`)
+
+`scripts/perf/pit.sh` builds `v1.0.0-beta1` and every later commit that changes Rust code into
+`/workspace/perf-bin-1.1/<shorthash>/` and runs the suite (`--tier L0 --place box`, three engines,
+`PIT_REPS` reps, `PERF_AB_CASES=1`) once per build with `PERF_HOST_ID=grokbox-1.1-<shorthash>`
+(beta1: `grokbox-beta1-timer2`), always with this checkout's harness. Subcommands `list`,
+`check`, `build`, `run`, `aggregate` and `all` are each resumable through markers in
+`PIT_STATE`; `aggregate` runs `pit_table.py`, which writes the step-by-step table (one column per
+build, change against the previous build, noise-aware) to `PIT_STATE/pit-report.md`. See the
+header of `pit.sh` for its environment variables and `project/plan/ROADMAP-1.1-PLAN.md` for the
+plan and time estimates.
+
 Multi cases time each whole parent's run and all its children. Both get
 `--includeType=data --interval=0 --parallel=P --limit=2000 --concurrency=1`.
 Rust additionally uses `--nodeCompat --compression=none --noDefaultDataFlags`, placing
