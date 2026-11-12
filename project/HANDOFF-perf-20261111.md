@@ -68,3 +68,17 @@ done:
   seed_index now deletes a stale index first. Test: scripts/load/test_seed.py.
 - Rerun: elasticsearch-plain needs a rerun (edge cases only matter; `--cases`/engine rerun when the driver
   is idle). Do not rerun while run-all.sh is running. elasticsearch-secure may hit the same stall.
+
+## elasticsearch-secure (ES 9.1.2 TLS) dump-zstd/rs/rep0 FAIL (2026-11-11) — harness stall, not a searchdump bug
+- Result dir 20261111T192136-2562801. The FAIL is `edverify diff` exit **2** (an error), not exit 1 (document
+  sets differ): no `verify-dump-zstd-rs-0.json` report was ever written.
+- The searchdump run itself was clean: exit 0, 100000 docs / 100000 writes, 0.70 s, 12687663 bytes (same
+  size class as the later split run, ref-zstd verified equal, restore-zstd reps 0-2 verified equal 100000 docs,
+  digest b197478d...). Timing: dump finished 19:26:08, the next step began 19:32:48 -> ~6.5 min gap = one
+  300 s edverify scroll/HTTP timeout (plus retry) against the ES 9.1.2 secure node; same 300 s stall class as the
+  elasticsearch-plain edge seed timeout above. The output file was overwritten by dump-split-zstd, so it cannot be
+  re-diffed after the fact.
+- Targeted rerun when the driver (run-all.sh) is idle:
+  `scripts/perf/suite.py --engines elasticsearch-secure --cases dump-zstd,restore-zstd --reps 3`
+  (check `--dry-run` for exact IDs/profile name). elasticsearch-plain still needs its edge rerun
+  (`--engines elasticsearch-plain --cases dump-edge,restore-edge`), documented above.
