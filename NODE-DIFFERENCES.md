@@ -86,7 +86,9 @@ file -> engine -> file because it parses and re-serialises them. Most changes ar
 These 1.1 roadmap items change only searchdump internals or searchdump-only extensions; Node elasticdump has no
 equivalent, so there is no compatibility difference to record in the table above.
 
-* **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.
+* **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices. The version-aware
+  `--sliceCap=auto` default (total primary shards on Elasticsearch 7.11–9.4, the smallest count elsewhere) only adds a
+  `GET /` request for multi-index sliced scroll dumps, which Node cannot run.
 * **1.1-9 compression thread**: internal; the gzip bytes are identical, and zstd is a searchdump extension.
 * **1.1-6 encode/send overlap**: same requests in the same order as Node at `--concurrency 1`; only the client-side timing changes.
 * **1.1-8 searchdump-multi Ctrl-C**: Node `multielasticdump` forks children too; how they are stopped on Ctrl-C is not part of the dump format or CLI (README "Bulk dump and load").

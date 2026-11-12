@@ -7,106 +7,151 @@ GitHub release.
 
 ## Unreleased (1.1)
 
-Work in progress on the local `release/1.1` branch (roadmap: `FEATURES-TODO.md`, "Roadmap: 1.1
-release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B measured.
+Draft on the local `release/1.1` branch (roadmap: `FEATURES-TODO.md`, "Roadmap: 1.1
+release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not tagged and not yet
+performance-measured. The user-facing notes, including the upgrade guide, are in
+[`project/release/RELEASE-NOTES-1.1.md`](project/release/RELEASE-NOTES-1.1.md).
+
+### Disclaimer
+
+searchdump-rs is provided "as is", without warranty of any kind, as stated in the MIT license
+(the same warranty disclaimer as the elasticdump-rs code it derives from; Node elasticdump,
+whose behaviour it follows, has the equivalent disclaimer in Apache-2.0, sections 7 and 8).
+The authors are not liable for any damage from its use, including data loss, corruption,
+downtime or service disruption, in production or elsewhere. It has been stable and fast in
+our testing, but no test suite covers every cluster version, configuration, plugin and
+storage backend. Test in a non-production environment first, and verify every backup and
+restore yourself (restore it, compare document counts) before you rely on it. See
+[Disclaimer](README.md#disclaimer).
+
+### Added
+
+- **`--refreshInterval=<seconds>`** (default `5`). Refresh written indices at most this often
+  while writing, plus once at the end of the run. Accepts seconds, optional decimals, and an
+  optional trailing `s` (`0` to `86400`). `0` restores a refresh after every batch.
+- **`--scrollDocSort`** (opt-in, default off). Adds `"sort":["_doc"]` to an unscored scroll
+  body that has no user sort.
+- **`--sliceCap=auto|min|total|false`** (default `auto`; `true` is an alias of `auto`) and
+  **`--sliceField=<field>`**. A scroll dump caps `--slices` to the primary-shard count unless
+  `--sliceCap=false`; `auto` uses the total count on Elasticsearch 7.11-9.4 and the smallest
+  count on Elasticsearch 5.0-7.10, 9.5+, OpenSearch and undetectable versions. `--sliceField`
+  slices on a numeric or date field with doc values.
+- **`searchdump-multi --verifyCounts`**. Always re-read dumped or loaded data and fail the
+  index when the child's reported record count differs.
 
 ### Changed
 
-- **Perf harness timer (1.1-5).** `scripts/load/measure.py` now blocks in `wait4` and samples
-  `/proc` on a side thread, instead of polling `wait4` every 0.1 s. Wall times are no longer
-  rounded up to the next ~0.1 s tick, so short cases (mapping, settings, small dumps) get
-  meaningful ratios. Results carry `"timer": "blocking-wait4"`; beta1 numbers measured with the
-  old harness are re-measured before any 1.1 A/B comparison. Binaries are unchanged.
+- **Refresh cadence (1.1-1).** The writer used to refresh the target after every bulk batch, as
+  Node elasticdump does. It now refreshes the indices it wrote at most every 5 seconds (the
+  clock starts at the first finished batch) and always once at the end of the run, including
+  the `--concurrency 1` path, which before relied on the last batch's refresh.
+  `--refreshInterval=0` restores the per-batch refresh (Node-identical request pattern);
+  `--noRefresh` still sends no refresh and wins over `--refreshInterval`. After the run the
+  same documents are visible; only readers watching *during* a restore see them up to the
+  interval later. NODE-DIFFERENCES.md #26.
 
-- **Refresh cadence (1.1-1), new flag `--refreshInterval=<seconds>` (default `5`).** The writer
-  used to refresh the target after every bulk batch, as Node elasticdump does; at L0 a single
-  restore spent most of its wall time waiting for those refreshes. It now refreshes the indices
-  it wrote at most every 5 s while writing (the clock starts at the first finished batch) and
-  always once at the end of the run, including the `--concurrency 1` path, which before relied on
-  the last batch's refresh. `--refreshInterval=0` restores the per-batch refresh (Node-identical
-  request pattern); `--noRefresh` still sends no refresh and wins over `--refreshInterval`.
-  Node compatibility: Node refreshes after every batch (`_data.js` `reindex()` after each
-  write); this is a deliberate difference. After the run the same documents are visible; only
-  readers watching *during* a restore see them up to the interval later. The goldens
-  `data-restore` and `bulk-gzip` now run with `--refreshInterval=0` to keep their recorded
-  per-batch refresh. NODE-DIFFERENCES.md #26. Perf suite: opt-in A/B cases `restore-norefresh`
-  and `copy-norefresh` (`PERF_AB_CASES=1`; the default case manifest and so the baseline
-  identity are unchanged).
+- **`_doc` sort for scroll dumps (1.1-3).** `--scrollDocSort` adds `"sort":["_doc"]` to a
+  scroll body with no `sort` and a `match_all`/`match_none` query (or none). It is skipped,
+  with an info log, for PIT, `--searchAfter`, `--scrollId`, `--searchWithTemplate`, a user
+  sort, scoring queries and `track_scores`/`min_score`/`rescore`. The injected `sort` member
+  is stripped from written hits; `"_score": null` remains. Default off: without the flag,
+  requests and dump lines are unchanged. Node sets `sort: ['_doc']` on its request options
+  object, not the body, so it never actually sends the sort and writes `"_score": 1`.
+  NODE-DIFFERENCES.md #27.
 
-- **`_doc` sort for scroll dumps (1.1-3), new opt-in flag `--scrollDocSort` (default off).**
-  Adds `"sort":["_doc"]` (the cheapest scroll order) to a scroll body with no `sort` and a
-  `match_all`/`match_none` query; skipped with an info log for PIT, `--searchAfter`, `--scrollId`,
-  `--searchWithTemplate`, a user sort, scoring queries and `track_scores`/`min_score`/`rescore`.
-  The injected `sort` member is stripped from written hits; `"_score": null` remains. Node
-  compatibility: Node sets `sort: ['_doc']` on its request options object, not the body
-  (`_data.js:115`), so it never actually sends the sort and writes `"_score": 1`; that is why the
-  flag is opt-in and, without it, requests and dump lines are unchanged. NODE-DIFFERENCES.md #27.
-
-- **Scroll slices capped to the shard count (1.1-4), new flags `--sliceCap` (default `true`) and
-  `--sliceField=<field>`.** A sliced scroll with more slices than primary shards makes the engine
-  filter every document of a shard per extra slice (ES 7.10, one shard: 2 slices 2.1-2.2 s vs
-  0.8-0.9 s unsliced). A scroll dump now reads `index.number_of_shards` of the input indices and
-  lowers `--slices` to the smallest count with a warning (one shard: unsliced). `--sliceCap=false`
-  keeps the requested number. `--sliceField` adds `"field"` to every slice (numeric/date field
-  with doc values, checked with `GET /<index>/_mapping/field/<field>`; a missing, non-numeric or
-  doc-values-less field is an error before the first search) and disables the cap. PIT is not
-  capped. When the settings or mapping cannot be read, a warning is printed and the flags are
-  used as given. The live IT tests that exercise slicing on purpose pass `--sliceCap=false`.
-  Node compatibility: none (Node has no slicing). Perf note: `dump-scroll-s2/s4/s8` on the
-  one-shard perf index now run unsliced.
+- **Scroll slices capped to the shard count (1.1-4).** A sliced scroll with more slices than
+  primary shards makes the engine filter every document of a shard per extra slice, which can
+  be slower than an unsliced scroll. A scroll dump now reads `index.number_of_shards` of the
+  input indices and lowers `--slices` to it with a warning (one shard: unsliced). The count is
+  version-aware (`--sliceCap=auto`, default): Elasticsearch 7.11-9.4 assign slices across all
+  shards of the request (elastic/elasticsearch#65706), so the total primary-shard count is the
+  limit; Elasticsearch 5.0-7.10 and OpenSearch assign them per index, and Elasticsearch 9.5+
+  scroll filters per shard again (elastic/elasticsearch#148664), so the smallest count is the
+  limit there and when the version cannot be detected. The version (`GET /`) is only read when
+  the input names several indices. `--sliceCap=min` / `total` force one count;
+  `--sliceCap=false` keeps the requested number. `--sliceField` adds `"field"` to
+  every slice (numeric/date field with doc values, checked with
+  `GET /<index>/_mapping/field/<field>`; a missing, non-numeric or doc-values-less field is
+  an error before the first search) and disables the cap. PIT is not capped. When the
+  settings or mapping cannot be read, a warning is printed and the flags are used as given.
+  Node has no slicing.
 
 - **Compression runs on its own thread (1.1-9).** A compressed file output (`--fsCompress`,
-  `--compressionType gzip|zstd`, split parts too) now feeds each part's encoder on a dedicated
-  `searchdump-compress` thread through a 2-deep queue, so gzip/zstd no longer stalls the writer
-  between batches. Input and output buffers are recycled (no allocation per 256 KiB drain). The
-  compressed bytes are identical to 1.0 (same encoder, same input, same order; checked byte for
-  byte against the inline encoder, including a proptest over chunk sizes). An encoder error
-  surfaces on the next write, flush or seal; dropping a part (cancel, abort, error) stops its
-  thread. The memory estimate counts 3 extra batches for compressed output. No flag. zstd
-  multithreading (`zstdmt`) is not used.
+  `--compressionType gzip|zstd`, split parts too) now feeds each part's encoder on a
+  dedicated `searchdump-compress` thread, so gzip/zstd no longer stall the writer between
+  batches. The compressed bytes are identical to 1.0. An encoder error surfaces on the next
+  write, flush or seal; dropping a part (cancel, abort, error) stops its thread. The memory
+  estimate counts 3 extra batches for compressed output. No flag.
 
-- **Bulk encode/send overlap at `--concurrency 1` (1.1-6).** A batch is now validated and encoded
-  while the previous one is in flight, then sent once that send has finished (written, retried
-  or reported). Sends never overlap, so the requests and their order are unchanged; an error in
-  batch N means batch N+1 is never sent; an encoding stop in N+1 is reported after N finished, with
-  N counted. A run that ends with an error (e.g. a failing search) finishes the one batch in flight
-  before exiting, as the sequential writer did. `SEARCHDUMP_BULK_PIPELINE=0` turns it off (A/B
-  switch, not a CLI flag). `process_batch` is split into `encode_batch` (CPU) and `send_batch`
-  (network), shared with `--concurrency N > 1`. The version-conflict (409) and data-stream hints
-  are now shared by all workers, so they are printed once per run also with `--concurrency N > 1`
+- **Bulk encode/send overlap at `--concurrency 1` (1.1-6).** A batch is now validated and
+  encoded while the previous one is in flight, then sent once that send has finished
+  (written, retried or reported). Sends never overlap, so the requests and their order are
+  unchanged; an error in batch N means batch N+1 is never sent. A run that ends with an
+  error finishes the one batch in flight before exiting. `SEARCHDUMP_BULK_PIPELINE=0` turns
+  it off (A/B switch, not a CLI flag). The version-conflict (409) and data-stream hints are
+  now shared by all workers, so they are printed once per run also with `--concurrency N > 1`
   (they were printed once per batch there). The memory estimate counts 2 extra batches.
 
-- **searchdump-multi runs its children with `tokio::process` (1.1-8).** Child `searchdump`
-  processes are awaited asynchronously (`kill_on_drop`), so `--parallel N` no longer holds N
-  runtime threads in `block_in_place`. Ctrl-C now stops running children: SIGTERM first (through
-  `kill(1)`, the binary forbids unsafe code), SIGKILL after 5 s, and each stopped child is named
-  with its log (`interrupted: stopped searchdump --type=data for INDEX (...)`); before, running
-  children were left to finish. Exit status 130 as before. Adds tokio's `process` feature (no new
-  crate). Tests with a fake child script: SIGTERM and SIGKILL paths, a failed child's log tail,
-  16 sleeping children on a 2-thread runtime.
+- **searchdump-multi runs its children asynchronously (1.1-8).** Child `searchdump` processes
+  are awaited without holding a runtime thread per child. Ctrl-C now stops running children:
+  SIGTERM first, SIGKILL after 5 s, and each stopped child is named with its log
+  (`interrupted: stopped searchdump --type=data for INDEX (...)`); before, running children
+  were left to finish. Exit status 130 is unchanged.
 
 - **searchdump-multi uses the record counts its children report (1.1-7).** A data run of
-  searchdump gets a hidden `--statsFile=<logDir>/INDEX.LABEL.stats.json` and writes
-  `{"written","failed","overwritten","rejected","complete":true}` when it succeeds (temp file +
-  rename). The dump summary and manifest `records` use that count; without it the child's last
-  `Total Writes: N` log line (searchdump and Node elasticdump formats); without both the data
-  files are read back as before (`count_records`). A load adds up each part's written + failed
-  instead of reading every part before loading it. New `--verifyCounts` always reads the files
-  back and fails the index when the reported count differs. `--statsFile` is passed only when the
-  child binary resolves to `searchdump*` (the `elasticdump`/`elasticdump-rs` compatibility
-  symlinks included; a Node `--elasticdumpBin` gets no unknown flag). `SEARCHDUMP_MULTI_DEBUG=1`
-  prints the count source. Summary and manifest formats are unchanged.
+  searchdump gets a hidden `--statsFile` and writes written/failed/overwritten/rejected
+  counts when it succeeds. The dump summary and manifest `records` use that count; without
+  it, the child's last `Total Writes: N` log line (searchdump and Node elasticdump formats);
+  without both, the data files are read back as before. A load adds up each part's written +
+  failed instead of reading every part before loading it. `--verifyCounts` always reads the
+  files back and fails the index when the reported count differs. `--statsFile` is passed
+  only when the child binary resolves to `searchdump*` (compatibility symlinks included; a
+  Node `--elasticdumpBin` gets no unknown flag). `SEARCHDUMP_MULTI_DEBUG=1` prints the count
+  source. Summary and manifest formats are unchanged.
+
+- **Perf harness timer (1.1-5).** `scripts/load/measure.py` now blocks in `wait4` and samples
+  `/proc` on a side thread, instead of polling `wait4` every 0.1 s. Wall times are no longer
+  rounded up to the next ~0.1 s tick. Results carry `"timer": "blocking-wait4"`; 1.0.0-beta1
+  numbers measured with the old harness are re-measured before any 1.1 comparison. Binaries
+  are unchanged.
 
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their
   `_index`) used to send `POST /_refresh`, refreshing every index in the cluster after every
   batch. It now refreshes only the indices the run wrote (after `--prefix`/`--suffix`/rename),
-  as `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true`, split so each URL stays
-  under ~3 KB, and sends nothing when nothing was written. With an output index the request is
-  unchanged. Node compatibility: Node elasticdump refreshes the whole cluster after every batch
-  in this case (`_data.js` `reindex()` posts `${base.url}/_refresh`); this is a deliberate
+  as `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true`, split so each URL
+  stays under ~3 KB, and sends nothing when nothing was written. With an output index the
+  request is unchanged. Node elasticdump refreshes the whole cluster after every batch in
+  this case (`_data.js` `reindex()` posts `${base.url}/_refresh`); this is a deliberate
   difference. The data visible after the run is the same. NODE-DIFFERENCES.md #25.
+
+### Upgrade notes
+
+- **Refresh default.** Scripts that need documents to become searchable after every batch
+  should pass `--refreshInterval=0`. `--noRefresh` is unchanged and wins over
+  `--refreshInterval`.
+- **Scroll `--slices`.** A value higher than the primary-shard count is now lowered, with a
+  warning (on a multi-index dump, the smallest or the total count depending on the engine
+  version; see README "Tuning"). Pass `--sliceCap=false` to keep the requested number, or
+  `--sliceCap=min|total` to choose the count. PIT is not capped.
+- **Dump lines.** Unchanged unless `--scrollDocSort` is set (then `"_score": null`, and the
+  returned `sort` member is not written). Leave the flag off to stay identical to 1.0 and
+  Node.
+- **searchdump-multi Ctrl-C.** Running children are now stopped (SIGTERM, then SIGKILL after
+  5 s). Previously they were left to finish.
+- **searchdump-multi counts.** Manifest and summary formats are unchanged. Pass
+  `--verifyCounts` to keep the old always-rescan check and fail the index on a mismatch.
+- **Compatibility.** Dump files, `multielasticdump.json`, `SEARCHDUMP_*` / `ELASTICDUMP_*`
+  names, and the `elasticdump` / `elasticdump-rs` / `multielasticdump` symlinks are
+  unchanged. These changes are for 1.1 only; they are not backported to 1.0.
+
+### Performance
+
+Point-in-time results comparing 1.0.0-beta1 (re-measured with the 1.1 timer) and each 1.1
+commit are not in yet. They will be added here and in
+[`project/release/RELEASE-NOTES-1.1.md`](project/release/RELEASE-NOTES-1.1.md) when that run
+finishes.
 
 ## 1.0.0-beta1
 
