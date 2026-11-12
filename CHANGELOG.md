@@ -5,6 +5,19 @@ a version with a hyphen (`1.0.0-beta1`) is a pre-release. The release workflow
 (`.github/workflows/release.yml`) uses the section for a version as the release notes of its draft
 GitHub release.
 
+## Unreleased (1.1)
+
+Work in progress on the local `release/1.1` branch (roadmap: `FEATURES-TODO.md`, "Roadmap: 1.1
+release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B measured.
+
+### Changed
+
+- **Perf harness timer (1.1-5).** `scripts/load/measure.py` now blocks in `wait4` and samples
+  `/proc` on a side thread, instead of polling `wait4` every 0.1 s. Wall times are no longer
+  rounded up to the next ~0.1 s tick, so short cases (mapping, settings, small dumps) get
+  meaningful ratios. Results carry `"timer": "blocking-wait4"`; beta1 numbers measured with the
+  old harness are re-measured before any 1.1 A/B comparison. Binaries are unchanged.
+
 ## 1.0.0-beta1
 
 First tagged release under the new name, as a beta. Version 1.0.0 will follow after a full

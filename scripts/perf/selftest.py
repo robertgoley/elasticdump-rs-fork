@@ -138,6 +138,33 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(m['docs'], 2)
             self.assertGreater(m['output_bytes'], 0)
 
+    def test_measure_timer_resolution(self):
+        # 1.1-5: wall time comes from a blocking wait4, not a 0.1 s poll. The old loop
+        # reported >= 0.3 s for a 0.23 s command; allow scheduling slack but stay below that.
+        with tempfile.TemporaryDirectory() as td:
+            metrics = Path(td) / 'metrics.json'
+            subprocess.run([str(S.LOAD / 'measure.sh'), '--out', str(metrics), '--docs', '0',
+                            '--', sys.executable, '-c', 'import time; time.sleep(0.23)'],
+                           check=True, capture_output=True)
+            m = json.loads(metrics.read_text())
+            self.assertEqual(m['timer'], 'blocking-wait4')
+            self.assertGreaterEqual(m['wall_s'], 0.23)
+            self.assertLess(m['wall_s'], 0.29)
+
+    def test_measure_exit_code_and_rusage(self):
+        with tempfile.TemporaryDirectory() as td:
+            metrics = Path(td) / 'metrics.json'
+            p = subprocess.run([str(S.LOAD / 'measure.sh'), '--out', str(metrics), '--docs', '0', '--',
+                                sys.executable, '-c',
+                                'import sys\nx = 0\nfor i in range(3000000): x += i\nsys.exit(7)'],
+                               capture_output=True)
+            m = json.loads(metrics.read_text())
+            self.assertEqual(p.returncode, 7)
+            self.assertEqual(m['exit_code'], 7)
+            self.assertGreater(m['user_s'], 0)
+            self.assertGreater(m['max_rss_kb'], 0)
+            self.assertGreater(m['rss_peak_kb_sampled'], 0)
+
     def test_baseline_merge_and_failed_run_preserves(self):
         with tempfile.TemporaryDirectory(dir=S.ROOT / 'results') as td:
             d = Path(td)

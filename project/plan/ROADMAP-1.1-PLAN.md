@@ -1,10 +1,24 @@
 # searchdump-rs 1.1: implementation plan (for review)
 
-Status: **draft for Robert's review**. Branch `release/1.1` is a local branch only and has not been pushed.
+Status: **steps 1-4 approved and in progress** (see Status below); steps 5-9 still for review. Branch `release/1.1` is a local branch only and has not been pushed.
 Scope: roadmap items 1.1-1 to 1.1-9 from `FEATURES-TODO.md`, section "Roadmap: 1.1 release (performance and robustness)".
 Line references were rechecked at `0847643` (main, 2026-11-11). The roadmap table quotes them as of `a98be22`.
 
 Rules that still apply: Rust 1.91 minimum (`rust-version = "1.91"`). No secrets in the repo; credentials appear only as blank variable references. Opt-in flags use Node-style camelCase names. Every change keeps or extends the existing tests.
+
+## Status
+
+Owner go-ahead for steps 1-4 on 2026-11-11 (t163u). Q1 and Q2 were not answered, so the recommended defaults are used: Q1 interval refresh every 5 s plus a final refresh (`--refreshInterval=0` = Node's per-batch refresh); Q2 option (c), opt-in `--scrollDocSort`.
+
+| Step | Item | Status |
+|---|---|---|
+| 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measure pending |
+| 2 | 1.1-2 targeted refresh | planned |
+| 3 | 1.1-1 refresh cadence | planned |
+| 4 | 1.1-3 `_doc` sort (opt-in) | planned |
+| 5-9 | 1.1-4, 1.1-9, 1.1-6, 1.1-8, 1.1-7 | planned, not started |
+
+"In progress" means committed on `release/1.1` but not yet compiled/tested or A/B measured (no cargo or podman while the beta1 suite runs).
 
 ## 0. Gate: the beta1 baseline comes first
 
