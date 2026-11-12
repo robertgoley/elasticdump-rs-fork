@@ -900,6 +900,10 @@ Each direction resolves its basic-auth username and password on its own (L-645).
 
 ## Memory
 
+Since 1.1 the start-of-run estimate also counts pipeline copies of a batch: +3 batches for a compressed file
+output (the compression thread's queue, 1.1-9) and +1 for a bulk restore at `--concurrency 1` (the batch encoded
+while the previous one is in flight, 1.1-6).
+
 Peak RSS ≈ `(bufferSize + slices + concurrency) × limit × avg_doc_size × ~3 + ~15 MB` (**changed in L-802, from
 × 1.5 + 10 MB, pending lead review**: the old estimate was exceeded by up to 127% by concurrent restores and sliced
 copies at 1M documents; `results/local/L-802.json`). Measured with glibc's malloc before L-808b (Elasticsearch 7.17, ~1 KB docs): 24 MB dumping at

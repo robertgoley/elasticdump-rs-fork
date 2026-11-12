@@ -55,6 +55,16 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   Node compatibility: none (Node has no slicing). Perf note: `dump-scroll-s2/s4/s8` on the
   one-shard perf index now run unsliced.
 
+- **Compression runs on its own thread (1.1-9).** A compressed file output (`--fsCompress`,
+  `--compressionType gzip|zstd`, split parts too) now feeds each part's encoder on a dedicated
+  `searchdump-compress` thread through a 2-deep queue, so gzip/zstd no longer stalls the writer
+  between batches. Input and output buffers are recycled (no allocation per 256 KiB drain). The
+  compressed bytes are identical to 1.0 (same encoder, same input, same order; checked byte for
+  byte against the inline encoder, including a proptest over chunk sizes). An encoder error
+  surfaces on the next write, flush or seal; dropping a part (cancel, abort, error) stops its
+  thread. The memory estimate counts 3 extra batches for compressed output. No flag. zstd
+  multithreading (`zstdmt`) is not used.
+
 ### Fixed
 
 - **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their

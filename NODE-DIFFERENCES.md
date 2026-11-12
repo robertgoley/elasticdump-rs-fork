@@ -86,3 +86,4 @@ file -> engine -> file because it parses and re-serialises them. Most changes ar
 These 1.1 roadmap items change only searchdump internals or searchdump-only extensions; Node elasticdump has no
 equivalent, so there is no compatibility difference to record in the table above.
 * **1.1-4 slice cap / `--sliceField`**: `--slices` is a searchdump extension; Node never slices.
+* **1.1-9 compression thread**: internal; the gzip bytes are identical, and zstd is a searchdump extension.
