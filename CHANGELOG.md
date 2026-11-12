@@ -18,6 +18,17 @@ release"; order: `project/plan/ROADMAP-1.1-PLAN.md`). Not released, not yet A/B 
   meaningful ratios. Results carry `"timer": "blocking-wait4"`; beta1 numbers measured with the
   old harness are re-measured before any 1.1 A/B comparison. Binaries are unchanged.
 
+### Fixed
+
+- **No whole-cluster refresh (1.1-2).** A restore with no output index (documents keep their
+  `_index`) used to send `POST /_refresh`, refreshing every index in the cluster after every
+  batch. It now refreshes only the indices the run wrote (after `--prefix`/`--suffix`/rename),
+  as `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true`, split so each URL stays
+  under ~3 KB, and sends nothing when nothing was written. With an output index the request is
+  unchanged. Node compatibility: Node elasticdump refreshes the whole cluster after every batch
+  in this case (`_data.js` `reindex()` posts `${base.url}/_refresh`); this is a deliberate
+  difference. The data visible after the run is the same. NODE-DIFFERENCES.md #25.
+
 ## 1.0.0-beta1
 
 First tagged release under the new name, as a beta. Version 1.0.0 will follow after a full

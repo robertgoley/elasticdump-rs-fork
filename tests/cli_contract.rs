@@ -1322,6 +1322,151 @@ async fn refresh_per_batch_no_refresh_and_refresh_failure_is_a_warning() {
     }
 }
 
+// 1.1-2: a restore with no output index refreshes exactly the indices it wrote (after
+// --prefix/--suffix), with ignore_unavailable/allow_no_indices, and never `POST /_refresh` on
+// the whole cluster (which Node elasticdump sends).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_without_output_index_refreshes_only_written_indices() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let doc =
+        |idx: &str, id: &str| format!(r#"{{"_index":"{idx}","_id":"{id}","_source":{{"n":1}}}}"#);
+    std::fs::write(
+        &input,
+        format!("{}\n{}\n{}\n", doc("b", "1"), doc("a", "2"), doc("b", "3")),
+    )
+    .unwrap();
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+        )))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(
+            r#"{"took":1,"errors":false,"items":[{"index":{"status":201}},{"index":{"status":201}},{"index":{"status":201}}]}"#,
+        )))
+        .route(Route::contains("POST", "_refresh").reply(Reply::ok(
+            r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+        )))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            m.url(),
+            "--prefix".into(),
+            "r_".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let reqs = m.requests();
+    let refreshes: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.path.ends_with("_refresh"))
+        .collect();
+    assert!(!refreshes.is_empty(), "{reqs:#?}");
+    for r in &refreshes {
+        assert_eq!(r.path, "/r_a,r_b/_refresh", "{reqs:#?}");
+        assert_eq!(r.query_param("ignore_unavailable"), Some("true"));
+        assert_eq!(r.query_param("allow_no_indices"), Some("true"));
+    }
+    assert!(
+        !reqs.iter().any(|r| r.path == "/_refresh"),
+        "whole-cluster refresh sent: {reqs:#?}"
+    );
+}
+
+// 1.1-2: a restore that writes many indices with long names splits the `_refresh` index list
+// into several requests, each under the URL budget, and together they name every written index
+// exactly once per refresh round (never `POST /_refresh` on the whole cluster).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_refresh_of_a_long_index_list_is_split_into_several_requests() {
+    use support::router_mock::{Reply, Route, RouterMock};
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    // 40 indices of 100 bytes each: about 4 KB joined, more than the 3000-byte budget
+    let names: Vec<String> = (0..40)
+        .map(|k| format!("i{k:03}_{}", "x".repeat(95)))
+        .collect();
+    assert!(names.iter().all(|n| n.len() == 100));
+    let lines: String = names
+        .iter()
+        .enumerate()
+        .map(|(k, idx)| format!(r#"{{"_index":"{idx}","_id":"{k}","_source":{{"n":1}}}}"#) + "\n")
+        .collect();
+    std::fs::write(&input, lines).unwrap();
+    let items = vec![r#"{"index":{"status":201}}"#; names.len()].join(",");
+    let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"distribution":"opensearch","number":"2.19.0"}}"#,
+        )))
+        .route(Route::contains("POST", "/_bulk").reply(Reply::ok(format!(
+            r#"{{"took":1,"errors":false,"items":[{items}]}}"#
+        ))))
+        .route(Route::contains("POST", "_refresh").reply(Reply::ok(
+            r#"{"_shards":{"total":1,"successful":1,"failed":0}}"#,
+        )))
+        .start()
+        .await;
+    let o = run_async(
+        vec![
+            "--input".into(),
+            input.to_str().unwrap().into(),
+            "--output".into(),
+            m.url(),
+            "--limit".into(),
+            "100".into(),
+        ],
+        vec![],
+    )
+    .await;
+    assert!(o.status.success(), "{}", stderr(&o));
+    let reqs = m.requests();
+    assert!(
+        !reqs.iter().any(|r| r.path == "/_refresh"),
+        "whole-cluster refresh sent: {reqs:#?}"
+    );
+    let refreshes: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.path.ends_with("/_refresh"))
+        .collect();
+    assert!(
+        refreshes.len() >= 2,
+        "the index list was not split: {refreshes:#?}"
+    );
+    let mut named: Vec<String> = Vec::new();
+    for r in &refreshes {
+        let list = r
+            .path
+            .strip_prefix('/')
+            .and_then(|p| p.strip_suffix("/_refresh"))
+            .unwrap_or_else(|| panic!("unexpected refresh path {}", r.path));
+        assert!(list.len() <= 3000, "{} bytes: {}", list.len(), r.path);
+        assert_eq!(r.query_param("ignore_unavailable"), Some("true"));
+        assert_eq!(r.query_param("allow_no_indices"), Some("true"));
+        named.extend(list.split(',').map(String::from));
+    }
+    // every index in every refresh round, exactly once per round, none invented
+    assert_eq!(named.len() % names.len(), 0, "{named:#?}");
+    let mut uniq = named.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(
+        uniq, names,
+        "refreshed indices differ from the written ones"
+    );
+    for n in &names {
+        assert_eq!(
+            named.iter().filter(|x| *x == n).count(),
+            named.len() / names.len(),
+            "{n}"
+        );
+    }
+}
+
 // L-419/L-425 (TST-API-035, TST-API-041): deprecation `Warning` headers are tolerated and each
 // distinct text is logged once; `X-Elastic-Product` is ignored.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

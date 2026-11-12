@@ -1,9 +1,10 @@
 //! Bulk writer: turns document lines (search hits or plain documents) into
 //! `_bulk` requests.
 
+use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
@@ -140,6 +141,13 @@ pub struct BulkSink {
     inflight: JoinSet<Result<WriteReport>>,
     /// At most one `_refresh` in flight (others are skipped).
     refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Every target index name the run sent documents to (after prefix/suffix/rename), shared
+    /// by all workers. With no output index, `_refresh` targets exactly these (1.1-2) instead of
+    /// the whole cluster.
+    written_indices: Arc<Mutex<BTreeSet<String>>>,
+    /// Index names encoded in the current batch (this worker only), merged into
+    /// `written_indices` once the batch was sent.
+    batch_indices: HashSet<String>,
     /// 1-based number (in the input) of the next document handed to `write_batch`, so a
     /// rejected line can be located (TST-BRK-IN-005).
     next_doc: u64,
@@ -419,6 +427,8 @@ impl BulkSink {
             throttle: None,
             inflight: JoinSet::new(),
             refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            written_indices: Arc::default(),
+            batch_indices: HashSet::new(),
             next_doc: 1,
             first_batch: None,
             target_uuid: None,
@@ -557,6 +567,8 @@ impl BulkSink {
             throttle: None,
             inflight: JoinSet::new(),
             refresh_lock: Arc::clone(&self.refresh_lock),
+            written_indices: Arc::clone(&self.written_indices),
+            batch_indices: HashSet::new(),
             next_doc: 1,
             first_batch: None,
             target_uuid: None,
@@ -689,7 +701,11 @@ impl BulkSink {
         out.extend_from_slice(b"{\"");
         out.extend_from_slice(action.as_str().as_bytes());
         out.extend_from_slice(b"\":{\"_index\":");
-        push_json_str(out, &self.index_for(&top)?);
+        let index = self.index_for(&top)?;
+        push_json_str(out, &index);
+        if self.opts.index.is_none() && !self.batch_indices.contains(index.as_str()) {
+            self.batch_indices.insert(index);
+        }
         if is_hit && let Some(id) = top.get("_id") {
             out.extend_from_slice(b",\"_id\":");
             push_id_like(out, "_id", id)?;
@@ -875,6 +891,7 @@ impl BulkSink {
             }
             start = end;
         }
+        self.note_written_indices();
         if self.opts.refresh && !docs.is_empty() {
             // Skip when another worker's refresh is already running.
             let lock = Arc::clone(&self.refresh_lock);
@@ -1099,28 +1116,108 @@ impl BulkSink {
         Ok(rejected)
     }
 
+    /// Move this batch's target names into the run-wide set (1.1-2).
+    fn note_written_indices(&mut self) {
+        if self.batch_indices.is_empty() {
+            return;
+        }
+        let mut all = self.written_indices.lock().unwrap();
+        all.extend(self.batch_indices.drain());
+    }
+
+    /// Target names the run has written so far (sorted). Empty with an output index set.
+    pub fn written_indices(&self) -> Vec<String> {
+        self.written_indices
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// `_refresh` path segments: the output index, or (with no output index) the indices this
+    /// run wrote, in comma-joined groups that keep each URL under [`REFRESH_URL_BUDGET`] bytes.
+    /// Never the whole cluster (`POST /_refresh`, which Node elasticdump sends in that case):
+    /// on a shared production cluster that refreshes every index after every batch (1.1-2).
+    fn refresh_targets(&self) -> Vec<String> {
+        match &self.opts.index {
+            Some(i) => vec![format!("{}{}{}", self.opts.prefix, i, self.opts.suffix)],
+            None => chunk_index_list(&self.written_indices(), REFRESH_URL_BUDGET),
+        }
+    }
+
     async fn refresh(&self) {
-        let segments = match &self.opts.index {
-            Some(i) => vec![
-                format!("{}{}{}", self.opts.prefix, i, self.opts.suffix),
-                "_refresh".into(),
-            ],
-            None => vec!["_refresh".to_string()],
+        let targets = self.refresh_targets();
+        // With an output index the request is unchanged from 1.0 (no extra parameters).
+        let query: &[(&str, &str)] = if self.opts.index.is_some() {
+            &[]
+        } else {
+            &[("ignore_unavailable", "true"), ("allow_no_indices", "true")]
         };
-        let refs: Vec<&str> = segments.iter().map(String::as_str).collect();
-        match self
-            .client
-            .send(Method::POST, &refs, &[], false, Body::Empty)
-            .await
-        {
-            Ok(r) if r.status().is_success() => {}
-            Ok(r) => log::warn!("refresh failed: HTTP {}", r.status()),
-            Err(e) => log::warn!("refresh failed: {e}"),
+        for target in &targets {
+            let refs = [target.as_str(), "_refresh"];
+            match self
+                .client
+                .send(Method::POST, &refs, query, false, Body::Empty)
+                .await
+            {
+                Ok(r) if r.status().is_success() => {}
+                Ok(r) => log::warn!("refresh failed: HTTP {}", r.status()),
+                Err(e) => log::warn!("refresh failed: {e}"),
+            }
         }
     }
 }
 
-/// `status` of a bulk item `{"<any action>": {"status": N, …}}` with exactly one key.
+/// Bytes of comma-joined index names per `_refresh` URL (path only; well under the 4 KB
+/// `http.max_initial_line_length` default of Elasticsearch and OpenSearch, leaving room for
+/// a base path, percent-encoding and the query string).
+const REFRESH_URL_BUDGET: usize = 3000;
+
+/// Join `names` with commas into groups of at most `budget` bytes each. A single name longer
+/// than the budget gets a group of its own (index names are at most 255 bytes, so this only
+/// matters for tiny budgets in tests).
+///
+/// Lengths are measured as sent: the URL percent-encodes a non-ASCII byte (and a few ASCII
+/// characters such as `%`, `^` or `{`) to three bytes, so a list of UTF-8 names (up to 255
+/// bytes each) is budgeted at its encoded size, not its raw size.
+fn chunk_index_list(names: &[String], budget: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for n in names {
+        let n_len = encoded_path_len(n);
+        if !cur.is_empty() && cur_len + 1 + n_len > budget {
+            out.push(std::mem::take(&mut cur));
+            cur_len = 0;
+        }
+        if !cur.is_empty() {
+            cur.push(',');
+            cur_len += 1;
+        }
+        cur.push_str(n);
+        cur_len += n_len;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Upper bound of `s`'s length once percent-encoded as a URL path segment: bytes outside a
+/// conservative safe set count three (`%XX`).
+fn encoded_path_len(s: &str) -> usize {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.+,~!$&'()*;=:@".contains(&b) {
+                1
+            } else {
+                3
+            }
+        })
+        .sum()
+}
+
 fn item_status_any_key(raw: &[u8]) -> Option<u64> {
     let mut it = sonic_rs::to_object_iter(raw);
     let (_, v) = it.next()?.ok()?;
@@ -1409,6 +1506,91 @@ mod tests {
         assert_eq!(s.auto_id_docs(&docs, &[1]), 0);
         let s = sink(os(), |o| o.action = BulkAction::Delete);
         assert_eq!(s.auto_id_docs(&docs, &[0, 2]), 0);
+    }
+
+    // 1.1-2: with no output index, refresh only the (prefixed/suffixed) indices written.
+    #[test]
+    fn refresh_targets_are_the_written_indices_never_the_cluster() {
+        let mut s = sink(os(), |o| {
+            o.prefix = "p_".into();
+            o.suffix = "_s".into();
+        });
+        assert!(
+            s.refresh_targets().is_empty(),
+            "nothing written: no refresh"
+        );
+        enc(&mut s, r#"{"_index":"b","_id":"1","_source":{}}"#);
+        enc(&mut s, r#"{"_index":"a","_id":"2","_source":{}}"#);
+        enc(&mut s, r#"{"_index":"b","_id":"3","_source":{}}"#);
+        assert!(
+            s.refresh_targets().is_empty(),
+            "not merged before the batch is sent"
+        );
+        s.note_written_indices();
+        assert_eq!(s.refresh_targets(), vec!["p_a_s,p_b_s".to_string()]);
+        assert_eq!(s.written_indices(), vec!["p_a_s", "p_b_s"]);
+        // a worker clone shares the run-wide set
+        let mut w = s.worker();
+        enc(&mut w, r#"{"_index":"c","_id":"4","_source":{}}"#);
+        w.note_written_indices();
+        assert_eq!(s.refresh_targets(), vec!["p_a_s,p_b_s,p_c_s".to_string()]);
+    }
+
+    #[test]
+    fn refresh_target_with_an_output_index_is_unchanged() {
+        let mut s = sink(os(), |o| {
+            o.index = Some("dst".into());
+            o.prefix = "p_".into();
+        });
+        enc(&mut s, r#"{"_index":"src","_id":"1","_source":{}}"#);
+        s.note_written_indices();
+        assert_eq!(s.refresh_targets(), vec!["p_dst".to_string()]);
+        assert!(s.written_indices().is_empty());
+    }
+
+    #[test]
+    fn data_stream_creates_refresh_the_stream() {
+        let mut s = sink(os(), |o| o.action = BulkAction::Create);
+        enc(
+            &mut s,
+            r#"{"_index":".ds-logs-app-2026.10.30-000001","_id":"1","_source":{}}"#,
+        );
+        s.note_written_indices();
+        assert_eq!(s.refresh_targets(), vec!["logs-app".to_string()]);
+    }
+
+    #[test]
+    fn refresh_index_lists_are_split_under_the_url_budget() {
+        let names: Vec<String> = (0..500).map(|i| format!("index-{i:04}")).collect();
+        let groups = chunk_index_list(&names, REFRESH_URL_BUDGET);
+        assert!(groups.len() > 1);
+        assert!(groups.iter().all(|g| g.len() <= REFRESH_URL_BUDGET));
+        let back: Vec<String> = groups
+            .iter()
+            .flat_map(|g| g.split(',').map(String::from))
+            .collect();
+        assert_eq!(back, names, "every name exactly once, in order");
+        assert_eq!(
+            chunk_index_list(&["abc".into(), "de".into(), "f".into()], 6),
+            vec!["abc,de", "f"]
+        );
+        assert_eq!(chunk_index_list(&["toolong".into()], 3), vec!["toolong"]);
+        assert!(chunk_index_list(&[], 10).is_empty());
+        // budgeted at the percent-encoded size: "é" is 2 UTF-8 bytes, 6 once encoded
+        assert_eq!(encoded_path_len("ab-1.x"), 6);
+        assert_eq!(encoded_path_len("é"), 6);
+        assert_eq!(encoded_path_len("a%b"), 5);
+        let wide: Vec<String> = (0..100)
+            .map(|i| format!("{}{i:03}", "é".repeat(100)))
+            .collect();
+        let groups = chunk_index_list(&wide, REFRESH_URL_BUDGET);
+        assert!(
+            groups
+                .iter()
+                .all(|g| encoded_path_len(g) <= REFRESH_URL_BUDGET),
+            "every encoded group fits the budget"
+        );
+        assert!(groups.len() >= 100 * 603 / REFRESH_URL_BUDGET);
     }
 }
 

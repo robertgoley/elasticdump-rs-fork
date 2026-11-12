@@ -275,6 +275,11 @@ for every place the tool changes what is loaded, and for the tested versions, se
   wins in Node and the later line wins here (file order). Verified on 10,000 random documents by
   `scripts/node/bulk-diff.py` (L-506): every other byte difference is one of these.
 * **Bulk uses POST**; `/index/type` URLs are not parsed (use `--output-index idx/type` for ES < 7).
+* **Refresh targets only the indices written** (1.1): a restore with no output index (each document keeps its
+  `_index`) refreshes exactly the indices it wrote, after `--prefix`/`--suffix`/rename, as
+  `POST /a,b,…/_refresh?ignore_unavailable=true&allow_no_indices=true` (long lists split under ~3 KB per URL). Node
+  sends `POST /_refresh` there, which refreshes **every index in the cluster** after every batch. What a reader sees
+  after the run is the same; unrelated indices are no longer refreshed. With an output index nothing changes.
 * **Endpoints that look like mistyped URLs are refused** (exit 2, L-646); Node reads or writes them as files.
   Only `http://` and `https://` are clusters, in any case (`HTTP://` is a cluster here, a file in Node); everything else is a file path, but
   `http:/host`, `http:host`, `http//host`, an unsupported scheme such as `htp://`, and a URL with leading or trailing
