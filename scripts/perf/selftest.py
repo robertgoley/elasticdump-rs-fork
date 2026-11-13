@@ -2,6 +2,7 @@
 """Offline protocol tests. No podman, engines or Rust binaries required."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -331,6 +332,154 @@ class ProtocolTests(unittest.TestCase):
             p = subprocess.run([str(S.HERE / 'run-suite.sh'), '--dry-run', '--engines', 'os2-plain', '--skip-node'],
                                capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(p.stdout)['engine_order'], ['os2-plain'])
+
+
+class ReleaseEvalTests(unittest.TestCase):
+    """Offline tests for scripts/perf/release-eval.sh / release_eval.py. No engines."""
+
+    def setUp(self):
+        import release_eval as RE
+        self.RE = RE
+
+    def test_presets_and_engine_selection(self):
+        RE = self.RE
+        self.assertEqual(RE.PRESETS["quick"], ["es819-plain", "os3-plain"])
+        self.assertEqual(RE.select_engines("all", None), list(S.ENGINE_ORDER))
+        self.assertEqual(len(RE.select_engines("plain", None)), 8)
+        self.assertEqual(len(RE.select_engines("secure", None)), 8)
+        self.assertTrue(all(e.endswith("-plain") for e in RE.select_engines("plain", None)))
+        self.assertEqual(RE.select_engines(None, "os3-plain,es710-plain"),
+                         ["es710-plain", "os3-plain"])
+        with self.assertRaises(ValueError):
+            RE.select_engines("quick", "es819-plain")
+        with self.assertRaises(ValueError):
+            RE.select_engines("nope", None)
+
+    def test_asset_names_and_checksums(self):
+        RE = self.RE
+        names = RE.asset_names("1.0.0-beta1", "x86_64-unknown-linux-gnu")
+        self.assertEqual(names["archive"], "searchdump-rs-1.0.0-beta1-x86_64-unknown-linux-gnu.tar.gz")
+        self.assertEqual(names["sha256"], names["archive"] + ".sha256")
+        text = "abc\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  " + names["archive"] + "\n"
+        digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        self.assertEqual(RE.parse_sha256_line(text, names["archive"]), digest)
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "a.tar.gz"
+            archive.write_bytes(b"hello")
+            good = RE.sha256_file(archive)
+            RE.verify_checksum(archive, good)
+            with self.assertRaises(ValueError):
+                RE.verify_checksum(archive, "0" * 64)
+
+    def test_normalize_tag_repo_and_host_id(self):
+        RE = self.RE
+        self.assertEqual(RE.normalize_tag("v1.0.0-beta1"), ("v1.0.0-beta1", "1.0.0-beta1"))
+        self.assertEqual(RE.normalize_tag("1.0.0"), ("v1.0.0", "1.0.0"))
+        self.assertEqual(RE.normalize_tag("latest"), ("latest", "latest"))
+        self.assertEqual(RE.parse_github_repo("git@github.com:robertgoley/searchdump-rs.git"),
+                         "robertgoley/searchdump-rs")
+        self.assertEqual(RE.parse_github_repo("https://github.com/robertgoley/searchdump-rs.git"),
+                         "robertgoley/searchdump-rs")
+        self.assertIsNone(RE.parse_github_repo("https://example.com/foo.git"))
+        self.assertTrue(RE.host_id_ok("box-x86_64-8c-16g"))
+        self.assertFalse(RE.host_id_ok("has space"))
+        self.assertFalse(RE.host_id_ok("has/slash"))
+        self.assertTrue(RE.host_id_ok(RE.sanitize_host_id("My Host/1")))
+        self.assertTrue(RE.sanitize_host_id("***").startswith("host"))
+
+    def test_results_path_and_reaper_scope(self):
+        RE = self.RE
+        d = RE.results_dir(S.ROOT, "1.0.0-beta1", "box-x86_64-8c-16g")
+        self.assertEqual(d, S.ROOT / "scripts/perf/results/release-eval/1.0.0-beta1/box-x86_64-8c-16g")
+        with tempfile.TemporaryDirectory() as td:
+            run = Path(td) / "eval-run"
+            (run / "podman-root").mkdir(parents=True)
+            (run / "xdg-runtime").mkdir()
+            pats = RE.reaper_patterns(run)
+            store = str((run / "podman-root").resolve())
+            xdg = str((run / "xdg-runtime").resolve())
+            self.assertTrue(pats["conmon"].startswith("conmon "))
+            self.assertTrue(re.search(pats["conmon"], f"conmon --foo {store}/libpod"))
+            self.assertTrue(re.search(pats["pasta"], f"pasta --config {xdg}/netns/x"))
+            # Must not match another driver's isolated store / runtime.
+            self.assertFalse(re.search(pats["conmon"], "conmon --root /home/box/.local/share/edrs-odt-podman/x"))
+            self.assertFalse(re.search(pats["pasta"], "pasta --config /tmp/xdg-runtime-perf-b1/netns/x"))
+
+    def test_fingerprint_has_no_secret_keys(self):
+        RE = self.RE
+        dirty = {"cpu_model": "x", "AWS_SECRET_ACCESS_KEY": "nope", "nested": {"password": "x", "ram_gb": 8}}
+        clean = RE.strip_secrets(dirty)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", clean)
+        self.assertNotIn("password", clean["nested"])
+        self.assertEqual(clean["nested"]["ram_gb"], 8)
+        fp = RE.host_fingerprint(host_id="selftest-host")
+        self.assertEqual(fp["host_id"], "selftest-host")
+        self.assertTrue(RE.host_id_ok(fp["host_id"]))
+        blob = json.dumps(fp)
+        for bad in ("AWS_SECRET", "GITHUB_TOKEN", "GH_TOKEN", "IT_ADMIN_PW", "password="):
+            self.assertNotIn(bad, blob)
+        with self.assertRaises(ValueError):
+            RE.host_fingerprint(host_id="bad id")
+
+    def test_commit_only_results_dir(self):
+        RE = self.RE
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env={**S.os.environ, "GIT_AUTHOR_NAME": "t",
+                            "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+            # git init may not set user; configure locally
+            subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+            (repo / "keep.txt").write_text("keep\n")
+            dest = repo / "scripts/perf/results/release-eval/1.0.0-beta1/host1"
+            dest.mkdir(parents=True)
+            (dest / "report.md").write_text("# report\n")
+            (repo / "unrelated.txt").write_text("no\n")
+            subprocess.run(["git", "add", "keep.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+            # Stage an unrelated file that must not be committed.
+            subprocess.run(["git", "add", "unrelated.txt"], cwd=repo, check=True)
+            original_root = RE.ROOT
+            try:
+                RE.ROOT = repo
+                info = RE.git_commit_results(dest, RE.commit_message("1.0.0-beta1", "host1"), push=False)
+            finally:
+                RE.ROOT = original_root
+            self.assertTrue(info["committed"])
+            self.assertEqual(info["message"], "perf: release-eval 1.0.0-beta1 results from host1")
+            self.assertIn("git push origin HEAD:", info["push_command"])
+            # The commit should contain only the results path, not unrelated.txt
+            names = subprocess.check_output(["git", "show", "--name-only", "--pretty=", "HEAD"], cwd=repo, text=True)
+            self.assertIn("scripts/perf/results/release-eval/1.0.0-beta1/host1/report.md", names)
+            self.assertNotIn("unrelated.txt", names)
+            # unrelated.txt should still be staged (not lost, not committed)
+            st = subprocess.check_output(["git", "status", "--short"], cwd=repo, text=True)
+            self.assertIn("unrelated.txt", st)
+
+    def test_dry_run_shell_prints_plan_without_side_effects(self):
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "run"
+            results = Path(td) / "results"
+            p = subprocess.run(
+                [str(S.HERE / "release-eval.sh"), "--dry-run", "--bin", str(Path(td) / "missing-bins"),
+                 "--tag", "v1.0.0-beta1", "--preset", "quick", "--run-dir", str(run_dir),
+                 "--results-dir", str(results), "--host-id", "selftest-dry"],
+                cwd=S.ROOT, capture_output=True, text=True)
+            # Missing --bin is a dry-run warning, not an error; other preflight may still pass.
+            self.assertIn("release-eval plan", p.stdout)
+            self.assertIn("es819-plain", p.stdout)
+            self.assertIn("os3-plain", p.stdout)
+            self.assertIn("selftest-dry", p.stdout)
+            self.assertIn('"dry_run": true', p.stdout)
+            # Must not create the results tree or a podman store.
+            self.assertFalse(results.exists())
+            self.assertFalse((run_dir / "podman-root").exists())
+            # And must not have invoked podman pull / run (stdout/stderr should not show it).
+            self.assertNotIn("podman pull", p.stdout + p.stderr)
+            self.assertNotIn("podman run", p.stdout + p.stderr)
+
+
 
 
 if __name__ == '__main__':

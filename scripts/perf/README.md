@@ -6,6 +6,10 @@ comparisons with **Node elasticdump 6.125.1**, including `searchdump-multi` agai
 It complements, not replaces, the fault, memory, compression-level and concurrency
 investigations in [../load/README.md](../load/README.md).
 
+To measure a **published release** (or a local binary dir) on a Linux server,
+with the same engines and seeders, and write results you can commit back from
+this checkout, see [RELEASE-EVAL.md](RELEASE-EVAL.md).
+
 ## Internal names (kept for compatibility)
 
 A few identifiers still use the pre-rename `edrs-` prefix. They are part of on-disk schemas and
