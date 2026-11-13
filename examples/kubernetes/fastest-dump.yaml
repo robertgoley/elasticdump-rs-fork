@@ -1,0 +1,91 @@
+# Fast dump: large pages, more workers, zstd level 1, optional sliced PIT.
+# Set SLICES to the primary shard count of the index (0 = unsliced). There is
+# no --sliceCap on main; too many slices can be slower on Elasticsearch 7.10
+# and earlier (and some OpenSearch builds). If the cluster has no PIT, set
+# SLICES to 0 so --searchAfter/--pit are not passed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-fastest-dump
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.settings.json" --type=settings --overwrite
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.mapping.json" --type=mapping --overwrite
+              extra=""
+              if [ "${SLICES}" != 0 ]; then
+                extra="--searchAfter --pit --slices=${SLICES}"
+              fi
+              # shellcheck disable=SC2086
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.data.json.zst" --type=data --overwrite \
+                --compressionType=zstd --compressionLevel=1 --esCompress \
+                --limit="${LIMIT}" --workers="${WORKERS}" --bufferSize=32 --maxResponseMb=256 ${extra}
+          env:
+            - name: LIMIT
+              value: 2000
+            - name: WORKERS
+              value: 8
+            - name: SLICES
+              value: "0"
+            - name: ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 1
+              memory: 1Gi
+            limits:
+              cpu: 4
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}

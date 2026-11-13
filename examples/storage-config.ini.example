@@ -1,0 +1,16 @@
+# OpenDAL storage settings for --inputStorageConfig / --outputStorageConfig
+# (or SEARCHDUMP_INPUT_STORAGE_CONFIG / SEARCHDUMP_OUTPUT_STORAGE_CONFIG).
+# chmod 600 a private copy. Never put key, secret, token or sse_c_key in the s3:// URL.
+#
+# endpoint = https://minio.example:9000
+# region = us-east-1
+# key =
+# secret =
+# ca_file = /path/to/minio-ca.pem
+#
+# Path style is the default. A [s3] or [s3.BUCKET] section can override these
+# for one scheme or bucket. See README.md, "Object storage and SFTP".
+endpoint =
+region = us-east-1
+key =
+secret =

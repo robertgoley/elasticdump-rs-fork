@@ -1,0 +1,94 @@
+# Dump one index to s3://. Credentials and the endpoint live in Secret
+# searchdump-s3 (key storage.ini; see examples/storage-config.ini.example),
+# passed as --outputStorageConfig. Never put keys in the S3_URI URL.
+# --overwrite is required to replace an existing object.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-object-storage-dump
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              cfg="--outputStorageConfig=/run/searchdump/storage.ini"
+              searchdump --input="${ES_URL}/${INDEX}" --output="${S3_URI}/${INDEX}.settings.json" --type=settings --overwrite ${cfg}
+              searchdump --input="${ES_URL}/${INDEX}" --output="${S3_URI}/${INDEX}.mapping.json" --type=mapping --overwrite ${cfg}
+              searchdump --input="${ES_URL}/${INDEX}" --output="${S3_URI}/${INDEX}.data.json" --type=data --overwrite \
+                --compressionType=zstd --compressionLevel=1 --fileSize="${FILE_SIZE}" --limit="${LIMIT}" ${cfg}
+          env:
+            - name: S3_URI
+              value: "s3://backups/logs"
+            - name: FILE_SIZE
+              value: 1gb
+            - name: LIMIT
+              value: 1000
+            - name: ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: s3
+              mountPath: /run/searchdump
+              readOnly: true
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}
+        - name: s3
+          secret:
+            secretName: searchdump-s3
+            items:
+              - key: storage.ini
+                path: storage.ini

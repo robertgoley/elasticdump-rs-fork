@@ -1,0 +1,97 @@
+# Dump every index matching MATCH with searchdump-multi.
+#
+# IMPORTANT: on current main, data children default to --limit=5000 and
+# --maxResponseMb=0. That can 429 or OOM a small-heap bitnamilegacy
+# Elasticsearch node even with --parallel=1. This Job always overrides the
+# page size after --. Raise LIMIT / PARALLEL on a large, well-resourced
+# cluster. Set RESUME=1 to add --resume and finish a previous run.
+#
+# searchdump-multi has no --ca. For a private CA, mount the bundle (for
+# example from Secret searchdump-tls, key ca.pem) at /run/searchdump/ca.pem
+# and set SSL_CERT_FILE=/run/searchdump/ca.pem, or install the CA in the
+# node / image trust store.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-multi-index-dump
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              extra=""
+              if [ -n "${RESUME:-}" ]; then
+                extra="${extra} --resume"
+              fi
+              searchdump-multi --direction=dump --input="${ES_URL}" --output=/data \
+                --match="${MATCH}" --parallel="${PARALLEL}" --compression="${COMPRESSION}" ${extra} -- \
+                --limit="${LIMIT}" --maxResponseMb="${MAX_RESPONSE_MB}" --scrollTime="${SCROLL_TIME}"
+          env:
+            - name: ES_URL
+              value: http://elasticsearch.default.svc:9200
+            - name: MATCH
+              value: "^logs-"
+            - name: PARALLEL
+              value: "2"
+            - name: LIMIT
+              value: "500"
+            - name: COMPRESSION
+              value: zstd1
+            - name: SCROLL_TIME
+              value: 10m
+            - name: MAX_RESPONSE_MB
+              value: "64"
+            - name: RESUME
+              value: ""
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}

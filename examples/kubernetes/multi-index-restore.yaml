@@ -1,0 +1,95 @@
+# Load a searchdump-multi dump directory from the searchdump-dumps PVC,
+# including split parts, in order. Set SKIP_EXISTING=1 to pass --skipExisting
+# when some target indices already exist. PREFIX / SUFFIX rename loaded indices.
+# On a small-heap target, keep PARALLEL low and the --limit override after --.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-multi-index-restore
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              extra=""
+              if [ -n "${SKIP_EXISTING:-}" ]; then
+                extra="${extra} --skipExisting"
+              fi
+              if [ -n "${PREFIX:-}" ]; then
+                extra="${extra} --prefix=${PREFIX}"
+              fi
+              if [ -n "${SUFFIX:-}" ]; then
+                extra="${extra} --suffix=${SUFFIX}"
+              fi
+              searchdump-multi --direction=load --input=/data --output="${DEST_ES_URL}" \
+                --parallel="${PARALLEL}" ${extra} -- \
+                --limit="${LIMIT}" --concurrency="${CONCURRENCY}" --maxResponseMb="${MAX_RESPONSE_MB}"
+          env:
+            - name: DEST_ES_URL
+              value: http://elasticsearch.default.svc:9200
+            - name: PARALLEL
+              value: "2"
+            - name: LIMIT
+              value: "500"
+            - name: CONCURRENCY
+              value: "2"
+            - name: MAX_RESPONSE_MB
+              value: "64"
+            - name: SKIP_EXISTING
+              value: ""
+            - name: PREFIX
+              value: ""
+            - name: SUFFIX
+              value: ""
+            - name: SEARCHDUMP_OUTPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_OUTPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}

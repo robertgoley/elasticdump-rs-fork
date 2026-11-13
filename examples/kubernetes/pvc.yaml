@@ -1,0 +1,14 @@
+# Shared dump directory for the example Jobs. Size this for the indices you
+# will dump. Leave storageClassName unset to use the cluster default.
+# Access is ReadWriteOnce: run one Job against this PVC at a time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: searchdump-dumps
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: standard

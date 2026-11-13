@@ -1,0 +1,6 @@
+# Cluster basic-auth file for --httpAuthFile (chmod 600 a private copy).
+# Used for both directions unless SEARCHDUMP_INPUT_* / SEARCHDUMP_OUTPUT_* override them.
+# Leave the values blank here. Fill in a private copy; never commit secrets; never put
+# user:password@ in a URL (it shows up in ps and in child command lines).
+user=
+password=

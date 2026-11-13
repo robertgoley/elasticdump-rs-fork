@@ -1,0 +1,75 @@
+# Restore the minimum-resources dump with one write batch at a time.
+# Shares the searchdump-dumps PVC with the dump Job; do not run them together.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-minimum-resources-restore
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              searchdump --input="/data/${INDEX}.settings.json" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=settings --concurrency=1 --workers=1
+              searchdump --input="/data/${INDEX}.mapping.json" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=mapping --concurrency=1 --workers=1
+              searchdump --input="/data/${INDEX}.data.json.gz" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=data --limit=100 --concurrency=1 --workers=1 --maxBulkBytes=5mb
+          env:
+            - name: ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_OUTPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_OUTPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}

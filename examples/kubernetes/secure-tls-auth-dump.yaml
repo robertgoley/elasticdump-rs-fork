@@ -1,0 +1,95 @@
+# Dump over HTTPS with a private CA and optional client certificates from
+# Secret searchdump-tls (keys ca.pem, client.crt, client.key) and basic auth
+# from Secret searchdump-es. Do not add --insecure. If the cluster does not
+# use mTLS, remove the --input-cert / --input-key flags and the unused keys
+# from the Secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-secure-tls-auth-dump
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              auth="--input-ca=/run/searchdump/ca.pem"
+              if [ -s /run/searchdump/client.crt ]; then
+                auth="${auth} --input-cert=/run/searchdump/client.crt --input-key=/run/searchdump/client.key"
+              fi
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.settings.json" --type=settings --overwrite ${auth}
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.mapping.json" --type=mapping --overwrite ${auth}
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.data.json.gz" --type=data --overwrite --fsCompress --limit=500 ${auth}
+          env:
+            - name: ES_URL
+              value: "https://elasticsearch.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: tls
+              mountPath: /run/searchdump
+              readOnly: true
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}
+        - name: tls
+          secret:
+            secretName: searchdump-tls
+            items:
+              - key: ca.pem
+                path: ca.pem
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key

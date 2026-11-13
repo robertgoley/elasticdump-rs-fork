@@ -1,0 +1,87 @@
+# Dump a large index in --fileSize parts (default 1gb) with a longer scroll
+# keep-alive. searchdump has no --resume; if the Job fails mid-index, check
+# /data and usually start the index again (--overwrite replaces existing
+# parts). For many indices, use multi-index-dump.yaml with --resume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-very-large-index-dump
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.settings.json" --type=settings --overwrite
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.mapping.json" --type=mapping --overwrite
+              searchdump --input="${ES_URL}/${INDEX}" --output="/data/${INDEX}.data.json" --type=data --overwrite \
+                --compressionType=zstd --compressionLevel=1 --fileSize="${FILE_SIZE}" --scrollTime="${SCROLL_TIME}" \
+                --limit="${LIMIT}" --workers="${WORKERS}" --maxResponseMb=256
+          env:
+            - name: FILE_SIZE
+              value: 1gb
+            - name: SCROLL_TIME
+              value: 30m
+            - name: LIMIT
+              value: 1000
+            - name: WORKERS
+              value: 4
+            - name: ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch.default.svc:9200"
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}

@@ -7,6 +7,10 @@ between clusters, files, object storage and SFTP. Two binaries:
 - **`searchdump-multi`**: many indices at once, in parallel, to or from a dump directory (the counterpart of Node
   `multielasticdump`), plus whole-directory copies between stores.
 
+Worked dump and restore examples (minimum resources, fastest, large indices, TLS, object storage,
+cluster-to-cluster copy, and `searchdump-multi`) for Kubernetes, Docker/Podman and bash are in
+[`examples/`](examples/).
+
 ## Where it comes from
 
 - **Code derivative of [elasticdump-rs](https://github.com/tenyears-tech/elasticdump-rs)** by TenYears
@@ -162,6 +166,9 @@ searchdump-multi --input=https://src:9200 --output=/data/node --nodeCompat
 ```
 
 Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
+
+Worked scripts and manifests for these flows, plus minimum-resource, fastest and very-large-index
+cases, are in [`examples/`](examples/README.md).
 
 ## Compatibility with Node elasticdump
 

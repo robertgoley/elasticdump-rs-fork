@@ -1,0 +1,99 @@
+# Copy one index from ES_URL to DEST_ES_URL (settings, mapping, then data).
+# This is searchdump cluster-to-cluster, not searchdump-multi --direction=copy
+# (that copies a dump directory between stores, with no cluster involved).
+#
+# SEARCHDUMP_INPUT_* comes from Secret searchdump-es, SEARCHDUMP_OUTPUT_*
+# from searchdump-es-dest. If both clusters share one user, point the
+# destination secretKeyRef at searchdump-es as well, or copy the Secret.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: searchdump-cluster-to-cluster-copy
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: searchdump
+          image: ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+          args:
+            - |
+              if [ "${ES_URL}" = "${DEST_ES_URL}" ] && [ "${INDEX}" = "${DEST_INDEX}" ]; then
+                echo "error: source and destination are the same; set DEST_ES_URL or DEST_INDEX" >&2
+                exit 1
+              fi
+              searchdump --input="${ES_URL}/${INDEX}" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=settings
+              searchdump --input="${ES_URL}/${INDEX}" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=mapping
+              searchdump --input="${ES_URL}/${INDEX}" --output="${DEST_ES_URL}/${DEST_INDEX}" --type=data \
+                --limit="${LIMIT}" --concurrency="${CONCURRENCY}" --workers=4 --noRefresh --esCompress
+          env:
+            - name: ES_URL
+              value: "http://elasticsearch-src.default.svc:9200"
+            - name: DEST_ES_URL
+              value: "http://elasticsearch-dst.default.svc:9200"
+            - name: LIMIT
+              value: 1000
+            - name: CONCURRENCY
+              value: 4
+            - name: INDEX
+              value: logs
+            - name: DEST_INDEX
+              value: logs
+            - name: SEARCHDUMP_INPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: username
+            - name: SEARCHDUMP_INPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es
+                  key: password
+            - name: SEARCHDUMP_OUTPUT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es-dest
+                  key: username
+            - name: SEARCHDUMP_OUTPUT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: searchdump-es-dest
+                  key: password
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dump
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: dump
+          persistentVolumeClaim:
+            claimName: searchdump-dumps
+        - name: tmp
+          emptyDir: {}
