@@ -1,6 +1,6 @@
 # Handoff index
 
-**Current handoff:** [HANDOFF-20261112.md](HANDOFF-20261112.md) — finish the beta1 aggregate, the ES 9 edge reruns, and the 1.1 point-in-time batch (2026-11-12).
+**Current handoff:** [HANDOFF-20261112.md](HANDOFF-20261112.md) — beta1 aggregate (a) and ES 9 targeted reruns (b) are done (report re-aggregated, 576 PASS / 0 FAIL, median 2.01× vs Node). The 1.1 point-in-time batch (c) has phases 1-2 done; phases 3-5 (build/run/aggregate) remain.
 
 The 1.1 batch details are on GitHub at
 https://github.com/robertgoley/searchdump-rs/tree/release/1.1
