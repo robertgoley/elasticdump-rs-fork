@@ -1,7 +1,7 @@
 # Examples
 
 Worked dump and restore commands for [searchdump-rs](../README.md). They use only flags that
-exist on current `main` (the 1.0.0-beta1 line). They do not use 1.1-only flags such as
+exist on current `main` (the 1.0.0 line). They do not use 1.1-only flags such as
 `--refreshInterval` or `--sliceCap`.
 
 These are starting points, not a production runbook. Adjust URLs, index names, resource
@@ -21,8 +21,8 @@ private file (`chmod 600`), and do not commit the filled copy.
 The default container image in the Kubernetes and Docker/Podman examples is the project's
 dhi.io Debian image with a shell:
 
-- published: `ghcr.io/robertgoley/searchdump-rs:1.0.0-beta1-dhi-debian`
-- local `make image` / `scripts/build-image.sh`: `localhost/searchdump-rs:1.0.0-beta1` (and
+- published: `ghcr.io/robertgoley/searchdump-rs:1.0.0-dhi-debian`
+- local `make image` / `scripts/build-image.sh`: `localhost/searchdump-rs:1.0.0` (and
   `:latest`)
 
 The image entrypoint is `searchdump`; `searchdump-multi` is next to it. It runs as uid 65532,
@@ -157,7 +157,7 @@ able to write it (the scripts create the directory and explain the permission op
 
 ```bash
 export ES_URL=http://127.0.0.1:9200 INDEX=logs
-# SEARCHDUMP_IMAGE=localhost/searchdump-rs:1.0.0-beta1
+# SEARCHDUMP_IMAGE=localhost/searchdump-rs:1.0.0
 examples/docker-podman/minimum-resources-dump.sh
 ```
 

@@ -609,7 +609,7 @@ Other behaviour:
 - Cargo features `opendal` (S3, B2, fs) and `opendal-sftp` are on by default; a build without them refuses storage
   URLs with a clear error.
 
-**Known issue (1.0.0-beta1): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
+**Known issue (1.0.0): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
 system OpenSSH `ssh` client, and the images do not include it (Dropbear's client is not compatible). SFTP works with
 the host binaries and the release archives on systems that have OpenSSH installed. `s3://`, `b2://` and `fs://` are
 not affected. A fix is tracked in FEATURES-TODO.md.
@@ -703,7 +703,7 @@ and `multielasticdump` symlinks, runs as uid
 `/data` as its writable working directory, and carries OCI labels (version, revision, created,
 base name).
 
-**Known issue (1.0.0-beta1): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
+**Known issue (1.0.0): `sftp://` does not work inside the container images.** OpenDAL's SFTP backend runs the
 system OpenSSH `ssh` client, and the images do not include it (Dropbear's client is not compatible). SFTP works with
 the host binaries and the release archives on systems that have OpenSSH installed. `s3://`, `b2://` and `fs://` are
 not affected. A fix is tracked in FEATURES-TODO.md.
@@ -718,8 +718,8 @@ scripts/build-image.sh --type dhi-static            # shell-less dhi.io/static: 
 scripts/build-image.sh --type dhi-alpine            # Alpine/musl, musl allocator: searchdump-rs:<ver>-alpine
 scripts/build-image.sh --type public                # public Debian bases, no login (not default): <ver>-debian-public
 scripts/build-image.sh --platform both              # linux/amd64 + linux/arm64 manifest list (podman)
-scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:1.0.0-beta1-arm64
-scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:1.0.0-beta1 --push
+scripts/build-image.sh --platform linux/arm64 --tag registry.example.com/team/searchdump-rs:1.0.0-arm64
+scripts/build-image.sh --tag registry.example.com/team/searchdump-rs:1.0.0 --push
 scripts/build-image.sh --dry-run --type dhi-alpine  # print the podman commands only
 scripts/build-image.sh --help
 ```
@@ -745,13 +745,13 @@ make test-image            # --version, --help, non-root, compat symlinks (each 
 make test-image IMAGE_VARIANT=dhi-alpine   # the same for :<ver>-alpine (variants: dhi-debian, dhi-static,
                                            # dhi-alpine, public, alpine)
 make sbom scan             # syft SBOM (CycloneDX + SPDX), grype + trivy (fail on HIGH/CRITICAL) of IMAGE_VARIANT
-make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=1.0.0-beta1
+make image REGISTRY=registry.example.com/team IMAGE_NAME=searchdump IMAGE_TAG=1.0.0
 
 # podman
-podman run --rm -v "$PWD/dumps:/data:Z" localhost/searchdump-rs:1.0.0-beta1 \
+podman run --rm -v "$PWD/dumps:/data:Z" localhost/searchdump-rs:1.0.0 \
   --input=http://es:9200/my_index --output=/data/my_index.json --type=data
 # docker (same image, Node-style entrypoint name)
-docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/searchdump-rs:1.0.0-beta1 \
+docker run --rm -v "$PWD/dumps:/data" --entrypoint elasticdump localhost/searchdump-rs:1.0.0 \
   --input=/data/my_index.json --output=http://es:9200/my_index --type=data
 ```
 
@@ -777,14 +777,15 @@ anything is pushed or drafted. The draft contains:
 
 - `searchdump-rs-<version>-<target>.tar.gz` for x86_64 and aarch64, glibc (`*-linux-gnu`, glibc 2.28+, mimalloc) and
   musl (`*-linux-musl`, static): `searchdump`, `searchdump-multi`, the `elasticdump`, `elasticdump-rs` and
-  `multielasticdump` symlinks, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md` and `CHANGELOG.md`;
+  `multielasticdump` symlinks, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `README.md`, `CHANGELOG.md`, the whole
+  `examples/` tree, and `scripts/perf` (the release-eval harness);
 - `searchdump-rs-<version>.cdx.json`, a CycloneDX SBOM of the Rust dependencies;
 - a `.sha256` file per asset and a combined `SHA256SUMS`;
 - release notes from the version's `CHANGELOG.md` section (GitHub's generated notes if there is none), plus the image
   tags.
 
 Every archive, the SBOM and every pushed image have a GitHub build-provenance attestation:
-`gh attestation verify searchdump-rs-1.0.0-beta1-x86_64-unknown-linux-gnu.tar.gz --repo robertgoley/searchdump-rs`.
+`gh attestation verify searchdump-rs-1.0.0-x86_64-unknown-linux-gnu.tar.gz --repo robertgoley/searchdump-rs`.
 
 Container images: every image type is built, tested with `scripts/test-image.sh` and pushed to
 `ghcr.io/robertgoley/searchdump-rs:<version>-<type>` (`dhi-debian`, `dhi-static`, `dhi-alpine`, `public`, `alpine`;

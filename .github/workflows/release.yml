@@ -114,6 +114,13 @@ jobs:
           d="searchdump-rs-$VERSION-$TARGET"
           mkdir "$d"
           cp "$f" "target/$TARGET/release/searchdump-multi" LICENSE THIRD-PARTY-NOTICES.md README.md CHANGELOG.md "$d/"
+          # Whole examples/ tree (bash, docker-podman, kubernetes, all cases, .ini.example, READMEs).
+          cp -a examples "$d/"
+          # Release-eval harness and the rest of scripts/perf (results and baselines included;
+          # the tree is well under 1 MB). Drop bytecode if a runner has any.
+          mkdir -p "$d/scripts"
+          cp -a scripts/perf "$d/scripts/"
+          find "$d/scripts/perf" -type d -name __pycache__ -prune -exec rm -rf {} +
           # L-810c: compatibility names for commands written for the old binaries (relative symlinks;
           # tar keeps them as symlinks; on Windows-style extractors use the real binaries).
           ln -s searchdump "$d/elasticdump"

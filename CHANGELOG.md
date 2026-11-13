@@ -5,6 +5,60 @@ a version with a hyphen (`1.0.0-beta1`) is a pre-release. The release workflow
 (`.github/workflows/release.yml`) uses the section for a version as the release notes of its draft
 GitHub release.
 
+## 1.0.0
+
+First stable release. The program source is identical to 1.0.0-beta1 (only the version number changes). This tag adds
+documentation, the `examples/` tree, the release-eval performance harness, and the
+completed performance-suite results.
+
+### Disclaimer
+
+searchdump-rs is provided "as is", without warranty of any kind, as stated in the MIT license
+(and the Apache-2.0 license of the code it is modelled on). The authors are not liable for any
+damage from its use, including data loss, corruption, downtime or service disruption, in
+production or elsewhere. It has been stable and fast in our testing, but no test suite covers
+every cluster version, configuration, plugin and storage backend. Test in a non-production
+environment first, and verify every backup and restore yourself (restore it, compare document
+counts) before you rely on it. See
+[Disclaimer](README.md#disclaimer).
+
+### Added
+
+- **Examples.** The whole `examples/` tree ships in the repository and in every release archive:
+  bash, Docker/Podman, and Kubernetes dump and restore starters for minimum resources, fastest
+  dump, very large indexes, secure TLS and auth, object storage, cluster-to-cluster copy, and
+  multi-index runs, plus the `.ini.example` templates and READMEs.
+- **Release-eval harness.** `scripts/perf/release-eval.sh` (and the rest of `scripts/perf`,
+  including `run-suite.sh`, `suite.py`, `aggregate.py`, `selftest.py`, `RELEASE-EVAL.md`, and
+  the recorded baselines and v1.0.0-beta1 results) ships in every release archive so a Linux
+  host can time a published build against the usual engine set and, optionally, Node
+  elasticdump, then commit results back. See [`scripts/perf/RELEASE-EVAL.md`](scripts/perf/RELEASE-EVAL.md).
+  A live run also needs `scripts/it` from a repo checkout (engine images, `up.sh` / `down.sh`).
+- Performance-suite results for this code (measured on v1.0.0-beta1, whose binaries match this
+  release): 576 passed, 0 failed, 16 skipped; searchdump was a median 2.01× faster than Node
+  elasticdump and was never slower. See
+  [`scripts/perf/results/v1.0.0-beta1-L0.md`](scripts/perf/results/v1.0.0-beta1-L0.md).
+
+### Changed
+
+- Version is 1.0.0. No `src/` changes relative to 1.0.0-beta1. `Cargo.toml`, `Cargo.lock` and
+  the Dockerfile `VERSION` label are bumped to 1.0.0. The release archives now also include
+  `examples/` and `scripts/perf`.
+
+### Known issues
+
+- `sftp://` URLs do not work inside the container images. OpenDAL's SFTP backend runs the system OpenSSH `ssh`
+  client, which the images do not include (Dropbear's client is not compatible). SFTP works with the host binaries
+  and release archives on systems with OpenSSH installed. S3, B2 and `fs://` are not affected.
+- Backblaze B2 (`b2://`) is compile-tested only. It has not been run against a real B2 account (pending owner
+  credentials; see TESTING-TODO.md).
+
+### Upgrade notes
+
+- From 1.0.0-beta1: no binary or flag changes. Point image and archive tags at `1.0.0` instead of
+  `1.0.0-beta1`. The `examples/` and `scripts/perf` trees are new in the archives.
+- From earlier names (`elasticdump-rs` / `multielasticdump`): see the 1.0.0-beta1 upgrade notes below.
+
 ## 1.0.0-beta1
 
 First tagged release under the new name, as a beta. Version 1.0.0 will follow after a full
