@@ -8,8 +8,16 @@
 //! primary-shard count of the indices the input names and applies to scroll only (sliced PIT
 //! was measured faster with more slices than shards).
 //!
+//! **1.1-4a (2026-11-14): `--sliceCap=auto`, the default, caps only on Elasticsearch 7.10**
+//! ([`auto_applies`]). The 1.1 point-in-time perf run (scripts/perf/results/pit-1.1.md) showed
+//! the cap 63% faster for `dump-scroll-s2` on ES 7.10 but 45-59% slower sliced scrolls on
+//! ES 8.19 and 62-101% slower on OpenSearch 3, so other engines and unknown versions keep
+//! `--slices` as given (the pre-1.1-4 behaviour). `--sliceCap=min`/`total` still force the cap
+//! on any engine, with the basis below.
+//!
 //! Which shard count is the limit depends on how the engine assigns slices to shards
-//! (`--sliceCap=auto`, the default, picks it from the detected cluster version):
+//! (`--sliceCap=auto` picks it from the detected cluster version; on ES 7.10 that is the
+//! smallest count):
 //!
 //! - Elasticsearch 5.0-7.10 and every OpenSearch (1.x-3.x) assign slices per index, so every
 //!   index gets all the slices: the smallest primary-shard count is the limit ([`CapBasis::Min`]).
@@ -20,7 +28,8 @@
 //!   created on 9.5+ is back to per-shard filtering (elastic/elasticsearch#148664), so scroll
 //!   uses the smallest count again.
 //!
-//! An unknown or undetectable version uses the smallest count (the conservative choice).
+//! For the basis alone, an unknown version uses the smallest count; but `auto` does not cap
+//! at all when the version is unknown (1.1-4a).
 
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
@@ -117,11 +126,15 @@ pub fn select_basis(mode: SliceCap, info: Option<&ClusterInfo>, pit: bool) -> Ca
     }
 }
 
-/// Whether `--sliceCap=auto` needs the cluster version for `counts`: only when the smallest
-/// and the total count differ (more than one index), since both rules agree otherwise. A
-/// single-index scroll dump therefore makes no `GET /` request.
-pub fn needs_version(mode: SliceCap, counts: ShardCounts) -> bool {
-    mode == SliceCap::Auto && counts.min != counts.total
+/// Whether `--sliceCap=auto` (the default) caps at all on `info` (1.1-4a, 2026-11-14): only on
+/// Elasticsearch 7.10.x, where the cap was measured to help (`dump-scroll-s2` 63% faster). On
+/// Elasticsearch 8.19 and OpenSearch 3 it made sliced scrolls 45-101% slower
+/// (scripts/perf/results/pit-1.1.md), so every other engine and an unknown version keep
+/// `--slices` as given, as before 1.1-4. `--sliceCap=min`/`total` still cap on any engine.
+pub fn auto_applies(info: Option<&ClusterInfo>) -> bool {
+    info.is_some_and(|i| {
+        i.flavor == Flavor::Elastic && i.version.major == 7 && i.version.minor == 10
+    })
 }
 
 /// Numeric field types with doc values that the slice `field` option accepts.
@@ -395,22 +408,23 @@ mod tests {
     }
 
     #[test]
-    fn version_needed_only_for_auto_over_several_indices() {
-        let one = ShardCounts {
-            min: 3,
-            total: 3,
-            indices: 1,
-        };
-        let two = ShardCounts {
-            min: 1,
-            total: 6,
-            indices: 2,
-        };
-        assert!(!needs_version(SliceCap::Auto, one));
-        assert!(needs_version(SliceCap::Auto, two));
-        for m in [SliceCap::Min, SliceCap::Total, SliceCap::Off] {
-            assert!(!needs_version(m, two), "{m:?}");
+    fn auto_caps_only_on_elasticsearch_7_10() {
+        for v in ["7.10.0", "7.10.2"] {
+            assert!(auto_applies(Some(&es(v))), "ES {v}");
         }
+        let mut oss = es("7.10.2");
+        oss.oss = true;
+        assert!(auto_applies(Some(&oss)), "ES 7.10.2 OSS");
+        for v in [
+            "5.6.16", "6.8.23", "7.9.3", "7.11.0", "7.17.29", "8.19.23", "9.1.2", "9.5.0",
+        ] {
+            assert!(!auto_applies(Some(&es(v))), "ES {v}");
+        }
+        // OpenSearch never, including one reporting 7.10.2 (detected at its real version)
+        for v in ["1.3.20", "2.19.7", "3.0.0", "3.9.0", "7.10.2"] {
+            assert!(!auto_applies(Some(&os(v))), "OS {v}");
+        }
+        assert!(!auto_applies(None), "unknown version");
     }
 
     #[test]

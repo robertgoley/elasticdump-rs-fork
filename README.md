@@ -187,8 +187,8 @@ Details: [Bulk dump and load](#bulk-dump-and-load-searchdump-multi).
 * **Retrieval:** `--limit` (default 100), `--offset`, `--size`, `--searchBody` (JSON or `@file`),
   `--searchWithTemplate`, `--scrollTime`, `--scrollId`, `--searchAfter`, `--pit`, `--pitKeepAlive`,
   `--sourceOnly`, `--esCompress`, `--headers`/`--params` (+ `--input-*`/`--output-*`), `--scrollDocSort` (opt-in,
-  default off; see below), `--slices` (with `--sliceCap=auto|min|total|false`, default `auto`: a scroll dump lowers
-  `--slices` to the primary-shard count the engine version slices by, and `--sliceField`; see
+  default off; see below), `--slices` (with `--sliceCap=auto|min|total|false`, default `auto`: on Elasticsearch 7.10 a scroll dump
+  lowers `--slices` to the primary-shard count, other engines keep it as given; and `--sliceField`; see
   [Performance](#performance) Tuning).
 * **Writing:** `--bulkAction index|create|update|delete`, `--handleVersion`, `--versionType`, `--noRefresh`,
   `--refreshInterval` (seconds; default 5, `0` = after every batch as in Node; see below),
@@ -1039,20 +1039,24 @@ A 1M-doc dump (about 7 s, bound by the cluster) took no longer with gzip 1/6 or 
 6, so it isn't worth using; `--compressionLevel 9` with gzip and levels 19 and up with zstd print a warning.
 
 Tuning: sliced retrieval (`--slices`) is what uses more cores. With scroll, match `--slices` to the primary-shard
-count (more slices than shards adds a per-document slice filter); since 1.1 a scroll dump does this itself: `--slices`
-above the primary-shard count of the input indices is lowered to it with a warning (one shard: unsliced). Which count
-depends on how the engine assigns slices, and `--sliceCap=auto` (the default; `true` is an alias) picks it from the
-cluster version:
+count (more slices than shards adds a per-document slice filter). Since 1.1 a scroll dump on **Elasticsearch 7.10**
+does this itself: `--slices` above the smallest primary-shard count of the input indices is lowered to it with a
+warning (one shard: unsliced). On every other engine, and when the version cannot be detected, `--sliceCap=auto` (the
+default; `true` is an alias) keeps `--slices` as given (1.1-4a, owner decision 2026-11-14): the 1.1 point-in-time
+perf run measured the cap 63% faster for `dump-scroll-s2` on ES 7.10 but 45–59% slower sliced scrolls on ES 8.19
+and 62–101% slower on OpenSearch 3 ([scripts/perf/results/pit-1.1.md](scripts/perf/results/pit-1.1.md)).
+`auto` reads the version with `GET /`. If you force the cap on another engine, the count that matters depends on how
+it assigns slices:
 
-| Engine | Slices are assigned | `auto` caps scroll at |
-|---|---|---|
-| Elasticsearch 5.0–7.10, OpenSearch 1.x–3.x | per index (every index gets all the slices) | the smallest primary-shard count |
-| Elasticsearch 7.11–9.4 | across all shards of the request ([elastic/elasticsearch#65706](https://github.com/elastic/elasticsearch/pull/65706)) | the total primary-shard count |
-| Elasticsearch 9.5+ | across shards for PIT only; scroll on 9.5+ indices filters per shard again ([elastic/elasticsearch#148664](https://github.com/elastic/elasticsearch/pull/148664)) | the smallest primary-shard count |
-| version not detectable | — | the smallest primary-shard count |
+| Engine | Slices are assigned | `auto` | `--sliceCap=min` / `total` |
+|---|---|---|---|
+| Elasticsearch 7.10 | per index (every index gets all the slices) | caps at the smallest primary-shard count | smallest / total |
+| Elasticsearch 5.0–7.9, OpenSearch 1.x–3.x | per index | no cap | smallest / total |
+| Elasticsearch 7.11–9.4 | across all shards of the request ([elastic/elasticsearch#65706](https://github.com/elastic/elasticsearch/pull/65706)); `total` matches | no cap | smallest / total |
+| Elasticsearch 9.5+ | across shards for PIT only; scroll on 9.5+ indices filters per shard again ([elastic/elasticsearch#148664](https://github.com/elastic/elasticsearch/pull/148664)) | no cap | smallest / total |
+| version not detectable | — | no cap | smallest / total |
 
-With one input index both counts are the same and no version request (`GET /`) is made. `--sliceCap=min` and
-`--sliceCap=total` force one count without detection; `--sliceCap=false` keeps the number as given, and `--sliceField=<field>` (a numeric or date field with doc values,
+`--sliceCap=min` and `--sliceCap=total` force one count on any engine without version detection; `--sliceCap=false` keeps the number as given, and `--sliceField=<field>` (a numeric or date field with doc values,
 checked against the mapping) slices on that field instead of `_id` and is not capped. When the shard count cannot be
 read (no `view_index_metadata` privilege) the slices are used as given, with a warning. PIT (`--searchAfter --pit`)
 tolerates more slices than shards and is never capped. Keep `--workers` ≥ `--slices`. Sliced output does not keep a global document order.

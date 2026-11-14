@@ -1,5 +1,11 @@
 # Point-in-time perf: release/1.1, step by step
 
+> **1.1-4a note (2026-11-14, owner decision):** after this run the default `--sliceCap=auto` was limited to
+> Elasticsearch 7.10. The tables below measure 1.1-4 as committed (`aee5dfb`), where the cap also ran on es819 and
+> os3 and slowed `dump-scroll-s4/s8` there (+45%/+59% on es819, +62%/+101% on os3). With 1.1-4a those engines take
+> the pre-1.1-4 path (slices as given, like `--sliceCap=false`); es710 keeps the cap (-63% s2, -34% s4). The full
+> batch was not re-run for 1.1-4a.
+
 Noise threshold: a change is **bold** when it is at least 5% and at least 2× the larger wall CV of the two cells. Cells: searchdump wall median (s) and the change against the previous step.
 
 | # | step | commit | perf host id | subject |

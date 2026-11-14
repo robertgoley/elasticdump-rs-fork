@@ -81,12 +81,15 @@ unchanged.
   wrote (after `--prefix` / `--suffix` / rename; data-stream creates record the stream), split so
   each URL path stays under ~3 KB, and sends nothing when nothing was written. With an output index
   the request is unchanged from 1.0.
-- **`--slices` on a scroll dump is capped to the shard count.** In 1.0, `--slices` was used as
-  given, even when it was higher than the primary-shard count, which can make the engine slower
-  than an unsliced scroll. 1.1 lowers it (with a warning) unless you pass `--sliceCap=false`. With several input indices the
-  limit follows the engine (`--sliceCap=auto`): Elasticsearch 7.11–9.4 spread slices across all
-  shards of the request, so the total primary-shard count is used; Elasticsearch 5.0–7.10, 9.5+
-  (scroll) and OpenSearch use the smallest count, as does an undetectable version. When
+- **`--slices` on a scroll dump is capped to the shard count on Elasticsearch 7.10.** In 1.0,
+  `--slices` was used as given, even when it was higher than the primary-shard count, which made
+  ES 7.10 slower than an unsliced scroll. On ES 7.10, 1.1 lowers it to the smallest primary-shard
+  count of the input indices (with a warning) unless you pass `--sliceCap=false`. **Every other
+  engine, and an undetectable version, keeps `--slices` as given** (1.1-4a, owner decision
+  2026-11-14): the point-in-time perf run showed the cap making sliced scrolls 45–59% slower on
+  ES 8.19 and 62–101% slower on OpenSearch 3 (see Performance below). `--sliceCap=min|total`
+  still force the cap on any engine (Elasticsearch 7.11–9.4 spread slices across all shards of
+  the request, so `total` matches them; the others slice per index). When
   settings cannot be read (for example no `view_index_metadata` privilege), the requested number is
   kept and a warning is printed. PIT (`--searchAfter --pit`) is never capped.
 - **`--scrollDocSort` does not change default dumps.** Leave it off and the scroll request and the
@@ -157,9 +160,9 @@ No Node compatibility difference (searchdump-only behaviour, or the same request
 - **If you restore many indices into their original names** (no `--output-index`), only those
   indices are refreshed. That is intentional. Unrelated indices on the same cluster are no longer
   touched.
-- **If you pass `--slices` higher than the primary-shard count** and want that number kept, add
-  `--sliceCap=false`. To pin the limit instead of letting the version decide, use `--sliceCap=min`
-  or `--sliceCap=total`. Live tests that exercise over-slicing already do this. PIT is not capped.
+- **If you pass `--slices` higher than the primary-shard count on ES 7.10** and want that number
+  kept, add `--sliceCap=false`. Other engines keep it without a flag (1.1-4a). To force a limit
+  on any engine, use `--sliceCap=min` or `--sliceCap=total`. Live tests that exercise over-slicing already do this. PIT is not capped.
 - **Leave `--scrollDocSort` off** when you compare dump files with Node or with 1.0, or when a
   scoring query / user sort / PIT / search-after is in use (the flag already refuses those
   cases). Turn it on only when you want `_doc` order on a plain scroll dump.
@@ -204,7 +207,7 @@ noise-aware): [`scripts/perf/results/pit-1.1.md`](../../scripts/perf/results/pit
 | 1.1-2 targeted refresh | Only measurable on es710 vs beta1: slower (geomean 1.31, 30 of 35 cases slower), restore-none 4.99 s to 7.17 s; restores +39..+48%. Likely box restore, not the code; not confirmed on es819/os3 (first step there). |
 | 1.1-1 refresh every 5 s | The clear win, restores and copy: es710 restore-none 7.17 to 5.58 s (-22%), restore-gzip -24%, restore-small -33%; es819 restore-none 6.83 to 4.65 s (-32%), restore-gzip -28%, restore-small -32%; os3 restore-none 6.63 to 4.68 s (-29%), restore-gzip -39%, restore-zstd -41%. Dumps mostly flat (es819 dump-none -13%, os3 -22%). Faster/slower cases: 14/0, 11/2, 12/0. |
 | 1.1-3 `--scrollDocSort` (opt-in, off by default) | No intended default effect; es710 restores +3..+15% (restore-zstd +15% bold), es819 restore-gzip -12% and copy -16%, os3 restore-big -23%. Faster/slower 2/6, 7/3, 7/3: noise. |
-| 1.1-4 slice cap | es710: dump-scroll-s2 2.35 to 0.88 s (-63%) and s4 1.41 to 0.93 s (-34%), s8 -5%: the intended fix. es819/os3 were already fast uncapped and got slower: dump-scroll-s4 0.46 to 0.67 s (+45%) / 0.43 to 0.69 s (+62%), dump-scroll-s8 0.42 to 0.67 s (+59%) / 0.32 to 0.64 s (+101%). Use `--sliceCap=false` to keep the old behaviour. dump-pit-s* is uncapped (es819 s4 -20%, s8 -13%). |
+| 1.1-4 slice cap | es710: dump-scroll-s2 2.35 to 0.88 s (-63%) and s4 1.41 to 0.93 s (-34%), s8 -5%: the intended fix. es819/os3 were already fast uncapped and got slower: dump-scroll-s4 0.46 to 0.67 s (+45%) / 0.43 to 0.69 s (+62%), dump-scroll-s8 0.42 to 0.67 s (+59%) / 0.32 to 0.64 s (+101%). **1.1-4a (2026-11-14) limits the default cap to ES 7.10**, so es819/os3 are back to the pre-1.1-4 uncapped behaviour (code path identical to `--sliceCap=false` there; not re-measured with the full batch). dump-pit-s* is uncapped (es819 s4 -20%, s8 -13%). |
 | 1.1-9 compression thread | No clear gain: es710 dump-gzip -5%, dump-zstd +10%; es819 dump-gzip +5%, dump-split-gzip +14% (bold); os3 dump-zstd +24% (bold), dump-split-gzip -6%. Faster/slower 1/3, 7/10, 6/5. |
 | 1.1-6 encode overlap | Restores gain on ES: es710 restore-none 5.47 to 4.52 s (-17%), restore-gzip -21%; es819 restore-none -16%, restore-zstd -19%. os3 shows no gain (restore-none +15%, gzip -4%, zstd -6%). Faster/slower 10/1, 8/4, 4/5. |
 | 1.1-8 tokio::process | Within noise for `searchdump-multi`: es710 multi-restore-p1 +19% (bold), multi-restore-p8 +13%; es819 multi-restore-p8 +19% (n.s.); os3 multi-restore-p1 +25% (bold), multi-dump-p1 -17%. Faster/slower 3/8, 4/6, 12/4. |

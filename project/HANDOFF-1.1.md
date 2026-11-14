@@ -126,6 +126,21 @@ beta1-suite notes live in `/workspace/fix-wt/project/HANDOFF-perf-20261111.md`
   batch (t166u/t167u); `--refreshInterval` default 5 s plus a final refresh
   (`0` = Node's per-batch refresh); `--scrollDocSort` is opt-in; slice cap
   on with a warning (`--sliceCap=false` to turn it off).
+- **1.1-4a (owner decision 2026-11-14, t83u): the default `--sliceCap=auto`
+  caps only on Elasticsearch 7.10.x.** The PIT batch showed the cap fixing
+  es710 (`dump-scroll-s2` -63%, `s4` -34%) but slowing es819 (`s4` +45%,
+  `s8` +59%) and os3 (`s4` +62%, `s8` +101%). Other engines and an
+  undetectable version keep `--slices` as given (the pre-1.1-4 path);
+  `--sliceCap=min|total` still force the cap anywhere. `auto` now reads
+  `GET /` for every sliced scroll dump (cached client info). Code:
+  `retrieval::slices::auto_applies`, `plan_slices` in src/lib.rs; tests:
+  unit `auto_caps_only_on_elasticsearch_7_10`, contract
+  `slice_cap_auto_applies_only_on_elasticsearch_7_10`,
+  `slice_cap_auto_on_one_index_caps_only_on_es_7_10`. The full PIT batch
+  was not re-run; notes in CHANGELOG, RELEASE-NOTES-1.1.md, README Tuning,
+  NODE-DIFFERENCES, scripts/perf/README.md and pit-1.1.md. A follow-up
+  could re-measure es819/os3 `dump-scroll-s*` to confirm the return to the
+  1.1-2 numbers.
 
 ### Commits after `0847643` (oldest first)
 

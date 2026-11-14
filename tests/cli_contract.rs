@@ -389,7 +389,7 @@ async fn scroll_doc_sort_is_opt_in_and_strips_the_hit_sort() {
 }
 
 // 1.1-4: --slices above the primary-shard count is capped (one shard: unsliced) with a
-// warning; --sliceCap=false keeps it; --sliceField adds "field" to every slice and is checked
+// warning (on Elasticsearch 7.10, 1.1-4a); --sliceCap=false keeps it; --sliceField adds "field" to every slice and is checked
 // against the mapping (a keyword field is refused before any search).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slices_are_capped_to_primary_shards_and_slice_field_is_checked() {
@@ -434,7 +434,11 @@ async fn slices_are_capped_to_primary_shards_and_slice_field_is_checked() {
             Some("keyword field"),
         ),
     ] {
+        // 1.1-4a: the default cap applies on Elasticsearch 7.10 only
         let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(
+                r#"{"version":{"number":"7.10.2","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+            )))
             .route(Route::prefix("GET", "/idx/_settings").reply(Reply::ok(
                 r#"{"idx":{"settings":{"index.number_of_shards":"1"}}}"#,
             )))
@@ -492,7 +496,11 @@ async fn slices_are_capped_to_primary_shards_and_slice_field_is_checked() {
 async fn slices_are_unchanged_when_wildcard_settings_match_no_index() {
     use support::router_mock::{Reply, Route, RouterMock};
     let empty = page("s0", &[], 0);
+    // ES 7.10 so the default cap reads the shard count (1.1-4a)
     let m = RouterMock::builder()
+        .route(Route::exact("GET", "/").reply(Reply::ok(
+            r#"{"version":{"number":"7.10.2","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+        )))
         .route(Route::prefix("GET", "/logs-").reply(Reply::ok("{}")))
         .route(Route::contains("POST", "/_search").reply(Reply::ok(empty.clone())))
         .route(
@@ -541,12 +549,12 @@ async fn slices_are_unchanged_when_wildcard_settings_match_no_index() {
     assert_eq!(ids, vec![0, 1, 2, 3]);
 }
 
-// 1.1-4: --sliceCap=auto (default) over input indices with different shard counts (1 + 5):
-// Elasticsearch 7.11-9.4 caps at the total (6 slices), OpenSearch and Elasticsearch 9.5+ at
-// the smallest count (unsliced, the warning names the total), an undetectable version at the
-// smallest count; min / total skip version detection.
+// 1.1-4 / 1.1-4a: --sliceCap=auto (default) over input indices with different shard counts
+// (1 + 5) caps only on Elasticsearch 7.10 (smallest count: unsliced); Elasticsearch 7.17, 8.19,
+// 9.5, OpenSearch and an undetectable version keep --slices 8 as given, with no cap warning;
+// min / total force the cap on any engine and skip version detection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
+async fn slice_cap_auto_applies_only_on_elasticsearch_7_10() {
     use support::router_mock::{Reply, Route, RouterMock};
     let empty = page("s0", &[], 0);
     let es = |v: &str| {
@@ -559,64 +567,73 @@ async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
             r#"{{"version":{{"distribution":"opensearch","number":"{v}"}},"tagline":"The OpenSearch Project: https://opensearch.org/"}}"#
         )
     };
-    // (case, GET / reply (None: 403), extra flags, searches, version fetched, warning)
-    type Case<'a> = (&'a str, Option<String>, Vec<&'a str>, usize, bool, &'a str);
+    // (case, GET / reply (None: 403), extra flags, searches, version fetched, warning; None:
+    // no cap warning at all)
+    type Case<'a> = (
+        &'a str,
+        Option<String>,
+        Vec<&'a str>,
+        usize,
+        bool,
+        Option<&'a str>,
+    );
     let cases: Vec<Case> = vec![
-        (
-            "ES 8.19 auto: total",
-            Some(es("8.19.3")),
-            vec![],
-            6,
-            true,
-            "6 primary shards of the 2 input indices in total",
-        ),
         (
             "ES 7.10 auto: min",
             Some(es("7.10.2")),
             vec![],
             1,
             true,
-            "--sliceCap=total",
-        ),
-        (
-            "ES 9.5 auto: min for scroll",
-            Some(es("9.5.0")),
-            vec![],
-            1,
-            true,
-            "running unsliced",
-        ),
-        (
-            "OpenSearch auto: min",
-            Some(os("2.19.0")),
-            vec!["--sliceCap=auto"],
-            1,
-            true,
-            "6 primary shards in total",
+            Some("--sliceCap=total"),
         ),
         (
             "true is auto",
-            Some(es("8.19.3")),
+            Some(es("7.10.2")),
             vec!["--sliceCap=true"],
-            6,
-            true,
-            "in total",
-        ),
-        (
-            "unknown version: min",
-            None,
-            vec![],
             1,
             true,
-            "could not detect the cluster version",
+            Some("running unsliced"),
         ),
+        (
+            "ES 7.17 auto: as given",
+            Some(es("7.17.29")),
+            vec![],
+            8,
+            true,
+            None,
+        ),
+        (
+            "ES 8.19 auto: as given",
+            Some(es("8.19.3")),
+            vec![],
+            8,
+            true,
+            None,
+        ),
+        (
+            "ES 9.5 auto: as given",
+            Some(es("9.5.0")),
+            vec![],
+            8,
+            true,
+            None,
+        ),
+        (
+            "OpenSearch auto: as given",
+            Some(os("3.3.0")),
+            vec!["--sliceCap=auto"],
+            8,
+            true,
+            None,
+        ),
+        ("unknown version: as given", None, vec![], 8, true, None),
         (
             "total forced on OpenSearch",
             Some(os("2.19.0")),
             vec!["--sliceCap=total"],
             6,
             false,
-            "in total",
+            Some("in total"),
         ),
         (
             "min forced on ES 8",
@@ -624,7 +641,7 @@ async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
             vec!["--sliceCap=min"],
             1,
             false,
-            "running unsliced",
+            Some("running unsliced"),
         ),
     ];
     for (case, root, extra, want_searches, want_root, want_warn) in cases {
@@ -658,7 +675,10 @@ async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
         let o = run_async(a, vec![]).await;
         let err = stderr(&o);
         assert!(o.status.success(), "{case}: {err}");
-        assert!(err.contains(want_warn), "{case}: {err}");
+        match want_warn {
+            Some(w) => assert!(err.contains(w), "{case}: {err}"),
+            None => assert!(!err.contains("primary shard"), "{case}: capped: {err}"),
+        }
         let reqs = m.requests();
         assert_eq!(
             reqs.iter().any(|r| r.method == "GET" && r.path == "/"),
@@ -681,49 +701,62 @@ async fn slice_cap_auto_picks_min_or_total_from_the_cluster_version() {
     }
 }
 
-// 1.1-4: a single input index needs no version: --sliceCap=auto makes no GET / request.
+// 1.1-4a: a single input index is capped by --sliceCap=auto on Elasticsearch 7.10 only; on
+// ES 8.19 and OpenSearch 3 the dump keeps --slices 8 (the version is read with GET /).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn slice_cap_auto_on_one_index_does_not_detect_the_version() {
+async fn slice_cap_auto_on_one_index_caps_only_on_es_7_10() {
     use support::router_mock::{Reply, Route, RouterMock};
     let empty = page("s0", &[], 0);
-    let m = RouterMock::builder()
-        .route(Route::prefix("GET", "/idx/_settings").reply(Reply::ok(
-            r#"{"idx":{"settings":{"index.number_of_shards":"3"}}}"#,
-        )))
-        .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(empty.clone())))
-        .route(
-            Route::prefix("DELETE", "/_search/scroll")
-                .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+    for (root, want) in [
+        (
+            r#"{"version":{"number":"7.10.2","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+            3,
+        ),
+        (
+            r#"{"version":{"number":"8.19.23","build_flavor":"default"},"tagline":"You Know, for Search"}"#,
+            8,
+        ),
+        (
+            r#"{"version":{"distribution":"opensearch","number":"3.3.0"},"tagline":"The OpenSearch Project: https://opensearch.org/"}"#,
+            8,
+        ),
+    ] {
+        let m = RouterMock::builder()
+            .route(Route::exact("GET", "/").reply(Reply::ok(root)))
+            .route(Route::prefix("GET", "/idx/_settings").reply(Reply::ok(
+                r#"{"idx":{"settings":{"index.number_of_shards":"3"}}}"#,
+            )))
+            .route(Route::contains("POST", "/idx/_search").reply(Reply::ok(empty.clone())))
+            .route(
+                Route::prefix("DELETE", "/_search/scroll")
+                    .reply(Reply::ok(r#"{"succeeded":true,"num_freed":1}"#)),
+            )
+            .start()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("d.json");
+        let o = run_async(
+            vec![
+                "--input".into(),
+                format!("{}/idx", m.url()),
+                "--output".into(),
+                out.to_str().unwrap().into(),
+                "--slices".into(),
+                "8".into(),
+            ],
+            vec![],
         )
-        .start()
         .await;
-    let dir = tempfile::tempdir().unwrap();
-    let out = dir.path().join("d.json");
-    let o = run_async(
-        vec![
-            "--input".into(),
-            format!("{}/idx", m.url()),
-            "--output".into(),
-            out.to_str().unwrap().into(),
-            "--slices".into(),
-            "8".into(),
-        ],
-        vec![],
-    )
-    .await;
-    let err = stderr(&o);
-    assert!(o.status.success(), "{err}");
-    assert!(err.contains("using --slices 3"), "{err}");
-    let reqs = m.requests();
-    assert!(
-        !reqs.iter().any(|r| r.method == "GET" && r.path == "/"),
-        "{reqs:#?}"
-    );
-    let searches = reqs
-        .iter()
-        .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
-        .count();
-    assert_eq!(searches, 3);
+        let err = stderr(&o);
+        assert!(o.status.success(), "{root}: {err}");
+        assert_eq!(err.contains("using --slices 3"), want == 3, "{root}: {err}");
+        let searches = m
+            .requests()
+            .iter()
+            .filter(|r| r.method == "POST" && r.path.ends_with("/_search"))
+            .count();
+        assert_eq!(searches, want, "{root}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

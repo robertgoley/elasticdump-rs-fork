@@ -261,8 +261,9 @@ their own `PERF_HOST_ID` (for example `grokbox-1.1-1.1-1`), never against the v1
 baseline files.
 
 Since 1.1-4 a scroll dump lowers `--slices` to the primary-shard count of its input (with a
-warning). The `logs` index has one shard, so `dump-scroll-s2/s4/s8` run unsliced with a 1.1
-build and measure about what `dump-scroll-s1` does; a beta1 build still slices them. The cases
+warning); since 1.1-4a only on Elasticsearch 7.10. The `logs` index has one shard, so on es710
+`dump-scroll-s2/s4/s8` run unsliced with a 1.1 build and measure about what `dump-scroll-s1`
+does; other engines (and a beta1 build) still slice them. The cases
 keep their names and flags so the manifest (and the identity) stays the same; the PIT report
 shows the step at 1.1-4. `dump-pit-s*` are not capped.
 

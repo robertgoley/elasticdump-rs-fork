@@ -514,9 +514,9 @@ async fn get_json(
 /// 1.1-4: the slice count to use. `--sliceField` is checked against the mapping and keeps
 /// `--slices` as given; otherwise a **scroll** dump (unless `--sliceCap=false`) has `--slices`
 /// lowered to the primary-shard count of the input indices, with a warning. `--sliceCap=auto`
-/// (default) picks the smallest or the total count from the cluster version
-/// ([`retrieval::slices::auto_basis`]); the version (`GET /`) is only fetched when the two
-/// differ (several input indices), and an undetectable version uses the smallest. PIT is not
+/// (default) caps only on Elasticsearch 7.10 (1.1-4a, [`retrieval::slices::auto_applies`]);
+/// other engines and an undetectable version keep `--slices` as given. `min`/`total` force the
+/// cap on any engine. PIT is not
 /// capped: it was measured faster with more slices than shards (README "Tuning"). A metadata
 /// request the user may not be allowed to make only produces a warning.
 async fn plan_slices(
@@ -558,6 +558,35 @@ async fn plan_slices(
     if mode == retrieval::slices::SliceCap::Off || search_type != SearchType::Scroll {
         return Ok(requested);
     }
+    // 1.1-4a: the default (auto) caps only on Elasticsearch 7.10, where the cap was measured to
+    // help; on ES 8.19 and OpenSearch 3 it made sliced scrolls 45-101% slower
+    // (scripts/perf/results/pit-1.1.md), so every other engine, and an undetectable version,
+    // keeps --slices as given (the pre-1.1-4 behaviour). --sliceCap=min/total still force it.
+    let mut auto_info = None;
+    if mode == retrieval::slices::SliceCap::Auto {
+        match client
+            .info(retry, &tokio_util::sync::CancellationToken::new())
+            .await
+        {
+            Ok(info) if retrieval::slices::auto_applies(Some(info)) => {
+                auto_info = Some(info.clone());
+            }
+            Ok(info) => {
+                log::debug!(
+                    "--sliceCap=auto: {} {} is not Elasticsearch 7.10, so --slices {requested} is used as given",
+                    info.flavor_name(),
+                    info.version
+                );
+                return Ok(requested);
+            }
+            Err(e) => {
+                log::debug!(
+                    "--sliceCap=auto: could not detect the cluster version ({e:#}); using --slices {requested} as given"
+                );
+                return Ok(requested);
+            }
+        }
+    }
     match get_json(
         client,
         retry,
@@ -569,22 +598,7 @@ async fn plan_slices(
     {
         Ok(settings) => match retrieval::slices::primary_shard_counts(&settings) {
             Some(counts) => {
-                let info = if retrieval::slices::needs_version(mode, counts) {
-                    match client
-                        .info(retry, &tokio_util::sync::CancellationToken::new())
-                        .await
-                    {
-                        Ok(info) => Some(info.clone()),
-                        Err(e) => {
-                            log::warn!(
-                                "--sliceCap=auto: could not detect the cluster version ({e:#}); capping --slices to the smallest primary-shard count of the input indices"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
+                let info = auto_info;
                 let basis = retrieval::slices::select_basis(mode, info.as_ref(), false);
                 log::debug!(
                     "--sliceCap={}: {:?} primary-shard count of {:?}{}",

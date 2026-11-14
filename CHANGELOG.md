@@ -32,10 +32,10 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
 - **`--scrollDocSort`** (opt-in, default off). Adds `"sort":["_doc"]` to an unscored scroll
   body that has no user sort.
 - **`--sliceCap=auto|min|total|false`** (default `auto`; `true` is an alias of `auto`) and
-  **`--sliceField=<field>`**. A scroll dump caps `--slices` to the primary-shard count unless
-  `--sliceCap=false`; `auto` uses the total count on Elasticsearch 7.11-9.4 and the smallest
-  count on Elasticsearch 5.0-7.10, 9.5+, OpenSearch and undetectable versions. `--sliceField`
-  slices on a numeric or date field with doc values.
+  **`--sliceField=<field>`**. `auto` caps a scroll dump's `--slices` to the smallest
+  primary-shard count on Elasticsearch 7.10 only and keeps it as given on every other engine
+  and undetectable versions (1.1-4a); `min` / `total` force the cap on any engine; `false`
+  never caps. `--sliceField` slices on a numeric or date field with doc values.
 - **`searchdump-multi --verifyCounts`**. Always re-read dumped or loaded data and fail the
   index when the child's reported record count differs.
 
@@ -59,7 +59,14 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
   object, not the body, so it never actually sends the sort and writes `"_score": 1`.
   NODE-DIFFERENCES.md #27.
 
-- **Scroll slices capped to the shard count (1.1-4).** A sliced scroll with more slices than
+- **Scroll slices capped to the shard count on Elasticsearch 7.10 (1.1-4, limited in 1.1-4a).**
+  1.1-4a (owner decision 2026-11-14): the default `--sliceCap=auto` now caps only on
+  Elasticsearch 7.10.x. The point-in-time perf run (`scripts/perf/results/pit-1.1.md`) showed the
+  cap fixing ES 7.10 (`dump-scroll-s2` -63%, `s4` -34%) but slowing sliced scrolls on ES 8.19
+  (`s4` +45%, `s8` +59%) and OpenSearch 3 (`s4` +62%, `s8` +101%), so every other engine keeps
+  the pre-1.1-4 behaviour (`--slices` as given; `auto` reads the version with `GET /`). The
+  version-aware basis below now applies only when the cap runs (ES 7.10, or a forced
+  `--sliceCap=min|total`). Original 1.1-4 text: a sliced scroll with more slices than
   primary shards makes the engine filter every document of a shard per extra slice, which can
   be slower than an unsliced scroll. A scroll dump now reads `index.number_of_shards` of the
   input indices and lowers `--slices` to it with a warning (one shard: unsliced). The count is
@@ -131,9 +138,9 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
 - **Refresh default.** Scripts that need documents to become searchable after every batch
   should pass `--refreshInterval=0`. `--noRefresh` is unchanged and wins over
   `--refreshInterval`.
-- **Scroll `--slices`.** A value higher than the primary-shard count is now lowered, with a
-  warning (on a multi-index dump, the smallest or the total count depending on the engine
-  version; see README "Tuning"). Pass `--sliceCap=false` to keep the requested number, or
+- **Scroll `--slices`.** On Elasticsearch 7.10 a value higher than the primary-shard count is
+  now lowered, with a warning (the smallest count of the input indices); other engines keep it
+  as given (1.1-4a; see README "Tuning"). Pass `--sliceCap=false` to keep the requested number, or
   `--sliceCap=min|total` to choose the count. PIT is not capped.
 - **Dump lines.** Unchanged unless `--scrollDocSort` is set (then `"_score": null`, and the
   returned `sort` member is not written). Leave the flag off to stay identical to 1.0 and
@@ -152,8 +159,8 @@ Point-in-time results for each 1.1 commit (es710, es819, os3; plain) finished 20
 [`project/release/RELEASE-NOTES-1.1.md`](project/release/RELEASE-NOTES-1.1.md#performance) and the full tables in
 [`scripts/perf/results/pit-1.1.md`](scripts/perf/results/pit-1.1.md). Short version: the 5 s refresh
 cadence (1.1-1) cut restore wall time by roughly 20-40%; the slice cap (1.1-4) fixes the es710 over-sliced
-scroll dumps (-34..-63%) but slows already-fast multi-shard scroll slices on ES 8.19 / OpenSearch 3 (opt out with
-`--sliceCap=false`); the other items are within noise.
+scroll dumps (-34..-63%) but slowed already-fast scroll slices on ES 8.19 / OpenSearch 3, so 1.1-4a limits the
+default cap to ES 7.10 (not re-measured with the full batch); the other items are within noise.
 
 ## 1.0.0-beta1
 

@@ -568,11 +568,11 @@ pub struct Cli {
     pub output_insecure: Option<bool>,
 
     // ------------------------------------------------ rs extensions (perf)
-    /// Extension: parallel slices for sliced scroll / PIT (0 = unsliced); scroll slices are capped to the input indices' primary-shard count (see --sliceCap) unless --sliceCap=false or --sliceField
+    /// Extension: parallel slices for sliced scroll / PIT (0 = unsliced); on Elasticsearch 7.10, scroll slices are capped to the input indices' primary-shard count (see --sliceCap) unless --sliceCap=false or --sliceField
     #[arg(long, default_value_t = 0)]
     pub slices: usize,
 
-    /// Extension: for scroll, lower --slices to the primary-shard count, with a warning: auto (default; true is an alias) uses the total count on Elasticsearch 7.11-9.4 and the smallest count per index on Elasticsearch 5.0-7.10, 9.5+, OpenSearch and unknown versions; min / total force one; false keeps --slices as given. PIT is never capped
+    /// Extension: for scroll, lower --slices to the primary-shard count, with a warning: auto (default; true is an alias) caps only on Elasticsearch 7.10 (smallest count per index) and keeps --slices as given on every other engine and unknown versions (1.1-4a: the cap slowed sliced scrolls on ES 8.19 and OpenSearch 3); min / total force the smallest or total count on any engine; false never caps. PIT is never capped
     #[arg(long = "sliceCap", num_args = 0..=1, default_missing_value = "auto", value_parser = crate::retrieval::slices::parse_slice_cap)]
     pub slice_cap: Option<crate::retrieval::slices::SliceCap>,
 
