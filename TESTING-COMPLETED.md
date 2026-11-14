@@ -6,7 +6,7 @@ A one-screen engine coverage matrix (dump, restore, PIT, slices, storage, TLS) i
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 210 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-645b (`git log -1 --grep '^L-645b'`; the next commit fills in its sha).
+Total: 211 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-804a (`git log -1 --grep '^L-804a'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -222,7 +222,7 @@ Total: 210 task commits (including follow-up fixes with a letter suffix). Last u
 | L-642a | `748a15b` | 2026-10-31 | same-target check applies --prefix/--suffix to the output index |
 | L-629a | `0f08c23` | 2026-10-31 | keep numeric and odd _id/routing literals byte for byte |
 | L-642b | `a38c3bd` | 2026-10-31 | same-target check resolves a host-only --output |
-| L-645b | this commit | 2026-11-14 | owner decision: `--httpAuthFile` wins over flags, URL and env in both directions (behaviour change; warning names replaced sources); values literal and world-readable warning unchanged |
+| L-645b | `8798ac5` | 2026-11-14 | owner decision: `--httpAuthFile` wins over flags, URL and env in both directions (behaviour change; warning names replaced sources); values literal and world-readable warning unchanged |
 
 ## Runtime supply chain (L-7xx)
 
@@ -262,7 +262,8 @@ Total: 210 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808j | ac67505 | 2026-11-09 | CI Rust 1.91.1: dtolnay/rust-toolchain pinned to its master SHA with explicit `toolchain:` (the 1.85.1 branch pin ignored it, so nightly steps got 1.85.1); 3 clippy 1.91 lints fixed, no behaviour change; MSRV stays 1.85; scanner downloads retried. |
 | L-808k | 74b1b16 | 2026-11-09 | Three approved CI fixes: remove image.tar before saving again; l654 CLI uses the authenticated URL (passes OpenSearch 2.19.7 plain and secure); load-smoke builds all release workspace binaries. Local unit 283/283, contract 113/113, strict clippy and static gates pass; exact load-smoke gets past binary discovery but seed hits HTTP 429 parent circuit breaker (not changed). |
 | L-808l | `30f2122` | 2026-11-09 | Scope l618 scroll/PIT deletion to the CLI's own context and assert bystanders survive; full parallel ES7.10 suite passes twice. Bound L0 seed bulks (500 docs / 1 MiB), retry HTTP/item 429 with backoff, preserve duplicate-ID ordering, and retry harness control-request 429s. Three exact L0 round trips pass at the unchanged 1024m heap, with digest/leak checks; 16 Python regression tests and full applicable gates pass. |
-| L-808m | this commit | 2026-11-09 | L0 verification uses configurable 100-doc pages / one slice; larger-tier and standalone defaults stay 1000 / four. edverify retries HTTP 429 with bounded exponential backoff and clears every known own scroll ID after all slice tasks finish, on success/error/panic; cleanup failures are fatal. 13 HTTP/unit regressions, 18 Python tests and all applicable gates pass. Three consecutive exact L0 runs pass on the unchanged 1024m heap with all digests and zero scroll/PIT leaks. |
+| L-808m | `f872f87` | 2026-11-09 | L0 verification uses configurable 100-doc pages / one slice; larger-tier and standalone defaults stay 1000 / four. edverify retries HTTP 429 with bounded exponential backoff and clears every known own scroll ID after all slice tasks finish, on success/error/panic; cleanup failures are fatal. 13 HTTP/unit regressions, 18 Python tests and all applicable gates pass. Three consecutive exact L0 runs pass on the unchanged 1024m heap with all digests and zero scroll/PIT leaks. |
+| L-804a | this commit | 2026-11-14 | exit-code review of the 11 L-804 non-zero exits by error point (results/local/L-804a.md): all codes correct, exit 1 mixes transient and permanent failures; final HTTP 429 message now names the retry/load knobs; proposals P1-P6 for the owner |
 
 ## Supply-chain scans (Grok Bot)
 

@@ -65,7 +65,7 @@ Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/
 
 ## Open items awaiting the user or lead
 - L-802 README memory formula (×3 + 15 MB) awaits lead review; L-808b allocbench showed no need to change memplan.rs.
-- L-804 fault-injection non-zero exits await lead classification.
+- L-804 exit codes reviewed in L-804a (2026-11-14, results/local/L-804a.md): all correct; proposals P1-P6 await the owner (P1 = distinct exit code for transient failures, a behaviour change).
 - L-808: Rust restore/copy CPU about 2x M6, unattributed, for the lead.
 - L-811: TST-LOAD-017 also names IT runs; the Rust IT suite checks open contexts per test index but had no per-run teardown leak check. User decision 2026-11-01: add it as L-811a (queued after L-817). Branches `wip/D-2` and `wip/L-811` deleted with user approval; `wip/L-809` kept.
 - Lead-only/blocked: L-703, L-813, H4, Final, B campaigns; the sudo scope must be re-confirmed (below).
@@ -89,3 +89,4 @@ The user runs Grok 4.7 locally through the OpenCode CLI. The handoff/ folder (op
 
 - L-808m completes the load-smoke follow-up after push CI exposed edverify's 4 x 1000-doc scrolls crossing the 1 GB parent breaker and leaking four contexts on error. Keep the 1024m heap and full corpus/digest/leak checks; L0 verification defaults to 100 docs / one slice (configurable), bigger tiers unchanged. Scoped cleanup is awaited even after task errors/panics; cleanup failure is fatal. Three consecutive exact L0 passes and full gates are in results/local/L-808m.md; push CI/security reported separately. Next stays L-809.
 - L-645b (2026-11-14): owner decision implemented: `--httpAuthFile` wins over flags, URL and env (behaviour change, CHANGELOG Unreleased); auth-file values literal and world-readable warning unchanged.
+- L-804a (2026-11-14): exit-code review of the L-804 faults (results/local/L-804a.md); final-429 hint added; proposals P1-P6 await the owner.
