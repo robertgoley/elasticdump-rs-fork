@@ -2,7 +2,7 @@
 
 The task plan delegated to the other agent (Grok 4.7 through OpenCode, using [`project/handoff/HANDOFF-GROK-OPENCODE.md`](project/handoff/HANDOFF-GROK-OPENCODE.md)). Everything below is assigned to it; it commits each task to `main` as `L-NNN: ...` and adds a row to [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Finished tasks move to [TESTING-COMPLETED.md](TESTING-COMPLETED.md). Tests outside this plan are in [TESTING-TODO.md](TESTING-TODO.md).
 
-Status as of 2026-11-14: work through L-808m (2026-11-09) is recorded in [TESTING-COMPLETED.md](TESTING-COMPLETED.md) and in the dated note in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Later work on this tree includes L-809 (OpenDAL storage), the searchdump-rs rename, 1.0.0-beta1/1.0.0, and the owner's 2026-11-14 decisions: L-645b (`--httpAuthFile` wins; done), L-810i (OpenSSH client in the images; CVEs accepted 2026-11-14, merged), release/1.1 1.1-4a (slice cap only on ES 7.10; done on release/1.1), L-804a (exit-code review; done, proposals await the owner). L-808n (restore CPU profile; -24% CPU, done). **Still open from this plan: L-703** (seccomp/Landlock). Owner decision item D-1 is still not started. Deferred for later owner review (2026-11-14): see the table in section 1. **Next:** L-809 (300-index campaign), once the owner confirms.
+Status as of 2026-11-14: work through L-808m (2026-11-09) is recorded in [TESTING-COMPLETED.md](TESTING-COMPLETED.md) and in the dated note in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md). Later work on this tree includes L-809 (OpenDAL storage), the searchdump-rs rename, 1.0.0-beta1/1.0.0, and the owner's 2026-11-14 decisions: L-645b (`--httpAuthFile` wins; done), L-810i (OpenSSH client in the images; CVEs accepted 2026-11-14, merged), release/1.1 1.1-4a (slice cap only on ES 7.10; done on release/1.1), L-804a (exit-code review; done, proposals await the owner). L-808n to L-808q (restore CPU profile and fixes; CPU about half, done). **Still open from this plan: L-703** (seccomp/Landlock). Owner decision item D-1 is still not started. Deferred for later owner review (2026-11-14): see the table in section 1. **Next:** L-809 (300-index campaign), once the owner confirms.
 
 Who: impl = bounded code card, runner = scripted campaign, lead = supervised session for security-sensitive work, review = independent read-only review of every change.
 
@@ -24,7 +24,7 @@ Deferred by the owner on 2026-11-14 (t83u), kept for later review:
 | 1.1-8 flaky ES 7.10 rep | skipped for now | dump-split-gzip rep2 edverify diff (34 PASS / 1 FAIL). |
 | policy_round_trip flake, `--ca` script test, B2/AWS real tests, dhi.io token rotation | skipped for now | Need owner input or accounts. |
 | L-804a P1-P6 | awaiting owner | results/local/L-804a.md. |
-| L-808n next candidates | approved 2026-11-14 (t85u): L-808o (single parse), L-808p (buffers) done; L-808q (splitter) in progress | results/local/L-808n.md (single parse, buffer reuse / RSS, NDJSON splitter). |
+| L-808n next candidates | done 2026-11-14 (t85u): L-808o, L-808p, L-808q; restore CPU about half of pre-L-808n; RSS still ~2.4x M6 (results/local/L-808o.md) | results/local/L-808n.md (single parse, buffer reuse / RSS, NDJSON splitter). |
 
 D-4 (per-direction credential flags, L-645) and D-5 (leftover `.part` warning, L-648) are done.
 

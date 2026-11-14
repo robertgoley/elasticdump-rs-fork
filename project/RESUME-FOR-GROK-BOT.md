@@ -95,3 +95,4 @@ The user runs Grok 4.7 locally through the OpenCode CLI. The handoff/ folder (op
 - L-810i (2026-11-14): OpenSSH client in the images (sftp://); 22 Debian OpenSSH/Kerberos CVE ids accepted by the owner (t85u), ignored by `make scan` while unfixed. Branch `wip/L-810i` kept; deleting it needs owner approval.
 - L-808o (2026-11-14): restore validates each document once (check_and_parse) instead of twice; same verdicts and messages (differential test); restore CPU -14% vs L-808n (results/local/L-808o.md)
 - L-808p (2026-11-14): restore moves the encoded batch into the bulk request instead of copying it and pre-sizes file batch buffers; CPU -12%, peak RSS -17% vs L-808o (results/local/L-808o.md)
+- L-808q (2026-11-14): file-input splitter skips non-structural bytes (SIMD/table) with identical output (proptest); restore CPU -25% vs L-808p, about half of pre-L-808n and below M6 (results/local/L-808o.md)
