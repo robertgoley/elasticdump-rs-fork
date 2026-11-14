@@ -6,7 +6,7 @@ A one-screen engine coverage matrix (dump, restore, PIT, slices, storage, TLS) i
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 210 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808m (`git log -1 --grep '^L-808m'`; the next commit fills in its sha).
+Total: 210 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-645b (`git log -1 --grep '^L-645b'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -222,6 +222,7 @@ Total: 210 task commits (including follow-up fixes with a letter suffix). Last u
 | L-642a | `748a15b` | 2026-10-31 | same-target check applies --prefix/--suffix to the output index |
 | L-629a | `0f08c23` | 2026-10-31 | keep numeric and odd _id/routing literals byte for byte |
 | L-642b | `a38c3bd` | 2026-10-31 | same-target check resolves a host-only --output |
+| L-645b | this commit | 2026-11-14 | owner decision: `--httpAuthFile` wins over flags, URL and env in both directions (behaviour change; warning names replaced sources); values literal and world-readable warning unchanged |
 
 ## Runtime supply chain (L-7xx)
 

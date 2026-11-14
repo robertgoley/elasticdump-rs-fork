@@ -5,6 +5,18 @@ a version with a hyphen (`1.0.0-beta1`) is a pre-release. The release workflow
 (`.github/workflows/release.yml`) uses the section for a version as the release notes of its draft
 GitHub release.
 
+## Unreleased
+
+### Changed (behaviour change)
+
+- **`--httpAuthFile` now wins over every other credential source** (owner decision 2026-11-14, L-645b). When an
+  auth file is given, its `user=`/`password=` pair is used for both directions even if the URL has
+  `user:password@` or `--input-*`/`--output-*`/`--username`/`--password` flags are set; a warning names the sources
+  it replaced, never their values. Before, the auth file only filled in a missing username or password (Node
+  behaviour). Without an auth file the order is unchanged: flags, then URL, then
+  `SEARCHDUMP_{INPUT,OUTPUT}_*`. `searchdump-multi` follows the same order. Auth-file values stay literal and a
+  world-readable file is still only warned about.
+
 ## 1.0.0
 
 First stable release. The program source is identical to 1.0.0-beta1 (only the version number changes). This tag adds
