@@ -24,7 +24,7 @@ Deferred by the owner on 2026-11-14 (t83u), kept for later review:
 | 1.1-8 flaky ES 7.10 rep | skipped for now | dump-split-gzip rep2 edverify diff (34 PASS / 1 FAIL). |
 | policy_round_trip flake, `--ca` script test, B2/AWS real tests, dhi.io token rotation | skipped for now | Need owner input or accounts. |
 | L-804a P1-P6 | awaiting owner | results/local/L-804a.md. |
-| L-808n next candidates | approved 2026-11-14 (t85u), in progress as L-808o | results/local/L-808n.md (single parse, buffer reuse / RSS, NDJSON splitter). |
+| L-808n next candidates | approved 2026-11-14 (t85u): L-808o (single parse) done; L-808p (buffers), L-808q (splitter) in progress | results/local/L-808n.md (single parse, buffer reuse / RSS, NDJSON splitter). |
 
 D-4 (per-direction credential flags, L-645) and D-5 (leftover `.part` warning, L-648) are done.
 
