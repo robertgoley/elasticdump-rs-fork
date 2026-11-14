@@ -94,3 +94,4 @@ The user runs Grok 4.7 locally through the OpenCode CLI. The handoff/ folder (op
 - L-808n (2026-11-14): restore CPU profile; memchr line split + depth shortcut, CPU -24%, behaviour unchanged.
 - L-810i (2026-11-14): OpenSSH client in the images (sftp://); 22 Debian OpenSSH/Kerberos CVE ids accepted by the owner (t85u), ignored by `make scan` while unfixed. Branch `wip/L-810i` kept; deleting it needs owner approval.
 - L-808o (2026-11-14): restore validates each document once (check_and_parse) instead of twice; same verdicts and messages (differential test); restore CPU -14% vs L-808n (results/local/L-808o.md)
+- L-808p (2026-11-14): restore moves the encoded batch into the bulk request instead of copying it and pre-sizes file batch buffers; CPU -12%, peak RSS -17% vs L-808o (results/local/L-808o.md)
