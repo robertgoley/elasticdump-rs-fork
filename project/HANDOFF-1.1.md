@@ -1,5 +1,18 @@
 # Cold-start handoff: release/1.1 and the beta1 perf suite
 
+**PIT batch finished (2026-11-14 02:47 America/New_York).** All 3 engines x 9
+steps ran (`es710-plain`, `es819-plain`, `os3-plain`; Node skipped).
+`pit.sh aggregate` was run and the report is committed as
+`scripts/perf/results/pit-1.1.md`; the 1.1 release notes' Performance section
+and the CHANGELOG are filled in. Final per-step PASS everywhere except es710
+1.1-8 (one flaky `dump-split-gzip` rep 2 edverify exit 2, not reproduced).
+os3 1.1-3 needed re-runs after harness fast-failures. es819/os3 have no
+beta1 step; the es710 beta1 number predates the 2026-11-12 box restore.
+Next: the item checks listed in `ROADMAP-1.1-PLAN.md` and the 16-engine RC run
+(`scripts/perf/results/v1.1.0-rc-L0.md`). The PIT watch routine has nothing left
+to run or relaunch. Nothing is tagged, no PR is open; `release/1.1` is a normal
+push (no force).
+
 **Branch status (2026-11-12 01:30 America/New_York):** phases 1 and 2 of
 the point-in-time batch are **done and green** on the local `release/1.1`
 (head = the commit that adds this note). That history differs from

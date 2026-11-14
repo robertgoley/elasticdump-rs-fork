@@ -1,8 +1,7 @@
 # searchdump-rs 1.1 release notes (draft)
 
-Status: draft on the local `release/1.1` branch. Not tagged, not published, and not yet
-performance-measured. These notes describe the changes already committed for 1.1. Fill in the
-[Performance](#performance) section after the point-in-time runs finish.
+Status: draft on the local `release/1.1` branch. Not tagged and not published. Point-in-time performance
+is measured (see [Performance](#performance)). These notes describe the changes already committed for 1.1.
 
 The same material is summarised in [`CHANGELOG.md`](../../CHANGELOG.md) under **Unreleased (1.1)**.
 Known, deliberate differences from Node elasticdump are also in
@@ -176,15 +175,44 @@ No Node compatibility difference (searchdump-only behaviour, or the same request
 
 ## Performance
 
-*Placeholder — do not quote numbers here until the point-in-time run finishes.*
+Point-in-time run finished 2026-11-14: every 1.1 commit was built and measured on Elasticsearch 7.10.2
+(`es710-plain`), Elasticsearch 8.19.23 (`es819-plain`) and OpenSearch 3.9.0 (`os3-plain`), L0 dataset, three
+reps, wall-clock median per case. Full tables (every case, every step, change against the previous step,
+noise-aware): [`scripts/perf/results/pit-1.1.md`](../../scripts/perf/results/pit-1.1.md).
 
-Each 1.1 commit, plus a re-measure of 1.0.0-beta1 with the 1.1 blocking-wait4 timer, will be built
-and run on Elasticsearch 7.10, Elasticsearch 8.19 and OpenSearch 3 (plain). The step-by-step table
-(wall median per case, change versus the previous commit, and a per-step summary) will be added
-here and in the changelog.
+**How to read this**
 
-Until those results are in, do not treat the tables in [README Performance](../../README.md#performance)
-as 1.1 numbers: they were measured with the older 0.1 s timer and without these changes.
+- **Node comparison skipped.** Node elasticdump was not run at the 1.1 steps (`--skip-node`); the "Node" column
+  in the report is the beta1-era reference on es710 only.
+- **Baselines.** The 1.0.0-beta1 suite baselines come from a separate VM and are not in this report. The only
+  beta1 number here is the es710 re-measure of `94e4afb` (step 0), taken *before* the box was restored on
+  2026-11-12; it is the one reference for "1.1 vs beta1" and is confounded by that restore (1.1-2 shows
+  +26..+48% on es710 restores that es819/os3 cannot confirm). es819 and os3 have no beta1 step, so their tables
+  start at 1.1-2 and compare "last vs 1.1-2".
+- **One flaky rep.** es710 step 1.1-8: `dump-split-gzip` rep 2 failed its `edverify` check (exit 2) once; the
+  step is marked FAIL in the driver, the other reps were fine and the case has no 1.1-8 median in the report.
+  It passed at 1.1-9, 1.1-6 and 1.1-7 and on the other engines. It was not reproduced, so it is treated as
+  flaky and not attributed to 1.1-8. os3 1.1-3 was re-run after several instant harness failures (isolated
+  podman store), then passed.
+- A change is bold in the report only when it is at least 5% and twice the larger CV. Many cells move 10-20%
+  without that, so read the per-step counts and the repeated pattern across engines, not single cells.
+
+**Step over step** (es710 / es819 / os3; negative = faster)
+
+| Item | Result |
+|---|---|
+| 1.1-2 targeted refresh | Only measurable on es710 vs beta1: slower (geomean 1.31, 30 of 35 cases slower), restore-none 4.99 s to 7.17 s; restores +39..+48%. Likely box restore, not the code; not confirmed on es819/os3 (first step there). |
+| 1.1-1 refresh every 5 s | The clear win, restores and copy: es710 restore-none 7.17 to 5.58 s (-22%), restore-gzip -24%, restore-small -33%; es819 restore-none 6.83 to 4.65 s (-32%), restore-gzip -28%, restore-small -32%; os3 restore-none 6.63 to 4.68 s (-29%), restore-gzip -39%, restore-zstd -41%. Dumps mostly flat (es819 dump-none -13%, os3 -22%). Faster/slower cases: 14/0, 11/2, 12/0. |
+| 1.1-3 `--scrollDocSort` (opt-in, off by default) | No intended default effect; es710 restores +3..+15% (restore-zstd +15% bold), es819 restore-gzip -12% and copy -16%, os3 restore-big -23%. Faster/slower 2/6, 7/3, 7/3: noise. |
+| 1.1-4 slice cap | es710: dump-scroll-s2 2.35 to 0.88 s (-63%) and s4 1.41 to 0.93 s (-34%), s8 -5%: the intended fix. es819/os3 were already fast uncapped and got slower: dump-scroll-s4 0.46 to 0.67 s (+45%) / 0.43 to 0.69 s (+62%), dump-scroll-s8 0.42 to 0.67 s (+59%) / 0.32 to 0.64 s (+101%). Use `--sliceCap=false` to keep the old behaviour. dump-pit-s* is uncapped (es819 s4 -20%, s8 -13%). |
+| 1.1-9 compression thread | No clear gain: es710 dump-gzip -5%, dump-zstd +10%; es819 dump-gzip +5%, dump-split-gzip +14% (bold); os3 dump-zstd +24% (bold), dump-split-gzip -6%. Faster/slower 1/3, 7/10, 6/5. |
+| 1.1-6 encode overlap | Restores gain on ES: es710 restore-none 5.47 to 4.52 s (-17%), restore-gzip -21%; es819 restore-none -16%, restore-zstd -19%. os3 shows no gain (restore-none +15%, gzip -4%, zstd -6%). Faster/slower 10/1, 8/4, 4/5. |
+| 1.1-8 tokio::process | Within noise for `searchdump-multi`: es710 multi-restore-p1 +19% (bold), multi-restore-p8 +13%; es819 multi-restore-p8 +19% (n.s.); os3 multi-restore-p1 +25% (bold), multi-dump-p1 -17%. Faster/slower 3/8, 4/6, 12/4. |
+| 1.1-7 child counts | No cost seen without `--verifyCounts`: es710 multi-restore-p1 -11% (bold), es819 multi-restore-p8 -20% and multi-dump-p8 -18% (bold); os3 multi-dump-p4 +49%, p8 +47% (os3 1 faster / 14 slower, most small). |
+
+Net, last step against the first measured one (geomean wall ratio): es710 1.08 vs beta1 (1.31 at 1.1-2),
+es819 0.85 and os3 0.91 vs 1.1-2. The README Performance tables in
+[README Performance](../../README.md#performance) are still the older 0.1 s-timer numbers and are not 1.1 numbers.
 
 ## See also
 

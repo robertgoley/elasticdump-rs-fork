@@ -1,6 +1,6 @@
 # searchdump-rs 1.1: implementation plan (for review)
 
-Status: **steps 1-9 approved and committed without building** (see Status below); compile/test and point-in-time perf run pending. Branch `release/1.1` is on GitHub as `origin/release/1.1` (UNCOMPILED / UNTESTED). Do not merge to `main` without Robert.
+Status: **steps 1-9 approved and committed without building** (see Status below); compiled, tested and point-in-time perf measured (2026-11-14, `scripts/perf/results/pit-1.1.md`). Branch `release/1.1` is on GitHub as `origin/release/1.1` (UNCOMPILED / UNTESTED). Do not merge to `main` without Robert.
 Scope: roadmap items 1.1-1 to 1.1-9 from `FEATURES-TODO.md`, section "Roadmap: 1.1 release (performance and robustness)".
 Line references were rechecked at `0847643` (main, 2026-11-11). The roadmap table quotes them as of `a98be22`.
 
@@ -12,17 +12,17 @@ Owner go-ahead for steps 1-4 on 2026-11-11 (t163u), and for steps 5-9 the same w
 
 | Step | Item | Status |
 |---|---|---|
-| 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measure pending |
-| 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); A/B pending |
-| 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); A/B pending |
-| 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); nodecmp + A/B pending |
-| 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
-| 6 | 1.1-9 compression thread | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
-| 7 | 1.1-6 encode overlap | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
-| 8 | 1.1-8 tokio::process | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
-| 9 | 1.1-7 child counts | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf pending |
+| 1 | 1.1-5 perf timer | in progress (release/1.1): harness change committed; offline selftests pass; beta1@timer2 re-measured on es710 only (2026-11-12) |
+| 2 | 1.1-2 targeted refresh | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 3 | 1.1-1 refresh cadence | in progress (release/1.1): code + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 4 | 1.1-3 `_doc` sort (opt-in) | in progress (release/1.1): opt-in --scrollDocSort + unit/contract tests committed; compiled and tested 2026-11-12 (wip/1.1-fixups); nodecmp + point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 5 | 1.1-4 slice cap + `--sliceField` | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 6 | 1.1-9 compression thread | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 7 | 1.1-6 encode overlap | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 8 | 1.1-8 tokio::process | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
+| 9 | 1.1-7 child counts | in progress (release/1.1): committed; compiled and tested 2026-11-12 (wip/1.1-fixups); point-in-time perf measured 2026-11-14 (scripts/perf/results/pit-1.1.md) |
 
-"In progress" means committed on `release/1.1` but not yet A/B measured. Compile (`pit.sh check`) and HEAD tests/clippy/selftest passed on 2026-11-12 after two folded fixups (see `project/HANDOFF-1.1.md`).
+"In progress" means committed on `release/1.1`; the point-in-time batch finished 2026-11-14 (3 engines x 9 steps, no Node; report `scripts/perf/results/pit-1.1.md`). Remaining: the item checks below and the 16-engine RC run. Compile (`pit.sh check`) and HEAD tests/clippy/selftest passed on 2026-11-12 after two folded fixups (see `project/HANDOFF-1.1.md`).
 
 ## Point-in-time test plan (all nine steps, one batch)
 

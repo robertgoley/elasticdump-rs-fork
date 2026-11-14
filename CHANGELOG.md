@@ -148,10 +148,12 @@ restore yourself (restore it, compare document counts) before you rely on it. Se
 
 ### Performance
 
-Point-in-time results comparing 1.0.0-beta1 (re-measured with the 1.1 timer) and each 1.1
-commit are not in yet. They will be added here and in
-[`project/release/RELEASE-NOTES-1.1.md`](project/release/RELEASE-NOTES-1.1.md) when that run
-finishes.
+Point-in-time results for each 1.1 commit (es710, es819, os3; plain) finished 2026-11-14: see
+[`project/release/RELEASE-NOTES-1.1.md`](project/release/RELEASE-NOTES-1.1.md#performance) and the full tables in
+[`scripts/perf/results/pit-1.1.md`](scripts/perf/results/pit-1.1.md). Short version: the 5 s refresh
+cadence (1.1-1) cut restore wall time by roughly 20-40%; the slice cap (1.1-4) fixes the es710 over-sliced
+scroll dumps (-34..-63%) but slows already-fast multi-shard scroll slices on ES 8.19 / OpenSearch 3 (opt out with
+`--sliceCap=false`); the other items are within noise.
 
 ## 1.0.0-beta1
 
