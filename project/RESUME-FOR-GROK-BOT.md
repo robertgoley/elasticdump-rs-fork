@@ -67,7 +67,7 @@ Keep project/plan/ and project/handoff/plan/PROGRESS.md in sync with /workspace/
 - L-802 README memory formula (×3 + 15 MB) awaits lead review; L-808b allocbench showed no need to change memplan.rs.
 - L-804 exit codes reviewed in L-804a (2026-11-14, results/local/L-804a.md): all correct; proposals P1-P6 await the owner (P1 = distinct exit code for transient failures, a behaviour change).
 - L-808: Rust restore CPU profiled in L-808n (2026-11-14): -24% from a memchr line split; still ~1.35x M6 CPU and 2.5x RSS; next candidates in results/local/L-808n.md await the owner.
-- Deferred by the owner 2026-11-14 for later review: Q5 filterManaged skip line, Q6 ES 7.10 managed policies, ES 9.1.2 reruns (to do later), 1.1-8 flaky rep, L-810i CVE decision; table in TESTING-IN-PROGRESS.md section 1.
+- Deferred by the owner 2026-11-14 for later review: Q5 filterManaged skip line, Q6 ES 7.10 managed policies, ES 9.1.2 reruns (to do later), 1.1-8 flaky rep, table in TESTING-IN-PROGRESS.md section 1.
 - L-811: TST-LOAD-017 also names IT runs; the Rust IT suite checks open contexts per test index but had no per-run teardown leak check. User decision 2026-11-01: add it as L-811a (queued after L-817). Branches `wip/D-2` and `wip/L-811` deleted with user approval; `wip/L-809` kept.
 - Lead-only/blocked: L-703, L-813, H4, Final, B campaigns; the sudo scope must be re-confirmed (below).
 
@@ -92,3 +92,4 @@ The user runs Grok 4.7 locally through the OpenCode CLI. The handoff/ folder (op
 - L-645b (2026-11-14): owner decision implemented: `--httpAuthFile` wins over flags, URL and env (behaviour change, CHANGELOG Unreleased); auth-file values literal and world-readable warning unchanged.
 - L-804a (2026-11-14): exit-code review of the L-804 faults (results/local/L-804a.md); final-429 hint added; proposals P1-P6 await the owner.
 - L-808n (2026-11-14): restore CPU profile; memchr line split + depth shortcut, CPU -24%, behaviour unchanged.
+- L-810i (2026-11-14): OpenSSH client in the images (sftp://); 22 Debian OpenSSH/Kerberos CVE ids accepted by the owner (t85u), ignored by `make scan` while unfixed. Branch `wip/L-810i` kept; deleting it needs owner approval.

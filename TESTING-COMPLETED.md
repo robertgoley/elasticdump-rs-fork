@@ -6,7 +6,7 @@ A one-screen engine coverage matrix (dump, restore, PIT, slices, storage, TLS) i
 
 Every test task with a commit on `main`, oldest first within each group. The commit message is the short result; full results, numbers and findings for each task are in [`project/plan/PROGRESS.md`](project/plan/PROGRESS.md), and the requirement IDs are in [`project/plan/TEST-REQUIREMENTS.md`](project/plan/TEST-REQUIREMENTS.md).
 
-Total: 212 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-808n (`git log -1 --grep '^L-808n'`; the next commit fills in its sha).
+Total: 213 task commits (including follow-up fixes with a letter suffix). Last updated from commit L-810i (`git log -1 --grep '^L-810i'`; the next commit fills in its sha).
 
 ## Setup and planning (L-0xx)
 
@@ -264,7 +264,8 @@ Total: 212 task commits (including follow-up fixes with a letter suffix). Last u
 | L-808l | `30f2122` | 2026-11-09 | Scope l618 scroll/PIT deletion to the CLI's own context and assert bystanders survive; full parallel ES7.10 suite passes twice. Bound L0 seed bulks (500 docs / 1 MiB), retry HTTP/item 429 with backoff, preserve duplicate-ID ordering, and retry harness control-request 429s. Three exact L0 round trips pass at the unchanged 1024m heap, with digest/leak checks; 16 Python regression tests and full applicable gates pass. |
 | L-808m | `f872f87` | 2026-11-09 | L0 verification uses configurable 100-doc pages / one slice; larger-tier and standalone defaults stay 1000 / four. edverify retries HTTP 429 with bounded exponential backoff and clears every known own scroll ID after all slice tasks finish, on success/error/panic; cleanup failures are fatal. 13 HTTP/unit regressions, 18 Python tests and all applicable gates pass. Three consecutive exact L0 runs pass on the unchanged 1024m heap with all digests and zero scroll/PIT leaks. |
 | L-804a | 8bcc92c | 2026-11-14 | exit-code review of the 11 L-804 non-zero exits by error point (results/local/L-804a.md): all codes correct, exit 1 mixes transient and permanent failures; final HTTP 429 message now names the retry/load knobs; proposals P1-P6 for the owner |
-| L-808n | this commit | 2026-11-14 | restore CPU profile vs M6 (results/local/L-808n.md): memchr line split + SIMD depth shortcut, restore CPU -24% (0.80 -> 0.61 s per 100k docs), wall and RSS unchanged; next candidates listed |
+| L-808n | b158898 | 2026-11-14 | restore CPU profile vs M6 (results/local/L-808n.md): memchr line split + SIMD depth shortcut, restore CPU -24% (0.80 -> 0.61 s per 100k docs), wall and RSS unchanged; next candidates listed |
+| L-810i | this commit | 2026-11-14 | OpenSSH client in the Debian/Alpine images for sftp:// (dhi-static unchanged); SFTP round trip OK in public Debian and Alpine builds; 22 OpenSSH/Kerberos High/Critical ids accepted by the owner (t85u) and ignored by `make scan` only while unfixed |
 
 ## Supply-chain scans (Grok Bot)
 

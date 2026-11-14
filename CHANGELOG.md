@@ -7,6 +7,15 @@ GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **`sftp://` inside the container images** (owner decision 2026-11-14, L-810i). The runtime stage installs the
+  OpenSSH client that OpenDAL's SFTP backend runs: `openssh-client` (no recommends, `ssh-keysign` setuid bit
+  removed) on Debian-based images, `openssh-client-default` on Alpine-based images. The COPY-only `dhi-static`
+  image is unchanged (no package manager, no SFTP). On Debian the package pulls in Kerberos libraries; see
+  SECURITY-CVE.md for the High/Critical findings this adds, accepted by the owner on 2026-11-14 (no fix upstream;
+  `make scan` ignores exactly those ids while they stay unfixed).
+
 ### Changed (behaviour change)
 
 - **`--httpAuthFile` now wins over every other credential source** (owner decision 2026-11-14, L-645b). When an
